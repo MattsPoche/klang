@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "log.h"
 #include "da.h"
 #include "mem.h"
 #include "lex.h"
@@ -287,6 +288,9 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				if (lex_peekc(lex) == '.') {
 					lex_nextc(lex);
 					tok.sv.len++;
+					if (!isdigit(lex_peekc(lex))) {
+						log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc, "Syntax error");
+					}
 					while (isdigit(lex_peekc(lex))) {
 						lex_nextc(lex);
 						tok.sv.len++;

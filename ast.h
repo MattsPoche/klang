@@ -295,7 +295,7 @@ enum ast_exp_tag {
 
 struct expression {
 	enum ast_exp_tag tag;
-	struct srcloc src;
+	struct token *tok;
 	bool is_mutable;
 	bool is_addressable;
 	struct type *type;    // type anotation

@@ -4,9 +4,9 @@ TARGET=kc
 
 .depend: $(SOURCE)
 	rm -f $@
-	$(CC) -MM $^ -MF $@
+	$(CC) $(CFLAGS) -MM $^ -MF $@
 
 kc: main.o
-	$(CC) $(LFLAGS) -o $@ $<
+	$(CC) $(LFLAGS) -o $@ $^
 
 include .depend

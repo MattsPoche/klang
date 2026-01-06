@@ -14,6 +14,8 @@
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
 #include "lex.h"
+#include "log.h"
+#include "log.c"
 #include "ast.h"
 #include "lex.c"
 #include "parse.h"
@@ -25,8 +27,12 @@ struct da_pointers {
 };
 
 /* --- TYPE-CHECKER --- */
-bool type_eq(struct type *t, struct type *u);
+bool type_coerce(struct type *t, struct type *u);
+bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
+			 char *debug_file, int debug_line);
 struct expression *infer_type(Parser *p, struct expression *exp, struct type *ret, struct scope *scope);
+
+#define TYPE_EQ(t, u, exp) type_eq(p, t, u, exp, __FILE__, __LINE__)
 
 bool type_is_integer(struct type *t)
 {
@@ -220,86 +226,6 @@ bool type_is_pointer(struct type *t)
 		|| t->tag == ast_type_proc;
 }
 
-
-bool type_eq(struct type *t, struct type *u)
-{
-	switch (t->tag) {
-	case ast_type_void: return false;
-	case ast_type_noreturn: return false;
-	case ast_type_bool: return u->tag == ast_type_bool;
-	case ast_type_i8:
-		return u->tag == ast_type_i8
-			|| u->tag == ast_type_intlit;
-	case ast_type_i16:
-		return u->tag == ast_type_i16
-			|| u->tag == ast_type_intlit;
-	case ast_type_i32:
-		return u->tag == ast_type_i32
-			|| u->tag == ast_type_intlit;
-	case ast_type_i64:
-		return u->tag == ast_type_i64
-			|| u->tag == ast_type_intlit;
-	case ast_type_u8:
-		return u->tag == ast_type_i64
-			|| u->tag == ast_type_intlit;
-	case ast_type_u16:
-		return u->tag == ast_type_i64
-			|| u->tag == ast_type_intlit;
-	case ast_type_u32:
-		return u->tag == ast_type_i64
-			|| u->tag == ast_type_intlit;
-	case ast_type_u64:
-		return u->tag == ast_type_i64
-			|| u->tag == ast_type_intlit;
-	case ast_type_intlit:
-		return type_is_integer(u);
-	case ast_type_f32:
-		return u->tag == ast_type_f32
-			|| u->tag == ast_type_floatlit;
-	case ast_type_f64:
-		return u->tag == ast_type_f64
-			|| u->tag == ast_type_floatlit;
-	case ast_type_floatlit:
-		return type_is_floating_point(u);
-	case ast_type_alias: FAILWITH("TODO: ast_type_alias"); break;
-	case ast_type_cons: FAILWITH("TODO: ast_type_cons"); break;
-	case ast_type_ptr:
-		return (u->tag == ast_type_ptr || u->tag == ast_type_mut_ptr)
-			&& type_eq(t->as.ptr, u->as.ptr);
-	case ast_type_mut_ptr:
-		return u->tag == ast_type_mut_ptr
-			&& type_eq(t->as.mut_ptr, u->as.mut_ptr);
-	case ast_type_slice: FAILWITH("TODO: ast_type_slice"); break;
-	case ast_type_mut_slice: FAILWITH("TODO: ast_type_mut_slice"); break;
-	case ast_type_array:
-		return u->tag == ast_type_array
-			&& type_eq(t->as.array.base, u->as.array.base);
-	case ast_type_struct: FAILWITH("TODO: ast_type_struct"); break;
-	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
-	case ast_type_proc:
-		if (u->tag == ast_type_proc
-			&& type_eq(t->as.proc.ret, u->as.proc.ret)
-			&& t->as.proc.args.len == u->as.proc.args.len) {
-			for (size_t i = 0; i < t->as.proc.args.len; ++i) {
-				if (!type_eq(t->as.proc.args.elems[i], u->as.proc.args.elems[i])) {
-					return false;
-				}
-			}
-			return true;
-		}
-		return false;
-	default:
-		FAILWITH("Unreachable condition");
-		break;
-	}
-	ast_type_fprint(t, stdout);
-	putchar('\n');
-	ast_type_fprint(u, stdout);
-	putchar('\n');
-	FAILWITH("TODO: type_eq");
-	return 0;
-}
-
 struct type *ident_type(struct token *name, struct scope *scope)
 {
 	return lookup_definition(name, scope)->type;
@@ -332,24 +258,22 @@ bool type_coerce(struct type *t, struct type *u)
 	case ast_type_alias: FAILWITH("TODO: ast_type_alias"); break;
 	case ast_type_cons: FAILWITH("TODO: ast_type_cons"); break;
 	case ast_type_ptr:
-		return (u->tag == ast_type_ptr || u->tag == ast_type_mut_ptr)
-			&& type_eq(t->as.ptr, u->as.ptr);
 	case ast_type_mut_ptr:
-		return u->tag == ast_type_mut_ptr
-			&& type_eq(t->as.mut_ptr, u->as.mut_ptr);
+		return (u->tag == ast_type_ptr || u->tag == ast_type_mut_ptr)
+			&& type_coerce(t->as.ptr, u->as.ptr);
 	case ast_type_slice: FAILWITH("TODO: ast_type_slice"); break;
 	case ast_type_mut_slice: FAILWITH("TODO: ast_type_mut_slice"); break;
 	case ast_type_array:
 		return u->tag == ast_type_array
-			&& type_eq(t->as.array.base, u->as.array.base);
+			&& type_coerce(t->as.array.base, u->as.array.base);
 	case ast_type_struct: FAILWITH("TODO: ast_type_struct"); break;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc:
 		if (u->tag == ast_type_proc
-			&& type_eq(t->as.proc.ret, u->as.proc.ret)
+			&& type_coerce(t->as.proc.ret, u->as.proc.ret)
 			&& t->as.proc.args.len == u->as.proc.args.len) {
 			for (size_t i = 0; i < t->as.proc.args.len; ++i) {
-				if (!type_eq(t->as.proc.args.elems[i], u->as.proc.args.elems[i])) {
+				if (!type_coerce(t->as.proc.args.elems[i], u->as.proc.args.elems[i])) {
 					return false;
 				}
 			}
@@ -360,10 +284,30 @@ bool type_coerce(struct type *t, struct type *u)
 		FAILWITH("Unreachable condition");
 		break;
 	}
+	FAILWITH("Unreachable condition");
 	return false;
 }
 
-bool def_coerce(UNUSED Parser *p, struct definition *def, struct expression *exp)
+bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
+			 char *debug_file, int debug_line)
+{
+	if (!type_coerce(t, u)) {
+		fflush(stdout);
+		struct strview msg = {0};
+		FILE *stream = open_memstream(&msg.ptr, &msg.len);
+		fputs("Type error. Type ", stream);
+		ast_type_fprint(t, stream);
+		fputs(" is incompatible with type ", stream);
+		ast_type_fprint(u, stream);
+		fclose(stream);
+		log_error_impl(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
+					   debug_file, debug_line, msg.ptr);
+		exit(1);
+	}
+	return true;
+}
+
+bool def_coerce(Parser *p, struct definition *def, struct expression *exp)
 {
 	switch (def->type->tag) {
 	case ast_type_void:
@@ -392,7 +336,7 @@ bool def_coerce(UNUSED Parser *p, struct definition *def, struct expression *exp
 			struct expression_stack *init_exps = &exp->as.init;
 			struct type *base = array_type->base;
 			da_foreach(exp, init_exps) {
-				assert(type_eq(base, (*exp)->type));
+				TYPE_EQ(base, (*exp)->type, *exp);
 			}
 			switch (array_type->stag) {
 			case AT_UNSIZED:
@@ -410,7 +354,7 @@ bool def_coerce(UNUSED Parser *p, struct definition *def, struct expression *exp
 			FAILWITH("TODO: type error");
 		} else {
 			assert(array_type->stag != AT_UNSIZED);
-			return type_eq(def->type, exp->type);
+			return TYPE_EQ(def->type, exp->type, exp);
 		}
 	} break;
 	case ast_type_alias: FAILWITH("TODO: ast_type_alias"); break;
@@ -473,7 +417,7 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 			da_append(&proc->scope.symtbl, formal);
 		}
 		rhs = infer_type(p, proc->body, proc->ret, &proc->scope);
-		assert(type_coerce(proc->ret, rhs->type));
+		TYPE_EQ(proc->ret, rhs->type, exp);
 		exp->type = POOL_ALLOC(&p->data, struct type);
 		exp->type->tag = ast_type_proc;
 		exp->type->as.proc = procedure_type(proc);
@@ -500,8 +444,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_assign: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(lhs->is_addressable && lhs->is_mutable);
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!lhs->is_addressable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Unable to assign. Expression is not addressable.");
+			}
+			if (!lhs->is_mutable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Cannot assign to immutable expression.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -512,9 +463,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_div: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(type_is_numeric_scalar(lhs->type));
-			assert(type_is_numeric_scalar(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!type_is_numeric_scalar(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_numeric_scalar(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -527,9 +484,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_more_equal: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(type_is_numeric_scalar(lhs->type));
-			assert(type_is_numeric_scalar(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!type_is_numeric_scalar(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_numeric_scalar(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = &AST_TYPE_BOOL;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -540,10 +503,23 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_div_assign: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(lhs->is_addressable && lhs->is_mutable);
-			assert(type_is_numeric_scalar(lhs->type));
-			assert(type_is_numeric_scalar(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!lhs->is_addressable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Unable to assign. Expression is not addressable.");
+			}
+			if (!lhs->is_mutable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Cannot assign to immutable expression.");
+			}
+			if (!type_is_numeric_scalar(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_numeric_scalar(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -554,9 +530,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_lor: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(type_is_integer(lhs->type));
-			assert(type_is_integer(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!type_is_integer(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -565,9 +547,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_shift_right: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(type_is_integer(lhs->type));
-			assert(type_is_integer(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!type_is_integer(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -578,10 +566,23 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_xor_assign: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(lhs->is_addressable && lhs->is_mutable);
-			assert(type_is_integer(lhs->type));
-			assert(type_is_integer(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!lhs->is_addressable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Unable to assign. Expression is not addressable.");
+			}
+			if (!lhs->is_mutable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Cannot assign to immutable expression.");
+			}
+			if (!type_is_integer(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -590,10 +591,23 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_shift_right_assign: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(lhs->is_addressable && lhs->is_mutable);
-			assert(type_is_integer(lhs->type));
-			assert(type_is_integer(rhs->type));
-			assert(type_coerce(lhs->type, rhs->type));
+			if (!lhs->is_addressable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Unable to assign. Expression is not addressable.");
+			}
+			if (!lhs->is_mutable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Cannot assign to immutable expression.");
+			}
+			if (!type_is_integer(lhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
+			TYPE_EQ(lhs->type, rhs->type, exp);
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -602,8 +616,14 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case binop_and: {
 			lhs = infer_type(p, bin->left, ret, scope);
 			rhs = infer_type(p, bin->right, ret, scope);
-			assert(lhs->type->tag == ast_type_bool);
-			assert(rhs->type->tag == ast_type_bool);
+			if (lhs->type->tag != ast_type_bool) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Type error. Expected expression of type bool.");
+			}
+			if (rhs->type->tag != ast_type_bool) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Expected expression of type bool.");
+			}
 			exp->type = lhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
@@ -617,28 +637,40 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		case unaop_neg:
 		case unaop_pos: {
 			rhs = infer_type(p, una->exp, ret, scope);
-			assert(type_is_numeric_scalar(rhs->type));
+			if (!type_is_numeric_scalar(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
 			exp->type = rhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
 		} break;
 		case unaop_lnot: {
 			rhs = infer_type(p, una->exp, ret, scope);
-			assert(type_is_integer(rhs->type));
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Operator is undefined for type.");
+			}
 			exp->type = rhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
 		} break;
 		case unaop_not: {
 			rhs = infer_type(p, una->exp, ret, scope);
-			assert(rhs->type->tag == ast_type_bool);
+			if (rhs->type->tag != ast_type_bool) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Type error. Expected expression of type bool.");
+			}
 			exp->type = rhs->type;
 			exp->is_addressable = false;
 			exp->is_mutable = false;
 		} break;
 		case unaop_address_of: {
 			rhs = infer_type(p, una->exp, ret, scope);
-			assert(rhs->is_addressable);
+			if (!rhs->is_addressable) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Expression is not addressable.");
+			}
 			struct type *ptr_type = POOL_ALLOC(&p->data, struct type);
 			ptr_type->as.ptr = rhs->type;
 			exp->is_mutable = rhs->is_mutable;
@@ -657,13 +689,17 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 				exp->is_addressable = true;
 				exp->is_mutable = false;
 			} else {
-				FAILWITH("TODO: ERROR: type is not a pointer.");
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Unable to dereference. Expression is not a pointer.");
 			}
 		} break;
 		case unaop_index: {
 			lhs = infer_type(p, exp->as.idx.exp, ret, scope); // base
 			rhs = infer_type(p, exp->as.idx.idx, ret, scope); // index
-			assert(type_is_integer(rhs->type));
+			if (!type_is_integer(rhs->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
+								  "Index expression is not integer type.");
+			}
 			switch ((int)lhs->type->tag) {
 			case ast_type_ptr: FAILWITH("TODO: ast_type_ptr.");	break;
 			case ast_type_mut_ptr: FAILWITH("TODO: ast_type_mut_ptr.");	break;
@@ -672,24 +708,36 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 				exp->is_addressable = true;
 				exp->is_mutable = lhs->is_mutable;
 			} break;
-			default: FAILWITH("TODO: type error."); break;
+			default:
+				log_error_and_die(p->lexer.filename, p->lexer.contents, lhs->tok->sv, lhs->tok->loc,
+								  "Expression cannot be indexed.");
+				break;
 			}
 		} break;
 		case unaop_call: {
 			struct call *call = &exp->as.call;
 			struct expression *proc = infer_type(p, call->proc, ret, scope);
-			assert(proc->type->tag == ast_type_proc);
+			if (proc->type->tag != ast_type_proc) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, proc->tok->sv, proc->tok->loc,
+								  "Expression is not a procedure.");
+			}
 			struct proc_type *pt = &proc->type->as.proc;
-			assert(call->args.len == pt->args.len);
+			if (call->args.len != pt->args.len) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
+								  "Arity mismatch. Procedure expected %d arguments, but received %d.",
+								  pt->args.len, call->args.len);
+			}
 			for (size_t i = 0; i < call->args.len; ++i) {
 				struct expression *arg = infer_type(p, call->args.elems[i], ret, scope);
-				assert(type_coerce(pt->args.elems[i], arg->type));
+				TYPE_EQ(pt->args.elems[i], arg->type, arg);
 			}
 			exp->type = pt->ret;
 			exp->is_mutable = true;
 			exp->is_addressable = false;
 		} break;
-		default: FAILWITH("Unreachable"); break;
+		default:
+			FAILWITH("Unreachable");
+			break;
 		}
 	} break;
 	case ast_exp_initializer: {
@@ -711,10 +759,13 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 	case ast_exp_if: {
 		struct exp_if *br = &exp->as.iff;
 		struct expression *cond = infer_type(p, br->cond, ret, scope);
-		assert(type_is_bool(cond->type));
+		if (!type_is_bool(cond->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, cond->tok->sv, cond->tok->loc,
+								  "If condition must be a boolean expression.");
+		}
 		lhs = infer_type(p, br->tb, ret, scope);
 		rhs = infer_type(p, br->fb, ret, scope);
-		assert(type_coerce(lhs->type, rhs->type));
+		TYPE_EQ(lhs->type, rhs->type, exp);
 		exp->type = rhs->type = lhs->type;
 		exp->is_addressable = lhs->is_addressable && rhs->is_addressable;
 		exp->is_mutable = lhs->is_mutable && rhs->is_mutable;
@@ -727,7 +778,7 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		da_foreach(cb, &c->branches) {
 			da_foreach(match, &cb->matches) {
 				infer_type(p, *match, NULL, scope);
-				assert(type_coerce(cond->type, (*match)->type));
+				TYPE_EQ(cond->type, (*match)->type, *match);
 			}
 			infer_type(p, cb->exp, NULL, scope);
 			if (branch == NULL) {
@@ -735,7 +786,7 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 				is_addressable = branch->is_addressable;
 				is_mutable = branch->is_mutable;
 			} else {
-				assert(type_coerce(branch->type, cb->exp->type));
+				TYPE_EQ(branch->type, cb->exp->type, cb->exp);
 				is_addressable = is_addressable && branch->is_addressable;
 				is_mutable = is_mutable && branch->is_mutable;
 			}
@@ -743,7 +794,7 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		assert(branch != NULL);
 		if (c->else_exp) {
 			infer_type(p, c->else_exp, NULL, scope);
-			assert(type_coerce(branch->type, c->else_exp->type));
+			TYPE_EQ(branch->type, c->else_exp->type, c->else_exp);
 			is_addressable = is_addressable && c->else_exp->is_addressable;
 			is_mutable = is_mutable && c->else_exp->is_mutable;
 		}
@@ -861,45 +912,6 @@ struct ir_toplevel {
 	struct ir_proc *elems;
 	struct mem_arena data;
 };
-
-struct lines {
-	uint32_t len, cap;
-	char **elems;
-};
-
-struct strview sv_vfmt(const char *fmt, va_list ap)
-{
-	struct strview sv = {0};
-	FILE *stream = open_memstream(&sv.ptr, &sv.len);
-	vfprintf(stream, fmt, ap);
-	fclose(stream);
-	return sv;
-}
-
-__attribute__ ((format(printf, 1, 2)))
-struct strview sv_fmt(const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	struct strview sv = sv_vfmt(fmt, ap);
-	va_end(ap);
-	return sv;
-}
-
-__attribute__ ((format(printf, 1, 2)))
-char *fmt_str(const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	struct strview sv = sv_vfmt(fmt, ap);
-	va_end(ap);
-	return sv.ptr;
-}
-
-void append_line(struct lines *lines, char *str)
-{
-	da_append(lines, str);
-}
 
 size_t type_size(struct type *t)
 {
@@ -2159,7 +2171,7 @@ void asm_emit_basic_op(const char *asm_op, IR_Ins *ins, struct asm_address *dst,
 			const char *dst_name = asm_reg_name(dst_reg, type);
 			if (dst->as.i != x->as.i) {
 				append_line(&code->body, fmt_str(
-								"\tmov%c %s, %s /* HERE */\n",
+								"\tmov%c %s, %s\n",
 								asm_suffix(type),
 								asm_reg_name(x->as.i, type),
 								dst_name));
@@ -2698,17 +2710,21 @@ void asm_dump_module(struct asm_module *mod, FILE *file)
 	}
 }
 
-int main(void)
+void compile_file(const char *filename)
 {
-	const char *filename = "examples/fibonacci.k";
 	struct strview sv = {0};
 	if (sv_open_file(filename, &sv) == false) {
 		fprintf(stderr, "[Error] %s: %s\n", filename, strerror(errno));
-		return 1;
+		exit(1);
+	}
+	if (sv.len == 0) {
+		fprintf(stderr, "[Error] %s: %s\n", filename, "Empty file");
+		exit(1);
 	}
 	Parser parser = {
 		.lexer = {
 			.filename = filename,
+			.contents = sv,
 			.sv = sv,
 			.loc.line   = 1,
 			.loc.column = 0,
@@ -2726,8 +2742,6 @@ int main(void)
 	};
 	da_foreach(exp, &tl) {
 		infer_type(&parser, *exp, NULL, &sc);
-		ast_fprint(*exp, stdout);
-		putchar('\n');
 	}
 	struct ir_toplevel ir = ast_compile(&tl, &sc);
 	da_foreach(e, &ir) {
@@ -2737,9 +2751,23 @@ int main(void)
 	da_foreach(p, &ir) {
 		asm_emit_procedure(p, &ir, da_allot(&asm_mod.procs));
 	}
-	FILE *file = fopen("test.s", "w");
+//	FILE *file = fopen("test.s", "w");
 	asm_dump_module(&asm_mod, stdout);
-	asm_dump_module(&asm_mod, file);
-	fclose(file);
+//	asm_dump_module(&asm_mod, file);
+//	fclose(file);
+}
+
+char *shift(int *argc, char ***argv)
+{
+	(*argc)--;
+	(*argv)++;
+	return (*argv)[0];
+}
+
+int main(int argc, char **argv)
+{
+	for (char *arg = shift(&argc, &argv); argc; arg = shift(&argc, &argv)) {
+		compile_file(arg);
+	}
 	return 0;
 }

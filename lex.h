@@ -128,6 +128,7 @@ struct token_ptrs {
 
 struct lexer {
 	const char *filename;
+	struct strview contents;
 	struct strview sv;
 	struct srcloc loc;
 };

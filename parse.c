@@ -9,13 +9,13 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "da.h"
-
+#include "common.h"
 #include "mem.h"
 #include "strview.h"
 #include "lex.h"
 #include "ast.h"
 #include "parse.h"
+#include "log.h"
 
 /* --- Parser --- */
 static struct token *peek_token2(Parser *p)
@@ -39,41 +39,13 @@ static struct token *next_token(Parser *p, struct token **rt)
 	return tok;
 }
 
-// syntax_error:
-// filename:line:column error: msg
-void print_error_message(const char *filename,
-						 int line,
-						 int column,
-						 const char *debug_filename,
-						 const int debug_line,
-						 const char *msg,
-						 ...)
-{
-	va_list ap;
-	va_start(ap, msg);
-	fprintf(stderr, "%s:%d:%d error: ", filename, line, column);
-	vfprintf(stderr, msg, ap);
-	fputc('\n', stderr);
-	if (debug_filename) {
-		fprintf(stderr, "[Debug] %s:%d\n", debug_filename, debug_line);
-	}
-	va_end(ap);
-}
-
-static int expect(Parser *p,
-				  struct token *token,
-				  enum token_type tag,
-				  const char *debug_filename,
-				  const int debug_line)
+static int expect(Parser *p, struct token *token, enum token_type tag,
+				  const char *debug_filename, const int debug_line)
 {
 	if (token->tt != tag) {
-		print_error_message(p->lexer.filename,
-							token->loc.line,
-							token->loc.column,
-							debug_filename,
-							debug_line,
-							"unexpected token `"SV_FMT"`.",
-							SV_ARGS(&token->sv));
+		log_error_impl(p->lexer.filename, p->lexer.contents, token->sv, token->loc,
+					   debug_filename, debug_line,
+					   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(&token->sv));
 		exit(1);
 	}
 	return 1;
@@ -81,6 +53,7 @@ static int expect(Parser *p,
 
 #define ACCEPT(token, tag) ((token)->tt == (tag))
 #define EXPECT(token, tag) expect(p, token, tag, __FILE__, __LINE__)
+
 
 static struct type *parse_type(Parser *p);
 static void parse_definition(Parser *p, struct definition *def);
@@ -261,12 +234,12 @@ static void parse_definition(Parser *p, struct definition *def)
 		/* variable definition */
 		def->type = parse_type(p);
 		EXPECT(next_token(p, NULL), tt_equal);
-		assert(!ACCEPT(peek_token(p), tt_let));
 		def->exp = parse_expression(p);
 	} else {
 		/* procedure definition */
 		EXPECT(tok, tt_lparen);
 		struct expression *proc = POOL_ALLOC(&p->data, struct expression);
+		proc->tok = def->id;
 		proc->tag = ast_exp_procedure_literal;
 		/* parse formal parameter list */
 		if (!ACCEPT(peek_token(p), tt_rparen)) {
@@ -311,6 +284,7 @@ struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl)
 	switch ((int)next_token(p, &tok)->tt) {
 	case tt_let:
 		exp = POOL_ALLOC(&p->data, struct expression);
+		exp->tok = tok;
 		exp->tag = ast_exp_definition;
 		parse_definition(p, &exp->as.def);
 		symtbl_add(symtbl, &exp->as.def);
@@ -319,15 +293,15 @@ struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl)
 	default: {
 		char str[0x1000] = {0};
 		printf("last = %s\n", show_token(str, sizeof(str), tok));
-		assert(0 && "TODO: parse_expression.");
+		FAILWITH("TODO: parse_expression.");
 	} break;
 	}
 	return exp;
 }
 
-#define ASSOC_LEFT(x)       (-(x))
-#define ASSOC_RIGHT(x)      (x)
-#define ASSOC_LEFT_P(x)     ((x) < 0)
+#define ASSOC_LEFT(x)   (-(x))
+#define ASSOC_RIGHT(x)  (x)
+#define ASSOC_LEFT_P(x) ((x) < 0)
 
 static int precedence(enum operator op)
 {
@@ -479,7 +453,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_let:
 			if (op_prev == false) goto flush; // in this case let acts as a terminator
 			op_prev = false;
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			exp->tag = ast_exp_let;
 			parse_definition(p, &exp->as.def);
 			EXPECT(next_token(p, NULL), tt_in);
@@ -489,13 +463,13 @@ static struct expression *parse_expression(Parser *p)
 		case tt_if:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			da_append(&out, parse_if(p, exp));
 			break;
 		case tt_case: {
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			exp->tag = ast_exp_case;
 			struct exp_case *c = &exp->as.ccase;
 			c->cexp = parse_expression(p);
@@ -555,7 +529,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_return:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			exp->tag = ast_exp_return;
 			if (ACCEPT(next_token(p, &tok), tt_lbrace)) { // return struct literal
 				FAILWITH("TODO: parse struct literal");
@@ -572,13 +546,13 @@ static struct expression *parse_expression(Parser *p)
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tag = ast_exp_ident;
-			next_token(p, &exp->as.id);
+			exp->tok = next_token(p, &exp->as.id);
 			da_append(&out, exp);
 			break;
 		case tt_true:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, &tok);
+			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->as.lit.token = tok;
 			exp->as.lit.as.i = 1;
@@ -587,7 +561,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_false:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, &tok);
+			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->as.lit.token = tok;
 			exp->as.lit.as.i = 0;
@@ -596,7 +570,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_intlit:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, &tok);
+			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->as.lit.token = tok;
 			exp->as.lit.as.i = strtoll(tok->sv.ptr, NULL, 10);
@@ -606,7 +580,7 @@ static struct expression *parse_expression(Parser *p)
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tag = ast_exp_literal;
-			next_token(p, &tok);
+			exp->tok = next_token(p, &tok);
 			exp->as.lit.token = tok;
 			exp->as.lit.as.i = strtoll(tok->sv.ptr+2, NULL, 16);
 			da_append(&out, exp);
@@ -615,7 +589,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_undefined:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, &tok);
+			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_undefined;
 			exp->as.lit.token = tok;
 			exp->as.lit.as.i = 0;
@@ -623,7 +597,7 @@ static struct expression *parse_expression(Parser *p)
 			break;
 		case tt_noreturn: FAILWITH("TODO: tt_noreturn"); break;
 		case tt_lbrace:
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			assert(op_prev == true);
 			op_prev = false;
 			if (ACCEPT(peek_token(p), tt_ident) && ACCEPT(peek_token2(p), tt_equal)) {
@@ -666,7 +640,7 @@ static struct expression *parse_expression(Parser *p)
 			break;
 		case tt_lbracket:
 			// TODO: slice constructor
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			assert(op_prev == false);
 			exp->tag = ast_exp_unary;
 			exp->as.idx.op = op_index;
@@ -676,7 +650,7 @@ static struct expression *parse_expression(Parser *p)
 			break;
 			/* operators */
 		case tt_lparen: {
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			if (op_prev) {
 				da_append(&ops, NULL); // Null is interperated as lparen
 				goto repeat;
@@ -736,7 +710,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_period:
 			assert(op_prev == false);
 			op_prev = true;
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			exp->tag = ast_exp_binary;
 			exp->as.bin.op = (enum operator)tt;
 			shunt(exp, &out, &ops);
@@ -745,14 +719,14 @@ static struct expression *parse_expression(Parser *p)
 		case tt_tilde:
 		case tt_bang:
 			assert(op_prev == true);
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			exp->tag = ast_exp_unary;
 			exp->as.una.op = (enum operator)tt;
 			shunt(exp, &out, &ops);
 			break;
 			/* binary or unary ops */
 		case tt_plus:
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			if (op_prev) {
 				exp->tag = ast_exp_unary;
 				exp->as.una.op = op_pos;
@@ -765,7 +739,7 @@ static struct expression *parse_expression(Parser *p)
 			}
 			break;
 		case tt_minus:
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			if (op_prev) {
 				exp->tag = ast_exp_unary;
 				exp->as.una.op = op_neg;
@@ -778,7 +752,7 @@ static struct expression *parse_expression(Parser *p)
 			}
 			break;
 		case tt_star:
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			if (op_prev) {
 				exp->tag = ast_exp_unary;
 				exp->as.una.op = op_dereference;
@@ -791,7 +765,7 @@ static struct expression *parse_expression(Parser *p)
 			}
 			break;
 		case tt_and:
-			next_token(p, NULL);
+			next_token(p, &exp->tok);
 			if (op_prev) {
 				exp->tag = ast_exp_unary;
 				exp->as.una.op = op_address_of;
