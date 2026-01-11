@@ -322,6 +322,7 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				for (;;) {
 					int c = lex_peekc(lex);
 					if (c == '*'
+						|| c == ','
 						|| !ispunct(c)
 						|| isbrace(c)) break;
 					lex_nextc(lex);
@@ -348,8 +349,8 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				else if (sv_is_equal(tok.sv, sv_of_cstr("||")))  tok.tt = tt_pipe_pipe;
 				else if (sv_is_equal(tok.sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
 				else {
-					printf("invalid operator = `"SV_FMT"`.\n", SV_ARGS(&tok.sv));
-					assert(0 && "TODO: invalid operator.");
+					log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc,
+									  "invalid operator `"SV_FMT"`.", SV_ARGS(&tok.sv));
 				}
 				break;
 			}

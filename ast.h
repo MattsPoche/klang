@@ -322,3 +322,4 @@ struct expression {
 };
 
 static struct type AST_TYPE_BOOL = {.tag = ast_type_bool};
+static struct type AST_TYPE_VOID = {.tag = ast_type_void};

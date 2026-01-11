@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
+
 #include "strview.h"
 #include "common.h"
 #include "lex.h"
@@ -41,6 +43,30 @@ char *fmt_str(const char *fmt, ...)
 void append_line(struct lines *lines, char *str)
 {
 	da_append(lines, str);
+}
+
+char *concat_lines(struct lines *lines, const char *delim)
+{
+	assert(lines->len > 0);
+	size_t delim_len = strlen(delim);
+	size_t total_len = (lines->len - 1) * delim_len;
+	da_foreach(line, lines) {
+		total_len += strlen(*line);
+	}
+	char *str = malloc(total_len + 1);
+	assert(str != NULL);
+	for (size_t i = 0; i < total_len; ++i) {
+		da_foreach(line, lines) {
+			for (size_t j = 0; (*line)[j] != 0; ++j, ++i) {
+				str[i] = (*line)[j];
+			}
+			for (size_t j = 0; delim[j] != 0; ++j, ++i) {
+				str[i] = delim[j];
+			}
+		}
+	}
+	str[total_len] = 0;
+	return str;
 }
 
 static struct strview current_line(struct strview sv, size_t idx)

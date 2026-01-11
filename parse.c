@@ -263,7 +263,7 @@ static void parse_definition(Parser *p, struct definition *def)
 		next_token(p, NULL);
 		/* parse return type */
 		if (ACCEPT(peek_token(p), tt_equal)) {
-			proc->as.proc.ret = NULL;
+			proc->as.proc.ret = &AST_TYPE_VOID;
 		} else {
 			proc->as.proc.ret = parse_type(p);
 		}
