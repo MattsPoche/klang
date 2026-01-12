@@ -281,6 +281,7 @@ enum ast_exp_tag {
 	ast_exp_literal,
 	ast_exp_initializer,
 	ast_exp_named_initializer,
+	ast_exp_zero_initializer,
 	ast_exp_procedure_literal,
 	ast_exp_undefined,
 	ast_exp_ident,

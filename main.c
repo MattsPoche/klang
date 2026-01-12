@@ -335,7 +335,16 @@ bool def_coerce(Parser *p, struct definition *def, struct expression *exp)
 		return type_coerce(def->type, exp->type);
 	case ast_type_array: {
 		struct array_type *array_type = &def->type->as.array;
-		if (exp->tag == ast_exp_initializer) {
+		if (exp->tag == ast_exp_zero_initializer) {
+			switch (array_type->stag) {
+			case AT_UNSIZED:    FAILWITH("TODO: Unsized array used with zero initializer"); break;
+			case AT_EXPRESSION: FAILWITH("TODO: AT_EXPRESSION"); break;
+			case AT_LITERAL:
+				assert(exp->type == NULL);
+				exp->type = def->type;
+				return true;
+			}
+		} else if (exp->tag == ast_exp_initializer) {
 			assert(exp->type == NULL);
 			struct expression_stack *init_exps = &exp->as.init;
 			struct type *base = array_type->base;
@@ -358,6 +367,7 @@ bool def_coerce(Parser *p, struct definition *def, struct expression *exp)
 			FAILWITH("TODO: type error");
 		} else {
 			assert(array_type->stag != AT_UNSIZED);
+			assert(exp->type != NULL);
 			return TYPE_EQ(def->type, exp->type, exp);
 		}
 	} break;
@@ -758,6 +768,10 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 			break;
 		}
 	} break;
+	case ast_exp_zero_initializer: {
+		exp->is_mutable = true;
+		exp->is_addressable = false;
+	} break;
 	case ast_exp_initializer: {
 		struct expression_stack *init_exps = &exp->as.init;
 		da_foreach(e, init_exps) {
@@ -856,7 +870,7 @@ enum ir_opcode {
 	ir_op_store,
 	ir_op_lea,
 	ir_op_memcpy,
-	ir_op_memset,
+	ir_op_memzero,
 	IR_OPCODE_COUNT,
 };
 
@@ -1197,6 +1211,25 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 		} else {
 			FAILWITH("TODO: ast_exp_literal");
 		}
+		return blk;
+	} break;
+	case ast_exp_zero_initializer: {
+		assert(dst.tag == DST_CPY);
+		size_t sz = type_size(exp->type);
+		int tmp = ir_proc_new_reg(proc);
+		da_append(&blk->code, (IR_Ins){
+				.op = ir_op_load_imm,
+				.type = IR_I64,
+				.dst = tmp,
+				.arg.u32 = sz,
+			});
+		da_append(&blk->code, (IR_Ins){
+				.op = ir_op_memzero,
+				.type = IR_I8,
+				.dst = dst.rx[0],
+				.arg.rx[0] = dst.rx[1],
+				.arg.rx[1] = tmp,
+			});
 		return blk;
 	} break;
 	case ast_exp_initializer: {
@@ -1662,7 +1695,11 @@ void ir_ins_fprint(IR_Ins *ins, FILE *file)
 		fprintf(file, "> %d(%%%d)", ins->arg.rx[1], ins->arg.rx[0]);
 	} break;
 	case ir_op_memcpy: FAILWITH("TODO: ir_op_memcpy"); break;
-	case ir_op_memset: FAILWITH("TODO: ir_op_memset"); break;
+	case ir_op_memzero: {
+		fprintf(file, "memzero<");
+		ir_type_fprint(ins->type, file);
+		fprintf(file, "> %d(%%%d), %%%d", ins->arg.rx[0], ins->dst, ins->arg.rx[1]);
+	} break;
 	case IR_OPCODE_COUNT:
 	default: FAILWITH("Unreachable"); break;
 	}
@@ -1986,7 +2023,7 @@ static char *asm_reg_d_name[ASM_REG_COUNT] = {
 	[asm_reg_r12] = "%r12d",
 	[asm_reg_r13] = "%r13d",
 	[asm_reg_r14] = "%r14d",
-	[asm_reg_r15] = "%r15w",
+	[asm_reg_r15] = "%r15d",
 };
 
 static const char *asm_reg_q_name[ASM_REG_COUNT] = {
@@ -2158,9 +2195,9 @@ void asm_context_block(struct asm_context *ctx, struct ir_proc *proc, struct ir_
 			addr->tag = ADDR_IMM_INT;
 			addr->as.i = ins->arg.i32;
 		} break;
-		case ir_op_store: /* do nothing */ break;
-		case ir_op_memcpy: FAILWITH("TODO: ir_op_memcpy"); break;
-		case ir_op_memset: FAILWITH("TODO: ir_op_memset"); break;
+		case ir_op_store:
+		case ir_op_memzero: /* do nothing */ break;
+		case ir_op_memcpy:  FAILWITH("TODO: ir_op_memcpy"); break;
 		case IR_OPCODE_COUNT:
 		default: FAILWITH("Unreachable"); break;
 		}
@@ -2867,7 +2904,82 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			}
 		} break;
 		case ir_op_memcpy:		FAILWITH("TODO: ir_op_memcpy");		break;
-		case ir_op_memset:		FAILWITH("TODO: ir_op_memset");		break;
+		case ir_op_memzero: {
+			struct asm_address *dst = &ctx->locals[ins->dst];
+			int offset = ins->arg.rx[0];
+			struct asm_address *x   = &ctx->locals[ins->arg.rx[1]];
+			assert(x->tag == ADDR_IMM_INT);
+			size_t total_sz = ir_type_size(ins->type) * x->as.i;
+			switch (dst->tag) {
+			case ADDR_REGISTER:  FAILWITH("TODO: ADDR_REGISTER");  break;
+			case ADDR_TEMP_REG:	 FAILWITH("TODO: ADDR_TEMP_REG");  break;
+			case ADDR_IMM_INT:	 FAILWITH("TODO: ADDR_IMM_INT");   break;
+			case ADDR_IMM_FLOAT: FAILWITH("TODO: ADDR_IMM_FLOAT"); break;
+			case ADDR_STACK: {
+				if (total_sz % 8 == 0 && total_sz / 8 < 10) {
+					size_t c = total_sz / 8;
+					enum asm_register tmp = asm_assign_register(ctx, ins->dst);
+					const char *tmp_name = asm_reg_name(tmp, IR_I64);
+					append_line(&code->body, fmt_str("\txorq %s, %s\n", tmp_name, tmp_name));
+					for (size_t i = 0; i < c; ++i) {
+						append_line(&code->body, fmt_str(
+										"\tmovq %s, %ld(%%rbp)\n",
+										tmp_name,
+										(dst->as.i + offset) + (i * 8)));
+					}
+					asm_unassign_register(ctx, tmp);
+				} else if (total_sz % 4 == 0 && total_sz / 4 < 10) {
+					size_t c = total_sz / 4;
+					enum asm_register tmp = asm_assign_register(ctx, ins->dst);
+					const char *tmp_name = asm_reg_name(tmp, IR_I32);
+					append_line(&code->body, fmt_str("\txorl %s, %s\n", tmp_name, tmp_name));
+					for (size_t i = 0; i < c; ++i) {
+						append_line(&code->body, fmt_str(
+										"\tmovl %s, %ld(%%rbp)\n",
+										tmp_name,
+										(dst->as.i + offset) + (i * 4)));
+					}
+					asm_unassign_register(ctx, tmp);
+				} else if (total_sz % 2 == 0 && total_sz / 2 < 10) {
+					size_t c = total_sz / 2;
+					enum asm_register tmp = asm_assign_register(ctx, ins->dst);
+					const char *tmp_name = asm_reg_name(tmp, IR_I16);
+					append_line(&code->body, fmt_str("\txorl %s, %s\n",
+													 asm_reg_d_name[tmp],
+													 asm_reg_d_name[tmp]));
+					for (size_t i = 0; i < c; ++i) {
+						append_line(&code->body, fmt_str(
+										"\tmovw %s, %ld(%%rbp)\n",
+										tmp_name,
+										(dst->as.i + offset) + (i * 2)));
+					}
+					asm_unassign_register(ctx, tmp);
+				} else if (total_sz < 10) {
+					size_t c = total_sz;
+					enum asm_register tmp = asm_assign_register(ctx, ins->dst);
+					const char *tmp_name = asm_reg_name(tmp, IR_I8);
+					append_line(&code->body, fmt_str("\txorl %s, %s\n",
+													 asm_reg_d_name[tmp],
+													 asm_reg_d_name[tmp]));
+					for (size_t i = 0; i < c; ++i) {
+						append_line(&code->body, fmt_str(
+										"\tmovb %s, %ld(%%rbp)\n",
+										tmp_name,
+										dst->as.i + offset + i));
+					}
+					asm_unassign_register(ctx, tmp);
+				} else {
+					FAILWITH("TODO: ADDR_STACK");
+				}
+			} break;
+			case ADDR_STACK_LOAD: FAILWITH("TODO: ADDR_STACK_LOAD"); break;
+			case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");    break;
+			case ADDR_SYMBOL:	 FAILWITH("TODO: ADDR_SYMBOL");	   break;
+			case ADDR_FLAGS:	 FAILWITH("TODO: ADDR_FLAGS");	   break;
+			case ADDR_NONE:		 FAILWITH("TODO: ADDR_NONE");	   break;
+			default: FAILWITH("Unreachable"); break;
+			}
+		} break;
 		case IR_OPCODE_COUNT:
 		default: FAILWITH("Unreachable"); break;
 		}

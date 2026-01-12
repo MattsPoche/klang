@@ -158,8 +158,15 @@ static struct type *parse_type(Parser *p)
 			type->as.array.base = parse_type(p);
 			if (ACCEPT(peek_token(p), tt_comma)) {
 				next_token(p, NULL);
-				type->as.array.stag = AT_EXPRESSION;
-				type->as.array.size.exp = parse_expression(p);
+				struct expression *exp = parse_expression(p);
+				if (exp->tag == ast_exp_literal) {
+					assert(exp->tok->tt == tt_intlit || exp->tok->tt == tt_hexlit);
+					type->as.array.stag = AT_LITERAL;
+					type->as.array.size.sz = exp->as.lit.as.i;
+				} else {
+					type->as.array.stag = AT_EXPRESSION;
+					type->as.array.size.exp = exp;
+				}
 			} else {
 				type->as.array.stag = AT_UNSIZED;
 			}
@@ -573,7 +580,7 @@ static struct expression *parse_expression(Parser *p)
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->as.lit.token = tok;
-			exp->as.lit.as.i = strtoll(tok->sv.ptr, NULL, 10);
+			assert(sv_to_int(tok->sv, &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
 		case tt_hexlit:
@@ -582,7 +589,7 @@ static struct expression *parse_expression(Parser *p)
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, &tok);
 			exp->as.lit.token = tok;
-			exp->as.lit.as.i = strtoll(tok->sv.ptr+2, NULL, 16);
+			assert(sv_to_int(tok->sv, &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
 		case tt_floatlit: FAILWITH("TODO: tt_floatlit"); break;
@@ -619,6 +626,9 @@ static struct expression *parse_expression(Parser *p)
 				}
 				exp->as.named_init.ids = ids;
 				exp->as.named_init.exps = exps;
+			} else if (ACCEPT(peek_token(p), tt_rbrace)) {
+				next_token(p, &exp->tok);
+				exp->tag = ast_exp_zero_initializer;
 			} else {
 				exp->tag = ast_exp_initializer;
 				struct expression_stack exps = {0};
@@ -967,6 +977,9 @@ void ast_fprint(struct expression *exp, FILE *file)
 		break;
 	case ast_exp_undefined:
 		fputs("undefined", file);
+		break;
+	case ast_exp_zero_initializer:
+		fputs("{}", file);
 		break;
 	case ast_exp_initializer:
 		fputc('{', file);
