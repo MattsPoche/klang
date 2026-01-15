@@ -71,7 +71,7 @@ struct strview sv_of_cstr(char *str)
 	return (struct strview){.len = strlen(str), .ptr = str};
 }
 
-static int conv_tbl[UINT8_MAX] = {
+static int8_t conv_tbl[UINT8_MAX] = {
 	['0'] = 0x0,
 	['1'] = 0x1,
 	['2'] = 0x2,
