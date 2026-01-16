@@ -1,5 +1,4 @@
-#ifndef DA_H_
-#define DA_H_
+#pragma once
 
 #define DA_INIT_CAP    16
 #define da_len(da)     ((da)->len)
@@ -7,33 +6,14 @@
 #define da_elems(da)   ((da)->elems)
 #define DA_ELEM_SZ(da) (sizeof(*da_elems(da)))
 
-/* #define da_grow(da)														\ */
-/* 	do {																\ */
-/* 		if (da_cap(da) == 0) {											\ */
-/* 			da_cap(da) = DA_INIT_CAP;									\ */
-/* 			da_elems(da) = malloc(DA_INIT_CAP * DA_ELEM_SZ(da));		\ */
-/* 		} else {														\ */
-/* 			da_cap(da) *= 2;											\ */
-/* 			da_elems(da) = realloc(da_elems(da), da_cap(da) * DA_ELEM_SZ(da)); \ */
-/* 		}																\ */
-/* 		assert(da_elems(da) != NULL);									\ */
-/* 	} while (0) */
 #define da_grow(da)														\
 	(da_cap(da) == 0													\
 	 ? (da_cap(da) = DA_INIT_CAP, da_elems(da) = malloc(DA_INIT_CAP * DA_ELEM_SZ(da))) \
 	 : (da_cap(da) *= 2, da_elems(da) = realloc(da_elems(da), da_cap(da) * DA_ELEM_SZ(da))))
 
-/* #define da_append(da, ...)							\ */
-/* 	do {											\ */
-/* 		if (da_len(da) >= da_cap(da)) {				\ */
-/* 			da_grow(da);							\ */
-/* 		}											\ */
-/* 		da_elems(da)[da_len(da)++] = (__VA_ARGS__);	\ */
-/* 	} while (0) */
 #define da_append(da, ...)									\
 	((da_len(da) >= da_cap(da) ? da_grow(da) : (void)0),	\
 	 da_elems(da)[da_len(da)++] = (__VA_ARGS__))
-
 
 #define da_allot(da)													\
 	((da_append(da, (typeof(0[da_elems(da)])){0})), &da_elems(da)[da_len(da)-1])
@@ -79,5 +59,3 @@
 		if (da_elems(da)) free(da_elems(da));	\
 		da_init(da);							\
 	} while (0)
-
-#endif /* DA_H_ */

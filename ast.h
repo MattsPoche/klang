@@ -325,6 +325,6 @@ struct expression {
 static struct type AST_TYPE_BOOL = {.tag = ast_type_bool};
 static struct type AST_TYPE_VOID = {.tag = ast_type_void};
 static struct type AST_TYPE_U64  = {.tag = ast_type_u64};
-static struct type AST_TYPE_U32  = {.tag = ast_type_u32};
-static struct type AST_TYPE_U16  = {.tag = ast_type_u16};
-static struct type AST_TYPE_U8   = {.tag = ast_type_u8};
+UNUSED static struct type AST_TYPE_U32  = {.tag = ast_type_u32};
+UNUSED static struct type AST_TYPE_U16  = {.tag = ast_type_u16};
+UNUSED static struct type AST_TYPE_U8   = {.tag = ast_type_u8};

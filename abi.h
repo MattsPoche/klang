@@ -50,7 +50,9 @@ enum asm_register_class {
 enum asm_addr_tag {
 	ADDR_NONE,
 	ADDR_ARGUMENT,
-	ADDR_PUSH_REG,
+	ADDR_WIDE,
+	ADDR_STACK_ARG,
+	ADDR_PUSH_ARG,
 	ADDR_REGISTER,
 	ADDR_TEMP_REG,
 	ADDR_IMM_INT,
@@ -68,9 +70,11 @@ struct asm_address {
 		int64_t i;
 		double d;
 		float f;
-		int32_t sta[2]; /* stack address */
+		int32_t stack[2]; /* stack address */
+		int32_t wide[2];  /* two registers to hold value */
 	} as;
 	struct type *type;
+	size_t stack_size;
 };
 
 struct asm_context {
