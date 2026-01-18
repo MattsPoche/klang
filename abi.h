@@ -50,22 +50,27 @@ enum asm_register_class {
 enum asm_addr_tag {
 	ADDR_NONE,
 	ADDR_ARGUMENT,
-	ADDR_WIDE,
-	ADDR_STACK_ARG,
+	ADDR_WIDE_ARG,
 	ADDR_PUSH_ARG,
 	ADDR_REGISTER,
+	ADDR_WIDE,
 	ADDR_TEMP_REG,
 	ADDR_IMM_INT,
 	ADDR_IMM_FLOAT,
 	ADDR_STACK,
 	ADDR_STACK_LOAD,
+	ADDR_STACK_ARG,
 	ADDR_BLK_ARG,
 	ADDR_SYMBOL,
 	ADDR_FLAGS,
 };
 
+struct ir_ins;
+struct asm_procedure;
+
 struct asm_address {
 	enum asm_addr_tag tag;
+	struct type *type;
 	union {
 		int64_t i;
 		double d;
@@ -73,14 +78,24 @@ struct asm_address {
 		int32_t stack[2]; /* stack address */
 		int32_t wide[2];  /* two registers to hold value */
 	} as;
-	struct type *type;
-	size_t stack_size;
+	union {
+		size_t stack_size;
+		struct defer_closure {
+			void (*fun)(struct ir_ins *, void *, struct asm_procedure *);
+			struct ir_ins *ins;
+			void *dat;
+		} defered;
+	} extra;
 };
 
 struct asm_context {
 	uint64_t clobbered;
 	size_t stack_size;
 	size_t arg_stack_size;
+	struct asm_addresses {
+		uint32_t len, cap;
+		struct asm_address **elems;
+	} funargs;
 	size_t varc;
 	struct asm_address *vars;
 	int assigned[ASM_REG_COUNT];
@@ -113,3 +128,4 @@ struct asm_modules {
 const enum asm_register asm_reg_alloc_ord[ASM_REG_COUNT];
 const enum asm_register asm_arg_regs[ASM_ARG_REG_COUNT];
 const enum asm_register asm_callee_save_regs[];
+const enum asm_register asm_caller_save_regs[];
