@@ -2646,6 +2646,32 @@ void asm_emit_basic_op(const char *asm_op, IR_Ins *ins, struct asm_address *dst,
 		append_line(&code->body, fmt_str("\tmov%c %s, %s\n", suffix, x_name, d_name));
 		const char *y_name = asm_source_operand_to_str(y, type, ctx, tl);
 		append_line(&code->body, fmt_str("\t%s%c %s, %s\n", asm_op, suffix, y_name, d_name));
+	} else if (MATCH_ADDR3(ADDR_REGISTER, ADDR_REGISTER, ADDR_REGISTER)) {
+		const char *d_name = asm_reg_name(dst->as.i, type);
+		asm_reserve_register(ctx, dst->as.i, ins->dst);
+		int suffix = asm_suffix(type);
+		if (dst->as.i == x->as.i) {
+			append_line(&code->body, fmt_str(
+							"\t%s%c %s, %s\n",
+							asm_op,
+							suffix,
+							asm_reg_name(y->as.i, type),
+							d_name));
+		} else {
+			append_line(&code->body, fmt_str(
+							"\tmov%c %s, %s\n",
+							suffix,
+							asm_reg_name(x->as.i, type),
+							d_name));
+			append_line(&code->body, fmt_str(
+							"\t%s%c %s, %s\n",
+							asm_op,
+							suffix,
+							asm_reg_name(y->as.i, type),
+							d_name));
+			asm_unassign_register(ctx, x->as.i);
+		}
+		asm_unassign_register(ctx, y->as.i);
 	} else {
 		FAILWITH("Unhandled case: MATCH_ADDR3(%s, %s, %s)",
 				 asm_addr_tag_to_str(dst->tag),
@@ -2754,120 +2780,64 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
 			struct asm_address *y   = &ctx->vars[ins->arg.rx[1]];
 			if (MATCH_ADDR3(ADDR_REGISTER, ADDR_STACK_LOAD, ADDR_IMM_INT)) {
-				FAILWITH("Unhandled case: MATCH_ADDR3(ADDR_REGISTER, ADDR_STACK_LOAD, ADDR_IMM_INT)");
+				const char *dst_name = asm_reg_name(dst->as.i, ins->type);
+				int suffix = asm_suffix(ins->type);
+				append_line(&code->body, fmt_str(
+								"\tmov%c %d(%%rbp), %s\n",
+								suffix,
+								x->as.stack[0] + x->as.stack[1],
+								dst_name));
+				append_line(&code->body, fmt_str(
+								"\t%s%c $%ld, %s\n",
+								asm_op,
+								suffix,
+								y->as.i,
+								dst_name));
+			} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_STACK_LOAD, ADDR_IMM_INT)) {
+				dst->tag = ADDR_REGISTER;
+				dst->as.i = asm_assign_register(ctx, ins->dst);
+				const char *dst_name = asm_reg_name(dst->as.i, ins->type);
+				int suffix = asm_suffix(ins->type);
+				append_line(&code->body, fmt_str(
+								"\tmov%c %d(%%rbp), %s\n",
+								suffix,
+								x->as.stack[0] + x->as.stack[1],
+								dst_name));
+				append_line(&code->body, fmt_str(
+								"\t%s%c $%ld, %s\n",
+								asm_op,
+								suffix,
+								y->as.i,
+								dst_name));
+			} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_STACK_LOAD, ADDR_STACK_LOAD)) {
+				asm_reserve_register(ctx, asm_reg_rcx, ins->arg.rx[1]);
+				dst->tag = ADDR_REGISTER;
+				dst->as.i = asm_assign_register(ctx, ins->dst);
+				int suffix = asm_suffix(ins->type);
+				const char *dst_name = asm_reg_name(dst->as.i, ins->type);
+				append_line(&code->body, fmt_str(
+								"\tmov%c %d(%%rbp), %s\n",
+								suffix,
+								x->as.stack[0] + x->as.stack[1],
+								dst_name));
+				append_line(&code->body, fmt_str(
+								"\tmov%c %d(%%rbp), %s\n",
+								suffix,
+								y->as.stack[0] + y->as.stack[1],
+								asm_reg_name(asm_reg_rcx, ins->type)));
+				append_line(&code->body, fmt_str(
+								"\t%s%c %s, %s\n",
+								asm_op,
+								suffix,
+								asm_reg_b_name[asm_reg_rcx],
+								dst_name));
+				asm_unassign_register(ctx, asm_reg_rcx);
 			} else {
 				FAILWITH("Unhandled case: MATCH_ADDR3(%s, %s, %s)",
 						 asm_addr_tag_to_str(dst->tag),
 						 asm_addr_tag_to_str(x->tag),
 						 asm_addr_tag_to_str(y->tag));
 			}
-#if 0
-			switch (dst->tag) {
-			case ADDR_STACK_ARG:  FAILWITH("TODO: ADDR_STACK_ARG");  break;
-			case ADDR_WIDE_ARG:  FAILWITH("TODO: ADDR_WIDE_ARG");  break;
-			case ADDR_PUSH_ARG:  FAILWITH("TODO: ADDR_PUSH_ARG");  break;
-			case ADDR_REGISTER: {
-				enum asm_register dst_reg = dst->as.i;
-				if (asm_register_assigned_p(ctx, dst_reg)) {
-					FAILWITH("TODO: resolve register conflict.");
-				} else {
-					asm_reserve_register(ctx, dst_reg, ins->dst);
-				}
-				/* make sure rcx is available for shift */
-				if (asm_register_assigned_p(ctx, asm_reg_rcx)) {
-					assert((y->tag == ADDR_REGISTER && y->as.i == asm_reg_rcx)
-						   || (y->tag == ADDR_IMM_INT));
-				} else {
-					asm_reserve_register(ctx, asm_reg_rcx, ins->arg.rx[1]);
-				}
-				switch (x->tag) {
-				case ADDR_STACK_ARG:  FAILWITH("TODO: ADDR_STACK_ARG");  break;
-				case ADDR_WIDE_ARG:  FAILWITH("TODO: ADDR_WIDE_ARG");  break;
-				case ADDR_PUSH_ARG:  FAILWITH("TODO: ADDR_PUSH_ARG");  break;
-				case ADDR_REGISTER:   FAILWITH("TODO: ADDR_REGISTER");  break;
-				case ADDR_TEMP_REG:	  FAILWITH("TODO: ADDR_TEMP_REG");  break;
-				case ADDR_IMM_INT:    FAILWITH("TODO: ADDR_IMM_INT");   break;
-				case ADDR_IMM_FLOAT:  FAILWITH("TODO: ADDR_IMM_FLOAT"); break;
-				case ADDR_STACK:      FAILWITH("TODO: ADDR_STACK");     break;
-				case ADDR_STACK_LOAD: {
-					const char *dst_name = asm_reg_name(dst_reg, ins->type);
-					append_line(&code->body, fmt_str(
-									"\tmov%c %d(%%rbp), %s\n",
-									asm_suffix(ins->type),
-									x->as.stack[0] + x->as.stack[1],
-									dst_name));
-					/* special case if value is already in rcx */
-					switch (y->tag) {
-					case ADDR_STACK_ARG:  FAILWITH("TODO: ADDR_STACK_ARG");  break;
-					case ADDR_WIDE_ARG:  FAILWITH("TODO: ADDR_WIDE_ARG");  break;
-					case ADDR_PUSH_ARG:  FAILWITH("TODO: ADDR_PUSH_ARG");  break;
-					case ADDR_REGISTER: {
-						if (y->as.i != asm_reg_rcx) {
-							append_line(&code->body, fmt_str(
-											"\tmov%c %s, %s\n",
-											asm_suffix(ins->type),
-											asm_reg_name(y->as.i, ins->type),
-											asm_reg_name(asm_reg_rcx, ins->type)));
-						}
-						append_line(&code->body, fmt_str(
-										"\t%s%c %%cl, %s\n",
-										asm_op,
-										asm_suffix(ins->type),
-										dst_name));
-					} break;
-					case ADDR_IMM_INT: {
-						append_line(&code->body, fmt_str(
-										"\t%s%c $%ld, %s\n",
-										asm_op,
-										asm_suffix(ins->type),
-										y->as.i,
-										dst_name));
-					} break;
-					case ADDR_STACK: FAILWITH("TODO: ADDR_STACK"); break;
-					case ADDR_STACK_LOAD: {
-						append_line(&code->body, fmt_str(
-										"\tmov%c %d(%%rbp), %s\n",
-										asm_suffix(ins->type),
-										y->as.stack[0] + y->as.stack[1],
-										asm_reg_name(asm_reg_rcx, ins->type)));
-						append_line(&code->body, fmt_str(
-										"\t%s%c %%cl, %s\n",
-										asm_op,
-										asm_suffix(ins->type),
-										dst_name));
-					} break;
-					case ADDR_SYMBOL:     FAILWITH("TODO: ADDR_SYMBOL");     break;
-					case ADDR_TEMP_REG:	  FAILWITH("TODO: ADDR_TEMP_REG");   break;
-					case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");    break;
-					case ADDR_FLAGS:	  FAILWITH("TODO: ADDR_FLAGS");	     break;
-					case ADDR_NONE:		  FAILWITH("TODO: ADDR_NONE");	     break;
-					case ADDR_IMM_FLOAT:  FAILWITH("TODO: ADDR_IMM_FLOAT");  break;
-					case ADDR_ARGUMENT:
-					default: FAILWITH("Unreachable"); break;
-					}
-				} break;
-				case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");   break;
-				case ADDR_SYMBOL:	  FAILWITH("TODO: ADDR_SYMBOL");    break;
-				case ADDR_FLAGS:	  FAILWITH("TODO: ADDR_FLAGS");	    break;
-				case ADDR_NONE:		  FAILWITH("TODO: ADDR_NONE");	    break;
-				case ADDR_ARGUMENT:
-				default: FAILWITH("Unreachable"); break;
-				}
-				asm_unassign_register(ctx, asm_reg_rcx);
-			} break;
-			case ADDR_TEMP_REG:   FAILWITH("TODO: ADDR_TEMP_REG");  break;
-			case ADDR_IMM_INT:	  FAILWITH("TODO: ADDR_IMM_INT");   break;
-			case ADDR_IMM_FLOAT:  FAILWITH("TODO: ADDR_IMM_FLOAT"); break;
-			case ADDR_STACK:      FAILWITH("TODO: ADDR_STACK");     break;
-			case ADDR_STACK_LOAD: FAILWITH("TODO: ADDR_STACK_LOAD"); break;
-			case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");   break;
-			case ADDR_SYMBOL:	  FAILWITH("TODO: ADDR_SYMBOL");    break;
-			case ADDR_FLAGS:      FAILWITH("TODO: ADDR_FLAGS");     break;
-			case ADDR_NONE:		  FAILWITH("TODO: ADDR_NONE");	    break;
-			case ADDR_ARGUMENT:
-			default: FAILWITH("Unreachable"); break;
-			}
-#endif
 		} break;
 		case ir_op_neg: 	   FAILWITH("TODO: ir_op_neg");		    break;
 		case ir_op_getelemptr: {
