@@ -7,7 +7,8 @@ tests = [
 	{"file_name": "tests/small_array.k", "exit_code": 111, "output": None},
 	{"file_name": "tests/stack_args.k",  "exit_code": 36,  "output": None},
 	{"file_name": "tests/memory_arg.k",  "exit_code": 15,  "output": None},
-	{"file_name": "tests/bit_shift.k",   "exit_code": 72, "output": None},
+	{"file_name": "tests/bit_shift.k",   "exit_code": 72,  "output": None},
+	{"file_name": "tests/large_return_values.k", "exit_code": 11, "output": None},
 ]
 
 def run_test(file_name, exit_code, output):

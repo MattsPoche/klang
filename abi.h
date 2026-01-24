@@ -80,6 +80,7 @@ struct asm_address {
 	} as;
 	union {
 		size_t stack_size;
+		int64_t offset;
 		struct defer_closure {
 			void (*fun)(struct ir_ins *, void *, struct asm_procedure *);
 			struct ir_ins *ins;

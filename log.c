@@ -69,6 +69,24 @@ char *concat_lines(struct lines *lines, const char *delim)
 	return str;
 }
 
+char *strjoin(const char *s1, const char *s2, const char *delim)
+{
+	size_t s1_len = strlen(s1);
+	size_t s2_len = strlen(s2);
+	size_t delim_len = delim ? strlen(delim) : 0;
+	size_t total_len = s1_len + s2_len + delim_len;
+	char *cat = malloc(total_len + 1);
+	assert(cat != NULL);
+	char *cp = cat;
+	while (*s1) *cp++ = *s1++;
+	if (delim) {
+		while (*delim) *cp++ = *delim++;
+	}
+	while (*s2) *cp++ = *s2++;
+	*cp = 0;
+	return cat;
+}
+
 static struct strview current_line(struct strview sv, size_t idx)
 {
 	char *begin;
