@@ -153,7 +153,7 @@ struct array_type {
 	} size;
 };
 
-struct struct_members {
+struct struct_type {
 	uint32_t len, cap;
 	struct struct_member {
 		struct token *name;
@@ -171,7 +171,7 @@ struct type {
 	union {
 		struct proc_type proc;
 		struct array_type array;
-		struct struct_members strct;
+		struct struct_type strct;
 		struct type_cons cons;
 		struct type *ptr;
 		struct type *mut_ptr;

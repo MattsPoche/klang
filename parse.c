@@ -146,7 +146,7 @@ static struct type *parse_type(Parser *p)
 			next_token(p, NULL);
 			type = POOL_ALLOC(&p->data, struct type);
 			type->tag = ast_type_struct;
-			struct struct_members st = {0};
+			struct struct_type st = {0};
 			struct struct_member mem = {0};
 			struct token *tok;
 			if (peek_token(p)->tt == tt_ident

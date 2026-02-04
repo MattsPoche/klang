@@ -12,6 +12,8 @@
 
 #define ARRAY_LENGTH(array) (sizeof(array)/sizeof((array)[0]))
 #define ABS(x) ((x) < 0 ? -(x) : (x))
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define FAILWITH(_fmt_msg, ...)										\
 	do {															\
 		fflush(stdout);												\
