@@ -19,6 +19,8 @@ int64_t file_size(FILE *f);
 bool sv_open_file(const char *filename, struct strview *sv);
 bool sv_is_equal(struct strview s1, struct strview s2);
 struct strview sv_of_cstr(char *str);
+char *sv_to_cstr(struct strview sv);
+size_t sv_unescape_string(struct strview sv, char **ret);
 bool sv_to_int(struct strview sv, int64_t *out);
 bool sv_to_int_base10(struct strview sv, int64_t *out);
 bool sv_to_int_base16(struct strview sv, int64_t *out);
@@ -69,6 +71,61 @@ bool sv_is_equal(struct strview s1, struct strview s2)
 struct strview sv_of_cstr(char *str)
 {
 	return (struct strview){.len = strlen(str), .ptr = str};
+}
+
+char *sv_to_cstr(struct strview sv)
+{
+	char *s = malloc(sv.len + 1);
+	assert(s != NULL);
+	memcpy(s, sv.ptr, sv.len);
+	s[sv.len] = 0;
+	return s;
+}
+
+int escape_char(int c)
+{
+	switch (c) {
+	case 'a':  return '\a';
+	case 'b':  return '\b';
+	case 'e':  return '\e';
+	case 'f':  return '\f';
+	case 'n':  return '\n';
+	case 'r':  return '\r';
+	case 't':  return '\t';
+	case 'v':  return '\v';
+	case '\\': return '\\';
+	case '\'': return '\'';
+	case '\"': return '\"';
+	case 'x': FAILWITH("TODO: escape hex");     break;
+	case 'u': FAILWITH("TODO: escape unicode"); break;
+	case 'U': FAILWITH("TODO: escape unicode"); break;
+	default: FAILWITH("TODO: invalid escape sequence."); break;
+	}
+}
+
+size_t sv_unescape_string(struct strview sv, char **ret)
+{
+	char *s = malloc(sv.len + 1);
+	assert(s != NULL);
+	int64_t length = 0;
+	size_t i = 0;
+	if (sv.len && sv.ptr[0] == '"') i++;
+	for (; i < sv.len; ++i) {
+		switch (sv.ptr[i]) {
+		case '"': goto done;
+		case '\\':
+			i++;
+			s[length] = escape_char(sv.ptr[i]);
+			break;
+		default:
+			s[length] = sv.ptr[i];
+		}
+		length++;
+	}
+done:
+	s[length] = 0;
+	*ret = s;
+	return length;
 }
 
 static int8_t conv_tbl[UINT8_MAX] = {

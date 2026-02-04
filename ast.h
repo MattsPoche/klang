@@ -279,6 +279,7 @@ enum ast_exp_tag {
 	ast_exp_definition,
 	ast_exp_let,
 	ast_exp_literal,
+	ast_exp_string,
 	ast_exp_initializer,
 	ast_exp_named_initializer,
 	ast_exp_zero_initializer,
@@ -292,6 +293,9 @@ enum ast_exp_tag {
 	ast_exp_return,
 	ast_exp_break,
 	ast_exp_continue,
+	ast_exp_extern_symbol,
+	ast_exp_get_ptr,
+	ast_exp_get_len,
 };
 
 struct expression {
@@ -312,6 +316,8 @@ struct expression {
 		enum operator      op;
 		struct unary       una;
 		struct binary      bin;
+		struct expression *get_ptr;
+		struct expression *get_len;
 		struct expression *ret;
 		struct token      *id;
 		struct expression_stack init;
@@ -322,9 +328,11 @@ struct expression {
 	} as;
 };
 
-static struct type AST_TYPE_BOOL = {.tag = ast_type_bool};
-static struct type AST_TYPE_VOID = {.tag = ast_type_void};
-static struct type AST_TYPE_U64  = {.tag = ast_type_u64};
-UNUSED static struct type AST_TYPE_U32  = {.tag = ast_type_u32};
-UNUSED static struct type AST_TYPE_U16  = {.tag = ast_type_u16};
-UNUSED static struct type AST_TYPE_U8   = {.tag = ast_type_u8};
+struct type AST_TYPE_BOOL   = {.tag = ast_type_bool};
+struct type AST_TYPE_VOID   = {.tag = ast_type_void};
+struct type AST_TYPE_U64    = {.tag = ast_type_u64};
+struct type AST_TYPE_U32	= {.tag = ast_type_u32};
+struct type AST_TYPE_U16	= {.tag = ast_type_u16};
+struct type AST_TYPE_U8		= {.tag = ast_type_u8};
+struct type AST_TYPE_I8     = {.tag = ast_type_i8};
+struct type AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};

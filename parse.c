@@ -39,8 +39,8 @@ static struct token *next_token(Parser *p, struct token **rt)
 	return tok;
 }
 
-static int expect(Parser *p, struct token *token, enum token_type tag,
-				  const char *debug_filename, const int debug_line)
+static struct token *expect(Parser *p, struct token *token, enum token_type tag,
+							const char *debug_filename, const int debug_line)
 {
 	if (token->tt != tag) {
 		log_error_impl(p->lexer.filename, p->lexer.contents, token->sv, token->loc,
@@ -48,7 +48,7 @@ static int expect(Parser *p, struct token *token, enum token_type tag,
 					   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(&token->sv));
 		exit(1);
 	}
-	return 1;
+	return token;
 }
 
 #define ACCEPT(token, tag) ((token)->tt == (tag))
@@ -85,7 +85,6 @@ struct definition *lookup_definition(struct token *name, struct scope *scope)
 		if (def) return def;
 		scope = scope->parent;
 	}
-	FAILWITH("TODO: undefined identifier");
 	return NULL;
 }
 
@@ -108,6 +107,40 @@ static struct type *parse_type(Parser *p)
 	for (;;) {
 		enum ast_type_tag tag;
 		switch ((int)peek_token(p)->tt) {
+		case tt_and: {
+			struct token *tok;
+			assert(type == NULL);
+			next_token(p, NULL);
+			if (ACCEPT(next_token(p, &tok), tt_bang)) {
+				EXPECT(next_token(p, NULL), tt_lbracket);
+				type = POOL_ALLOC(&p->data, struct type);
+				type->tag = ast_type_mut_slice;
+			} else {
+				EXPECT(tok, tt_lbracket);
+				type = POOL_ALLOC(&p->data, struct type);
+				type->tag = ast_type_slice;
+			}
+			type->as.slice = parse_type(p);
+			EXPECT(next_token(p, NULL), tt_rbracket);
+		} break;
+		case tt_lparen: {
+			assert(type == NULL);
+			next_token(p, NULL);
+			type = POOL_ALLOC(&p->data, struct type);
+			type->tag = ast_type_proc;
+			da_init(&type->as.proc.args);
+			/* parse formal parameter list */
+			if (!ACCEPT(peek_token(p), tt_rparen)) {
+				for (;;) {
+					da_append(&type->as.proc.args, parse_type(p));
+					if (ACCEPT(peek_token(p), tt_rparen)) break;
+					EXPECT(next_token(p, NULL), tt_comma);
+				}
+			}
+			next_token(p, NULL);
+			EXPECT(next_token(p, NULL), tt_minus_more); // ->
+			type->as.proc.ret = parse_type(p);
+		} break;
 		case tt_lbrace: {
 			assert(type == NULL);
 			next_token(p, NULL);
@@ -150,7 +183,7 @@ static struct type *parse_type(Parser *p)
 			}
 			type->as.strct = st;
 		} break;
-		case tt_lbracket:
+		case tt_lbracket: {
 			assert(type == NULL);
 			next_token(p, NULL);
 			type = POOL_ALLOC(&p->data, struct type);
@@ -171,7 +204,7 @@ static struct type *parse_type(Parser *p)
 				type->as.array.stag = AT_UNSIZED;
 			}
 			EXPECT(next_token(p, NULL), tt_rbracket);
-			break;
+		} break;
 		case tt_star: {
 			assert(type != NULL);
 			next_token(p, NULL);
@@ -549,10 +582,49 @@ static struct expression *parse_expression(Parser *p)
 			}
 			da_append(&out, exp);
 			break;
+		case tt_extern:
+			/* TODO: check that string is a valid symbol.
+			 */
+			assert(op_prev == true);
+			op_prev = false;
+			next_token(p, NULL);
+			EXPECT(next_token(p, NULL), tt_lparen);
+			EXPECT(next_token(p, &exp->tok), tt_string);
+			EXPECT(next_token(p, NULL), tt_rparen);
+			exp->tag = ast_exp_extern_symbol;
+			da_append(&out, exp);
+			break;
+		case tt_ptr:
+			assert(op_prev == true);
+			op_prev = false;
+			next_token(p, NULL);
+			exp->tag = ast_exp_get_ptr;
+			EXPECT(next_token(p, NULL), tt_lparen);
+			exp->as.get_ptr = parse_expression(p);
+			EXPECT(next_token(p, NULL), tt_rparen);
+			da_append(&out, exp);
+			break;
+		case tt_len:
+			assert(op_prev == true);
+			op_prev = false;
+			next_token(p, NULL);
+			exp->tag = ast_exp_get_len;
+			EXPECT(next_token(p, NULL), tt_lparen);
+			exp->as.get_ptr = parse_expression(p);
+			EXPECT(next_token(p, NULL), tt_rparen);
+			da_append(&out, exp);
+			break;
 		case tt_ident:
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tag = ast_exp_ident;
+			exp->tok = next_token(p, &exp->as.id);
+			da_append(&out, exp);
+			break;
+		case tt_string:
+			assert(op_prev == true);
+			op_prev = false;
+			exp->tag = ast_exp_string;
 			exp->tok = next_token(p, &exp->as.id);
 			da_append(&out, exp);
 			break;
@@ -806,11 +878,7 @@ static struct expression *parse_expression(Parser *p)
 		case TOKEN_TYPE_MAX:
 			FAILWITH("Invalid token (parse_expression)");
 			break;
-		default: {
-			char str[0x1000] = {0};
-			printf("last = %s\n", show_token(str, sizeof(str), tok));
-			assert(0 && "TODO: parse_expression.");
-		} break;
+		default: FAILWITH("Unreachable"); break;
 		}
 	}
 flush:
@@ -862,7 +930,7 @@ void ast_type_fprint(struct type *t, FILE *file)
 				ast_type_fprint(t->as.proc.args.elems[i], file);
 			}
 		}
-		fputs(") ", file);
+		fputs(") -> ", file);
 		ast_type_fprint(t->as.proc.ret, file);
 		break;
 	case ast_type_struct:
@@ -903,14 +971,9 @@ void ast_type_fprint(struct type *t, FILE *file)
 		fputc('*', file);
 		break;
 	case ast_type_slice:
-		FAILWITH("TODO: ast_type_slice.");
-#if 0
 		fputs("&[", file);
 		ast_type_fprint(t->as.slice, file);
-		fputs(", ", file);
-		ast_fprint(t->as.array.size, file);
 		fputc(']', file);
-#endif
 		break;
 	case ast_type_mut_slice:
 		FAILWITH("TODO: ast_type_mut_slice.");
@@ -933,7 +996,8 @@ static void ast_def_fprint(struct definition *def, FILE *file)
 	fputs("let ", file);
 	if (def->is_mut) fputs("mut ", file);
 	fprintf(file, SV_FMT, SV_ARGS(&def->id->sv));
-	if (def->type->tag == ast_type_proc) {
+	if (def->type->tag == ast_type_proc
+		&& def->exp->tag == ast_exp_procedure_literal) {
 		struct procedure *proc = &def->exp->as.proc;
 		fputc('(', file);
 		if (proc->formals.len > 0) {
@@ -1007,8 +1071,22 @@ void ast_fprint(struct expression *exp, FILE *file)
 		}
 		fputc('}', file);
 	} break;
+	case ast_exp_string:
 	case ast_exp_ident:
 		fprintf(file, SV_FMT, SV_ARGS(&exp->as.id->sv));
+		break;
+	case ast_exp_get_ptr:
+		fputs("#ptr(", file);
+		ast_fprint(exp->as.get_ptr, file);
+		fputc(')', file);
+		break;
+	case ast_exp_get_len:
+		fputs("#len(", file);
+		ast_fprint(exp->as.get_ptr, file);
+		fputc(')', file);
+		break;
+	case ast_exp_extern_symbol:
+		fprintf(file, "#extern("SV_FMT")", SV_ARGS(&exp->tok->sv));
 		break;
 	case ast_exp_binary:
 		fputc('(', file);

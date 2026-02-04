@@ -111,11 +111,19 @@ struct asm_procedure {
 	struct asm_context ctx;
 };
 
+struct asm_datum {
+	struct lines body;
+};
+
 struct asm_module {
 	struct asm_procedures {
 		uint32_t len, cap;
 		struct asm_procedure *elems;
 	} procs;
+	struct asm_data {
+		uint32_t len, cap;
+		struct asm_datum *elems;
+	} data;
 };
 
 struct asm_modules {

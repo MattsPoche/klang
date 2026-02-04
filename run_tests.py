@@ -9,10 +9,11 @@ tests = [
 	{"file_name": "tests/memory_arg.k",  "exit_code": 15,  "output": None},
 	{"file_name": "tests/bit_shift.k",   "exit_code": 72,  "output": None},
 	{"file_name": "tests/large_return_values.k", "exit_code": 11, "output": None},
+	{"file_name": "tests/hello_world.k", "exit_code": 0, "output": "Hello, World\n"},
 ]
 
 def run_test(file_name, exit_code, output):
-	print(f"Running test '{file_name}' ... ", end="")
+	print(f'Running test "{file_name}" ... ', end="")
 	result = subprocess.run(["./kc", file_name], capture_output=True)
 	if result.returncode != 0:
 		print("FAILED at compilation.")
@@ -21,8 +22,8 @@ def run_test(file_name, exit_code, output):
 	if exit_code is not None and exit_code != result.returncode:
 		print(f"FAILED expected exit code {exit_code} but got {result.returncode}.")
 		return False
-	if output is not None and output != result.stdout:
-		print(f"FAILED unexpected stdout.")
+	if output is not None and output != result.stdout.decode('UTF-8'):
+		print("FAILED unexpected stdout.")
 		return False
 	print("PASSED.")
 	return True

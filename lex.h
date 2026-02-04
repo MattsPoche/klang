@@ -80,6 +80,7 @@ enum token_type {
 	/* Basic Data Types */
 	tt_void,
 	tt_bool,
+	tt_string,
 	/* Integer */
 	tt_i8,
 	tt_i16,
@@ -96,13 +97,17 @@ enum token_type {
 	tt_hexlit,
 	tt_intlit,
 	tt_floatlit,
+	/* Hash symbols */
 	tt_undefined,
 	tt_noreturn,
+	tt_extern,
+	tt_ptr,
+	tt_len,
 	TOKEN_TYPE_MAX,
 };
 
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
-CHECK_EXAUSTIVE_KEYWORDS(58);
+CHECK_EXAUSTIVE_KEYWORDS(62);
 
 struct srcloc {
 	int32_t line;
