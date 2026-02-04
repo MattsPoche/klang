@@ -9,6 +9,7 @@ struct strview sv_vfmt(const char *fmt, va_list ap);
 struct strview sv_fmt(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 char *fmt_str(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 char *strjoin(const char *s1, const char *s2, const char *delim);
+char *subst_file_suffix(const char *file_name, const char *prefix);
 void append_line(struct lines *lines, char *str);
 void log_errorv(const char *filename, struct strview contents, struct strview svsub,
 				struct srcloc loc, const char *debug_file, int debug_line,

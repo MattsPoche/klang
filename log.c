@@ -87,6 +87,25 @@ char *strjoin(const char *s1, const char *s2, const char *delim)
 	return cat;
 }
 
+char *subst_file_suffix(const char *file_name, const char *prefix)
+{
+	char *end_ptr = strrchr(file_name, '.');
+	size_t len = end_ptr ? (size_t)(end_ptr - file_name) : strlen(file_name);
+	size_t prefix_len = strlen(prefix);
+	char *new_name = malloc(len + prefix_len + 2);
+	assert(new_name != NULL);
+	char *ptr = new_name;
+	for (size_t i = 0; i < len; ++i) {
+		*ptr++ = file_name[i];
+	}
+	*ptr++ = '.';
+	for (size_t i = 0; i < prefix_len; ++i) {
+		*ptr++ = prefix[i];
+	}
+	*ptr = 0;
+	return new_name;
+}
+
 static struct strview current_line(struct strview sv, size_t idx)
 {
 	char *begin;

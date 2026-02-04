@@ -4188,26 +4188,38 @@ int run_cmd(struct lines *args)
 	return c;
 }
 
-int assemble_and_link(struct lines *asm_files, char *target)
+// as --gdwarf-5 --64 syntax.s -o syntax.o
+// ld -dynamic-linker /lib/ld-linux-x86-64.so.2 /usr/lib/crt1.o /usr/lib/crti.o -lc syntax.o /usr/lib/crtn.o
+int assemble_module(struct asm_module *mod, char *target, bool debug)
 {
 	struct lines cmd = {0};
-	da_append(&cmd, "cc");
-	da_append(&cmd, "-ggdb");
-	da_copy(&cmd, asm_files);
+	da_append(&cmd, "as");
+	if (debug) da_append(&cmd, "--gdwarf-5");
+	da_append(&cmd, "--64");
 	da_append(&cmd, "-o");
 	da_append(&cmd, target);
-	int c = run_cmd(&cmd);
+	char *cmd_str = concat_lines(&cmd, " ");
+	printf("[Info] %s\n", cmd_str);
+	FILE *assembler = popen(cmd_str, "w");
+	assert(assembler != NULL);
+	asm_dump_module(mod, assembler);
+	int c = pclose(assembler);
+	free(cmd_str);
 	da_free(&cmd);
 	return c;
 }
 
-int assemble_dll(struct lines *asm_files, char *target)
+int link_object_files(struct lines *obj_files, char *target, bool is_dll)
 {
 	struct lines cmd = {0};
-	da_append(&cmd, "cc");
-	da_append(&cmd, "-ggdb");
-	da_append(&cmd, "-shared");
-	da_copy(&cmd, asm_files);
+	da_append(&cmd, "ld");
+	if (is_dll) da_append(&cmd, "-shared");
+	da_append(&cmd, "-dynamic-linker /lib/ld-linux-x86-64.so.2");
+	da_append(&cmd, "/usr/lib/crt1.o");
+	da_append(&cmd, "/usr/lib/crti.o");
+	da_append(&cmd, "-lc");
+	da_copy(&cmd, obj_files);
+	da_append(&cmd, "/usr/lib/crtn.o");
 	da_append(&cmd, "-o");
 	da_append(&cmd, target);
 	int c = run_cmd(&cmd);
@@ -4245,6 +4257,7 @@ int main(int argc, char **argv)
 	static char cwd[PATH_MAX] = {0};
 	struct lines input_files = {0};
 	struct lines asm_files = {0};
+	struct lines obj_files = {0};
 	struct asm_modules asm_modules = {0};
 	char *target_file = "a.out";
 	bool output_asm_p = false;
@@ -4266,25 +4279,31 @@ int main(int argc, char **argv)
 			return 1;
 		} else {
 			da_append(&input_files, strdup(input));
-			size_t len = strlen(input);
-			input[len-1] = 's';
-			da_append(&asm_files, strdup(input));
 		}
 	}
-	/* emit target files */
 	for (size_t i = 0; i < input_files.len; ++i) {
 		compile_file(input_files.elems[i], da_allot(&asm_modules), run_p);
-		FILE *file = fopen(asm_files.elems[i], "w");
-		assert(file != NULL);
-		asm_dump_module(&asm_modules.elems[i], file);
-		fclose(file);
+		da_append(&asm_files, subst_file_suffix(input_files.elems[i], "s"));
+	}
+	if (output_asm_p) {
+		for (size_t i = 0; i < asm_files.len; ++i) {
+			FILE *file = fopen(asm_files.elems[i], "w");
+			assert(file != NULL);
+			asm_dump_module(&asm_modules.elems[i], file);
+			fclose(file);
+		}
+	}
+	for (size_t i = 0; i < input_files.len; ++i) {
+		char *obj_file = subst_file_suffix(input_files.elems[i], "o");
+		assemble_module(&asm_modules.elems[i], obj_file, true);
+		da_append(&obj_files, obj_file);
 	}
 	if (run_p) {
 		char *dlname = strjoin(cwd, "dlrun.so", "/");
-		assemble_dll(&asm_files, dlname);
+		link_object_files(&obj_files, dlname, true);
 		printf("%d\n", run(dlname));
-	} else if (!output_asm_p) {
-		assemble_and_link(&asm_files, target_file);
+	} else {
+		link_object_files(&obj_files, target_file, false);
 	}
 	return 0;
 }
