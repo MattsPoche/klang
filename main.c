@@ -226,11 +226,43 @@ bool type_is_pointer(struct type *t)
 		|| t->tag == ast_type_proc;
 }
 
+bool type_is_array(struct type *t)
+{
+	return t->tag == ast_type_array;
+}
+
+bool type_is_array_ptr(struct type *t)
+{
+	return type_is_pointer(t)
+		&& type_is_array(t->as.ptr);
+}
+
 bool type_is_slice(struct type *t)
 {
 	return t->tag == ast_type_slice
 		|| t->tag == ast_type_mut_slice;
 }
+
+bool type_is_slice_ptr(struct type *t)
+{
+	return type_is_pointer(t)
+		&& type_is_slice(t->as.ptr);
+}
+
+bool type_has_length(struct type *t)
+{
+	if (type_is_array(t)) {
+		return t->as.array.stag == AT_LITERAL
+			|| t->as.array.stag == AT_EXPRESSION;
+	}
+	if (type_is_array_ptr(t)) {
+		return t->as.ptr->as.array.stag == AT_LITERAL
+			|| t->as.ptr->as.array.stag == AT_EXPRESSION;
+	}
+	return type_is_slice(t)
+		|| type_is_slice_ptr(t);
+}
+
 
 bool type_is_scalar(struct type *t)
 {
@@ -492,9 +524,9 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		exp->is_addressable = false;
 		exp->is_mutable = false;
 		exp->type = &AST_TYPE_U64;
-		if (!type_is_slice(obj->type)) {
+		if (!type_has_length(obj->type)) {
 			log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
-							  "Invalid argument type for operator `#len`. Expected slice.");
+							  "Invalid argument type for operator `#len`.");
 		}
 	} break;
 	case ast_exp_string: {
@@ -1556,56 +1588,86 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 		FAILWITH("TODO: ast_exp_binary");
 	} break;
 	case ast_exp_get_len: {
-		struct expression *slice = exp->as.get_ptr;
-		switch (dst.tag) {
-		case DST_VAL: {
-			int slice_reg = ir_proc_new_reg(tl, proc_id);
-			int idx = ir_proc_new_reg(tl, proc_id);
-			int tmp = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(slice, DEST_REF(slice_reg), proc_id, blk, scope, tl);
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_loadimm,
-					.type = &AST_TYPE_U64,
-					.dst  = idx,
-					.arg.u32 = 1,
-				});
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_getelemptr,
-					.type = slice->type,
-					.dst  = tmp,
-					.arg.rx[0] = slice_reg,
-					.arg.rx[1] = idx,
-				});
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_load,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.rx[0] = tmp,
-				});
-			return blk;
-		} break;
-		case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
-		case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
-		default: FAILWITH("Unreachable"); break;
+		struct expression *target = exp->as.get_ptr;
+		if (type_is_slice(target->type)) {
+			switch (dst.tag) {
+			case DST_VAL: {
+				int target_reg = ir_proc_new_reg(tl, proc_id);
+				int idx = ir_proc_new_reg(tl, proc_id);
+				int tmp = ir_proc_new_reg(tl, proc_id);
+				blk = ast_compile_expression(target, DEST_REF(target_reg), proc_id, blk, scope, tl);
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_loadimm,
+						.type = &AST_TYPE_U64,
+						.dst  = idx,
+						.arg.u32 = 1,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_getelemptr,
+						.type = target->type,
+						.dst  = tmp,
+						.arg.rx[0] = target_reg,
+						.arg.rx[1] = idx,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_load,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.rx[0] = tmp,
+					});
+				return blk;
+			} break;
+			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
+			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+		} else if (type_is_array(target->type)) {
+			size_t len = 0;
+			switch (target->type->as.array.stag) {
+			case AT_LITERAL: len = target->type->as.array.size.sz; break;
+			case AT_EXPRESSION: FAILWITH("TODO: AT_EXPRESSION"); break;
+			case AT_UNSIZED: FAILWITH("TODO: AT_UNSIZED"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+			switch (dst.tag) {
+			case DST_VAL: {
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_loadimm,
+						.type = &AST_TYPE_U64,
+						.dst  = dst.reg,
+						.arg.u32 = len,
+					});
+				return blk;
+			} break;
+			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
+			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+		} else {
+			FAILWITH("TODO: ast_exp_get_len");
 		}
 	} break;
 	case ast_exp_get_ptr: {
 		struct expression *slice = exp->as.get_ptr;
-		switch (dst.tag) {
-		case DST_VAL: {
-			int slice_reg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(slice, DEST_REF(slice_reg), proc_id, blk, scope, tl);
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_load,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.rx[0] = slice_reg,
-				});
-			return blk;
-		} break;
-		case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
-		case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
-		default: FAILWITH("Unreachable"); break;
+		if (type_is_slice(slice->type)) {
+			switch (dst.tag) {
+			case DST_VAL: {
+				int slice_reg = ir_proc_new_reg(tl, proc_id);
+				blk = ast_compile_expression(slice, DEST_REF(slice_reg), proc_id, blk, scope, tl);
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_load,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.rx[0] = slice_reg,
+					});
+				return blk;
+			} break;
+			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
+			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+		} else {
+			FAILWITH("TODO: ast_exp_get_ptr");
 		}
 	} break;
 	case ast_exp_unary: {
@@ -3797,10 +3859,10 @@ struct asm_module *compile_file(const char *filename, struct asm_module *asm_mod
 	struct scope sc = {
 		.symtbl = symtbl,
 	};
-	puts("[Debug Info]");
-	da_foreach(exp, &tl) {
-		infer_type(&parser, *exp, NULL, &sc);
-		ast_fprint(*exp, stdout);
+	for (size_t i = 0; i < tl.len; ++i) {
+		infer_type(&parser, tl.elems[i], NULL, &sc);
+		puts("[Debug Info]");
+		ast_fprint(tl.elems[i], stdout);
 		fputc('\n', stdout);
 	}
 	struct ir_toplevel ir = ast_compile(&sc);

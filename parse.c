@@ -587,7 +587,7 @@ static struct expression *parse_expression(Parser *p)
 			 */
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			exp->tok = next_token(p, NULL);
 			EXPECT(next_token(p, NULL), tt_lparen);
 			EXPECT(next_token(p, &exp->tok), tt_string);
 			EXPECT(next_token(p, NULL), tt_rparen);
@@ -597,7 +597,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_ptr:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_ptr;
 			EXPECT(next_token(p, NULL), tt_lparen);
 			exp->as.get_ptr = parse_expression(p);
@@ -607,7 +607,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_len:
 			assert(op_prev == true);
 			op_prev = false;
-			next_token(p, NULL);
+			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_len;
 			EXPECT(next_token(p, NULL), tt_lparen);
 			exp->as.get_ptr = parse_expression(p);
