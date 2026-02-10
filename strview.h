@@ -186,7 +186,10 @@ bool sv_to_int(struct strview sv, int64_t *out)
 		}
 		switch (sv.ptr[1]) {
 		case 'x':
-		case 'X': return sv_to_int_base16(sv, out);
+		case 'X':
+			sv.ptr += 2;
+			sv.len -= 2;
+			return sv_to_int_base16(sv, out);
 		default:  FAILWITH("TODO: unknown base (sv_to_int)."); break;
 		}
 	}

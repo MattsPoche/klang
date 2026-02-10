@@ -17,6 +17,8 @@
 #include "parse.h"
 #include "log.h"
 
+const char *ast_binop_to_str(enum binop op);
+
 /* --- Parser --- */
 static struct token *peek_token2(Parser *p)
 {
@@ -53,7 +55,6 @@ static struct token *expect(Parser *p, struct token *token, enum token_type tag,
 
 #define ACCEPT(token, tag) ((token)->tt == (tag))
 #define EXPECT(token, tag) expect(p, token, tag, __FILE__, __LINE__)
-
 
 static struct type *parse_type(Parser *p);
 static void parse_definition(Parser *p, struct definition *def);
@@ -442,7 +443,10 @@ static struct expression *build_expression_tree(struct expression_stack *out)
 	for (size_t i = 0; i < out->len; ++i) {
 		exp = out->elems[i];
 		if (exp->tag == ast_exp_binary) {
-			assert(stack.len >= 2);
+			if (stack.len < 2) {
+				printf("exp->as.bin.op = %s\n", ast_binop_to_str((enum binop)exp->as.bin.op));
+				assert(stack.len >= 2);
+			}
 			exp->as.bin.right = da_pop(&stack);
 			exp->as.bin.left = da_pop(&stack);
 		} else if (exp->tag == ast_exp_unary) {
@@ -506,6 +510,17 @@ static struct expression *parse_expression(Parser *p)
 			next_token(p, &exp->tok);
 			da_append(&out, parse_if(p, exp));
 			break;
+		case tt_while:
+			assert(op_prev == true);
+			op_prev = false;
+			next_token(p, &exp->tok);
+			exp->tag = ast_exp_while;
+			exp->as.wloop.cond = parse_expression(p);
+			EXPECT(next_token(p, NULL), tt_do);
+			exp->as.wloop.body = parse_expression(p);
+			EXPECT(next_token(p, NULL), tt_done);
+			da_append(&out, exp);
+			break;
 		case tt_case: {
 			assert(op_prev == true);
 			op_prev = false;
@@ -550,7 +565,6 @@ static struct expression *parse_expression(Parser *p)
 		case tt_double_quote: FAILWITH("TODO: tt_double_quote"); break;
 		case tt_question: FAILWITH("TODO: tt_question"); break;
 		case tt_as: FAILWITH("TODO: tt_as"); break;
-		case tt_while: FAILWITH("TODO: tt_while"); break;
 		case tt_for: FAILWITH("TODO: tt_for"); break;
 		case tt_break: FAILWITH("TODO: tt_break"); break;
 		case tt_continue: FAILWITH("TODO: tt_continue"); break;
@@ -889,9 +903,47 @@ flush:
 	return exp;
 }
 
+const char *ast_binop_to_str(enum binop op)
+{
+	switch (op) {
+	case binop_sequence:		   return "binop_sequence";
+	case binop_add:				   return "binop_add";
+	case binop_sub:				   return "binop_sub";
+	case binop_mul:				   return "binop_mul";
+	case binop_div:				   return "binop_div";
+	case binop_mod:				   return "binop_mod";
+	case binop_xor:				   return "binop_xor";
+	case binop_land:			   return "binop_land";
+	case binop_lor:				   return "binop_lor";
+	case binop_equal:			   return "binop_equal";
+	case binop_less_than:		   return "binop_less_than";
+	case binop_more_than:		   return "binop_more_than";
+	case binop_member:			   return "binop_member";
+	case binop_assign:			   return "binop_assign";
+	case binop_and_assign:		   return "binop_and_assign";
+	case binop_lor_assign:		   return "binop_lor_assign";
+	case binop_xor_assign:		   return "binop_xor_assign";
+	case binop_add_assign:		   return "binop_add_assign";
+	case binop_sub_assign:		   return "binop_sub_assign";
+	case binop_mul_assign:		   return "binop_mul_assign";
+	case binop_div_assign:		   return "binop_div_assign";
+	case binop_mod_assign:		   return "binop_mod_assign";
+	case binop_not_equal:		   return "binop_not_equal";
+	case binop_less_equal:		   return "binop_less_equal";
+	case binop_more_equal:		   return "binop_more_equal";
+	case binop_shift_left:		   return "binop_shift_left";
+	case binop_shift_right:		   return "binop_shift_right";
+	case binop_shift_left_assign:  return "binop_shift_left_assign";
+	case binop_shift_right_assign: return "binop_shift_right_assign";
+	case binop_or:				   return "binop_or";
+	case binop_and:				   return "binop_and";
+	default: FAILWITH("Unreachable");
+	}
+}
+
 /* --- AST Printer --- */
-static void ast_def_fprint(struct definition *def, FILE *file);
-static void ast_type_fprint(struct type *t, FILE *file);
+void ast_def_fprint(struct definition *def, FILE *file);
+void ast_type_fprint(struct type *t, FILE *file);
 
 void ast_type_fprint(struct type *t, FILE *file)
 {
@@ -991,7 +1043,7 @@ void ast_type_fprint(struct type *t, FILE *file)
 	}
 }
 
-static void ast_def_fprint(struct definition *def, FILE *file)
+void ast_def_fprint(struct definition *def, FILE *file)
 {
 	fputs("let ", file);
 	if (def->is_mut) fputs("mut ", file);
@@ -1184,6 +1236,13 @@ void ast_fprint(struct expression *exp, FILE *file)
 			ast_fprint(exp->as.iff.fb, file);
 		}
 		fputs(" end", file);
+		break;
+	case ast_exp_while:
+		fputs("while ", file);
+		ast_fprint(exp->as.wloop.cond, file);
+		fputs(" do ", file);
+		ast_fprint(exp->as.wloop.body, file);
+		fputs(" done", file);
 		break;
 	case ast_exp_case: {
 		fputs("case ", file);

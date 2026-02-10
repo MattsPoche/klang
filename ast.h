@@ -223,6 +223,11 @@ struct exp_if {
 	struct expression *fb;
 };
 
+struct exp_while {
+	struct expression *cond;
+	struct expression *body;
+};
+
 struct expression_stack {
 	uint32_t len, cap;
 	struct expression **elems;
@@ -288,6 +293,7 @@ enum ast_exp_tag {
 	ast_exp_ident,
 	ast_exp_binary,
 	ast_exp_unary,
+	ast_exp_while,
 	ast_exp_if,
 	ast_exp_case,
 	ast_exp_return,
@@ -309,6 +315,7 @@ struct expression {
 		struct let         let;
 		struct literal     lit;
 		struct exp_if      iff;
+		struct exp_while   wloop;
 		struct exp_case    ccase;
 		struct call        call;
 		struct index       idx;
