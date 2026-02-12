@@ -1028,14 +1028,9 @@ void ast_type_fprint(struct type *t, FILE *file)
 		fputc(']', file);
 		break;
 	case ast_type_mut_slice:
-		FAILWITH("TODO: ast_type_mut_slice.");
-#if 0
 		fputs("&![", file);
 		ast_type_fprint(t->as.slice, file);
-		fputs(", ", file);
-		ast_fprint(t->as.array.size, file);
 		fputc(']', file);
-#endif
 		break;
 	default:
 		FAILWITH("Unreachable condition.");
@@ -1150,7 +1145,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 		case binop_sub:					fputs(" - ", file);   break;
 		case binop_mul:					fputs(" * ", file);   break;
 		case binop_div:					fputs(" / ", file);   break;
-		case binop_mod:					fputs(" %% ", file);  break;
+		case binop_mod:					fputs(" % ", file);  break;
 		case binop_xor:					fputs(" ^ ", file);   break;
 		case binop_land:				fputs(" & ", file);   break;
 		case binop_lor:					fputs(" | ", file);   break;

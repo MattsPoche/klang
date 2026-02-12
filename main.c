@@ -2433,8 +2433,9 @@ static void dfs_walk(struct ir_blk *blk, struct da_pointers *order, struct da_po
 	da_append(visited, blk);
 	switch (blk->term.op) {
 	case ir_op_if:
-		dfs_walk(blk->term.b0, order, visited);
+		/* traverse the false edge first */
 		dfs_walk(blk->term.b1, order, visited);
+		dfs_walk(blk->term.b0, order, visited);
 		break;
 	case ir_op_goto:
 		dfs_walk(blk->term.b0, order, visited);
@@ -3154,6 +3155,20 @@ enum asm_register asm_emit_move_to_callee_save(struct asm_address *addr, struct 
 	asm_unassign_register(ctx, addr->as.i);
 	ctx->vars[local].as.i = reg;
 	return reg;
+}
+
+enum asm_register asm_get_blk_arg_register(struct asm_context *ctx, int blk_arg)
+{
+	struct asm_address *b = &ctx->vars[blk_arg];
+	assert(b->tag == ADDR_BLK_ARG);
+	struct asm_address *a = &ctx->vars[b->as.i];
+	if (a->tag == ADDR_REGISTER) {
+		return a->as.i;
+	} else if (a->tag == ADDR_BLK_ARG) {
+		return asm_get_blk_arg_register(ctx, b->as.i);
+	}
+	FAILWITH("Unreachable");
+	return 0;
 }
 
 #define MATCH_ADDR3(_a0, _a1, _a2)				\
@@ -4329,7 +4344,10 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			for (size_t i = 0; i < ARRAY_LENGTH(asm_caller_save_regs); ++i) {
 				enum asm_register reg = asm_caller_save_regs[i];
 				if (asm_register_assigned_p(ctx, reg)) {
-					struct asm_address *addr = &ctx->vars[ctx->assigned[reg]];
+					int var = ctx->assigned[reg];
+					struct asm_address *addr = &ctx->vars[var];
+					printf("var = %%%d\n", var);
+					printf("addr->tag = %s\n", asm_addr_tag_to_str(addr->tag));
 					asm_emit_move_to_callee_save(addr, code);
 				}
 			}
@@ -4428,6 +4446,9 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 		}
 	} break;
 	case ir_op_goto: {
+		for (size_t i = 0; i < term->args.len; ++i) {
+			asm_unassign_register(ctx, asm_get_blk_arg_register(ctx, term->args.elems[i]));
+		}
 		if (blk_id < blocks->len - 1
 			&& term->b0 == blocks->elems[blk_id + 1]) {
 			/* fall through to block */
@@ -4440,35 +4461,29 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 		struct asm_address *cond = &ctx->vars[term->args.elems[0]];
 		if (cond->tag == ADDR_FLAGS) {
 			char *cc;
+			/* We want to jump to the false branch (and fallthrough to the true branch),
+			 * so we logically negate the comparison.
+			 */
 			switch (cond->as.stack[0]) {
-			case ir_op_cmpe:  cc = "e";  break;
-			case ir_op_cmpne: cc = "ne"; break;
-			case ir_op_cmpl:  cc = type_is_signed_scalar(cond->type) ? "l" : "b";   break;
-			case ir_op_cmpg:  cc = type_is_signed_scalar(cond->type) ? "g" : "a";   break;
-			case ir_op_cmple: cc = type_is_signed_scalar(cond->type) ? "le" : "be"; break;
-			case ir_op_cmpge: cc = type_is_signed_scalar(cond->type) ? "ge" : "ae"; break;
+			case ir_op_cmpe:  cc = "ne";  break;
+			case ir_op_cmpne: cc = "e"; break;
+			case ir_op_cmpl:  cc = type_is_signed_scalar(cond->type) ? "ge" : "ae"; break;
+			case ir_op_cmpg:  cc = type_is_signed_scalar(cond->type) ? "le" : "be"; break;
+			case ir_op_cmple: cc = type_is_signed_scalar(cond->type) ? "g" : "a";   break;
+			case ir_op_cmpge: cc = type_is_signed_scalar(cond->type) ? "l" : "b";   break;
 			default: FAILWITH("Unreachable"); break;
 			}
-			append_line(&code->body, fmt_str("\tj%s .L%p\n", cc, term->b0));
-			if (term->b1 == term->j0) {
-				append_line(&code->body, fmt_str("\tjmp .L%p\n", term->j0));
-			}
+			append_line(&code->body, fmt_str("\tj%s .L%p\n", cc, term->b1));
 		} else if (cond->tag == ADDR_STACK_LOAD) {
 			append_line(&code->body, fmt_str(
 							"\tcmpb $0, %d(%%rbp)\n",
 							cond->as.stack[0] + cond->as.stack[1]));
-			append_line(&code->body, fmt_str("\tjne .L%p\n", term->b0));
-			if (term->b1 == term->j0) {
-				append_line(&code->body, fmt_str("\tjmp .L%p\n", term->j0));
-			}
+			append_line(&code->body, fmt_str("\tje .L%p\n", term->b1));
 		} else if (cond->tag == ADDR_REGISTER) {
 			append_line(&code->body, fmt_str(
 							"\tcmpb $0, %s\n",
 							asm_reg_b_name[cond->as.i]));
-			append_line(&code->body, fmt_str("\tjne .L%p\n", term->b0));
-			if (term->b1 == term->j0) {
-				append_line(&code->body, fmt_str("\tjmp .L%p\n", term->j0));
-			}
+			append_line(&code->body, fmt_str("\tje .L%p\n", term->b1));
 		} else {
 			FAILWITH("TODO: cond->tag == %s", asm_addr_tag_to_str(cond->tag));
 		}
