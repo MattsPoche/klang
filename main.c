@@ -226,6 +226,11 @@ bool type_is_void(struct type *t)
 	return t->tag == ast_type_void;
 }
 
+bool type_is_procedure(struct type *t)
+{
+	return t->tag == ast_type_proc;
+}
+
 bool type_is_pointer(struct type *t)
 {
 	return t->tag == ast_type_ptr
@@ -285,6 +290,23 @@ bool type_has_length(struct type *t)
 bool type_is_scalar(struct type *t)
 {
 	return type_is_numeric_scalar(t) || type_is_pointer(t) || type_is_bool(t);
+}
+
+struct type *slice_type_to_array_ptr_type(struct mem_arena *pool, struct type *t)
+{
+	struct type *ptr = POOL_ALLOC(pool, struct type);
+	struct type *array = POOL_ALLOC(pool, struct type);
+	array->tag = ast_type_array;
+	array->as.array.stag = AT_UNSIZED;
+	array->as.array.base = t->as.slice;
+	if (t->tag == ast_type_mut_slice) {
+		ptr->tag = ast_type_mut_ptr;
+	} else {
+		assert(t->tag == ast_type_slice);
+		ptr->tag = ast_type_ptr;
+	}
+	ptr->as.ptr = array;
+	return ptr;
 }
 
 bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
@@ -552,15 +574,11 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		if (obj->type->tag == ast_type_slice) {
 			exp->is_addressable = false;
 			exp->is_mutable = false;
-			exp->type = POOL_ALLOC(&p->data, struct type);
-			exp->type->tag = ast_type_ptr;
-			exp->type->as.ptr = obj->type->as.slice;
+			exp->type = slice_type_to_array_ptr_type(&p->data, obj->type);
 		} else if (obj->type->tag == ast_type_mut_slice) {
 			exp->is_addressable = false;
 			exp->is_mutable = true;
-			exp->type = POOL_ALLOC(&p->data, struct type);
-			exp->type->tag = ast_type_mut_ptr;
-			exp->type->as.ptr = obj->type->as.slice;
+			exp->type = slice_type_to_array_ptr_type(&p->data, obj->type);
 		} else {
 			log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
 							  "Invalid argument type for operator `#ptr`. Expected slice.");
@@ -582,7 +600,7 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		exp->type = &AST_TYPE_STRING;
 	} break;
 	case ast_exp_ident: {
-		struct definition *def = lookup_definition(exp->as.id, scope);
+		struct definition *def = lookup_definition(scope, exp->as.id->sv);
 		if (def == NULL) {
 			log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
 							  "Reference to undefined symbol `"SV_FMT"`", SV_ARGS(&exp->as.id->sv));
@@ -812,9 +830,6 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 									  "Type error. Member accessor must be a positive integer literal.");
 				}
 				rhs->type = &AST_TYPE_U64;
-				ast_type_fprint(rhs->type, stdout);
-				fputc('\n', stdout);
-				printf("index = %ld\n", rhs->as.lit.as.i);
 				size_t index = rhs->as.lit.as.i;
 				if (index >= st->len) {
 					log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
@@ -903,6 +918,9 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 				log_error_and_die(p->lexer.filename, p->lexer.contents, rhs->tok->sv, rhs->tok->loc,
 								  "Index expression is not integer type.");
 			}
+			if (rhs->type->tag == ast_type_intlit) {
+				rhs->type->tag = ast_type_i64;
+			}
 			switch ((int)lhs->type->tag) {
 			case ast_type_mut_ptr:
 			case ast_type_ptr: {
@@ -918,7 +936,9 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 			} break;
 			case ast_type_mut_slice:
 			case ast_type_slice:
-				FAILWITH("TODO: ast_type_slice.");
+				exp->type = lhs->type->as.slice;
+				exp->is_addressable = true;
+				exp->is_mutable = lhs->is_mutable;
 				break;
 			case ast_type_array: {
 				exp->type = lhs->type->as.array.base;
@@ -952,9 +972,15 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 			exp->is_mutable = true;
 			exp->is_addressable = false;
 		} break;
-		default:
-			FAILWITH("Unreachable");
-			break;
+		case unaop_cast: {
+			struct expression *from = infer_type(p, exp->as.cast.exp, ret, scope);
+			assert(type_is_numeric_scalar(from->type));
+			assert(type_is_numeric_scalar(exp->as.cast.type));
+			exp->type = exp->as.cast.type;
+			exp->is_addressable = false;
+			exp->is_mutable = false;
+		} break;
+		default: FAILWITH("Unreachable"); break;
 		}
 	} break;
 	case ast_exp_zero_initializer: {
@@ -1078,7 +1104,18 @@ struct expression *ast_desugar(Parser *p, struct expression *exp)
 		return exp;
 	case ast_exp_undefined:			FAILWITH("TODO: ast_exp_undefined"); break;
 	case ast_exp_unary:
-		exp->as.una.exp = ast_desugar(p, exp->as.una.exp);
+		if ((enum unaop)exp->as.una.op == unaop_call) {
+			exp->as.call.proc = ast_desugar(p, exp->as.call.proc);
+			for (size_t i = 0; i < exp->as.call.args.len; ++i) {
+				exp->as.call.args.elems[i] = ast_desugar(p, exp->as.call.args.elems[i]);
+			}
+		} else if ((enum unaop)exp->as.una.op == unaop_index) {
+			struct index *idx = &exp->as.idx;
+			idx->exp = ast_desugar(p, idx->exp);
+			idx->idx = ast_desugar(p, idx->idx);
+		} else {
+			exp->as.una.exp = ast_desugar(p, exp->as.una.exp);
+		}
 		return exp;
 	case ast_exp_if:
 		exp->as.iff.cond = ast_desugar(p, exp->as.iff.cond);
@@ -1092,8 +1129,12 @@ struct expression *ast_desugar(Parser *p, struct expression *exp)
 	case ast_exp_literal:
 	case ast_exp_ident:
 	case ast_exp_extern_symbol: return exp;
-	case ast_exp_get_ptr:			FAILWITH("TODO: ast_exp_get_ptr"); break;
-	case ast_exp_get_len:			FAILWITH("TODO: ast_exp_get_len"); break;
+	case ast_exp_get_ptr:
+		exp->as.get_ptr = ast_desugar(p, exp->as.get_ptr);
+		return exp;
+	case ast_exp_get_len:
+		exp->as.get_len = ast_desugar(p, exp->as.get_len);
+		return exp;
 	case ast_exp_binary: {
 		struct expression *left = ast_desugar(p, exp->as.bin.left);
 		struct expression *right = ast_desugar(p, exp->as.bin.right);
@@ -1168,6 +1209,7 @@ enum ir_opcode {
 	ir_op_cmpg,
 	ir_op_cmple,
 	ir_op_cmpge,
+	ir_op_cast,
 	ir_op_retval,
 	ir_op_alloca,
 	ir_op_load,
@@ -1226,8 +1268,9 @@ struct ir_blk {
 
 enum ir_obj_tag {
 	IRO_PROC,
-	IRO_EXTERN,
 	IRO_DATA,
+	IRO_EXTERN_DATA,
+	IRO_EXTERN_PROC,
 };
 
 #define IR_OBJ_HDDR \
@@ -1689,7 +1732,7 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 			.data.tag  = IRO_DATA,
 			.data.size = length,
 			.data.dat  = str,
-			.data.link = fmt_str(".STR%zu", id),
+			.data.link = fmt_str(".LSTR%zu", id),
 		};
 		da_append(tl, p);
 		switch (dst.tag) {
@@ -1701,8 +1744,42 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 					.arg.u32 = id,
 				});
 		} break;
-		case DST_CPY: FAILWITH("TODO: ast_exp_string"); break;
-		case DST_REF: FAILWITH("TODO: ast_exp_string"); break;
+		case DST_CPY: {
+			int tmp = ir_proc_new_reg(tl, proc_id);
+			da_append(&blk->code, (IR_Ins){
+					.op   = ir_op_loadglobl,
+					.type = exp->type,
+					.dst  = tmp,
+					.arg.u32 = id,
+				});
+			da_append(&blk->code, (IR_Ins){
+					.op   = ir_op_store,
+					.type = exp->type,
+					.dst  = dst.reg,
+					.arg.rx[0] = tmp,
+				});
+		} break;
+		case DST_REF: {
+			int tmp = ir_proc_new_reg(tl, proc_id);
+			da_append(&blk->code, (IR_Ins){
+					.op   = ir_op_alloca,
+					.type = exp->type,
+					.dst  = dst.reg,
+					.arg.i32 = 1,
+				});
+			da_append(&blk->code, (IR_Ins){
+					.op   = ir_op_loadglobl,
+					.type = exp->type,
+					.dst  = tmp,
+					.arg.u32 = id,
+				});
+			da_append(&blk->code, (IR_Ins){
+					.op   = ir_op_store,
+					.type = exp->type,
+					.dst  = dst.reg,
+					.arg.rx[0] = tmp,
+				});
+		} break;
 		case DST_NONE: FAILWITH("TODO: ast_exp_string"); break;
 		default:      FAILWITH("Unreachable"); break;
 		}
@@ -1710,7 +1787,7 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 	} break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_ident: {
-		struct definition *def = lookup_definition(exp->as.id, scope);
+		struct definition *def = lookup_definition(scope, exp->as.id->sv);
 		assert(def != NULL);
 		switch (dst.tag) {
 		case DST_VAL: {
@@ -1909,7 +1986,7 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 														  proc_id, blk, scope, tl);
 			switch ((int)bin->left->tag) {
 			case ast_exp_ident: {
-				struct definition *def = lookup_definition(bin->left->as.id, scope);
+				struct definition *def = lookup_definition(scope, bin->left->as.id->sv);
 				assert(def != NULL);
 				assert(type_is_numeric_scalar(def->type)
 					   || type_is_bool(def->type)
@@ -1968,7 +2045,7 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 		FAILWITH("TODO: ast_exp_binary");
 	} break;
 	case ast_exp_get_len: {
-		struct expression *target = exp->as.get_ptr;
+		struct expression *target = exp->as.get_len;
 		if (type_is_slice(target->type)) {
 			switch (dst.tag) {
 			case DST_VAL: {
@@ -2124,12 +2201,24 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 				struct type *base_type = base->type;
 				if (type_is_pointer(base->type)) {
 					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
-				} else {
-					assert(base->type->tag == ast_type_array);
+				} else if (type_is_array(base->type)) {
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
 					base_type = POOL_ALLOC(&tl->data, struct type);
 					base_type->tag = ast_type_ptr;
 					base_type->as.ptr = base->type;
+				} else if (type_is_slice(base->type)) {
+					int tmp = ir_proc_new_reg(tl, proc_id);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					base_type = slice_type_to_array_ptr_type(&tl->data, base->type);
+					da_append(&blk->code, (IR_Ins){
+							.op   = ir_op_load,
+							.type = base_type,
+							.dst  = tmp,
+							.arg.rx[0] = base_reg,
+						});
+					base_reg = tmp;
+				} else {
+					FAILWITH("Unreachable");
 				}
 				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, scope, tl);
 				int tmp = ir_proc_new_reg(tl, proc_id);
@@ -2207,6 +2296,26 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 			}
 			da_free(&args);
 			return blk;
+		} break;
+		case unaop_cast: {
+			int reg = ir_proc_new_reg(tl, proc_id);
+			blk = ast_compile_expression(exp->as.cast.exp, DEST_VAL(reg), proc_id, blk, scope, tl);
+			switch (dst.tag) {
+			case DST_VAL: {
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_cast,
+						.type = exp->as.cast.type,
+						.dst  = dst.reg,
+						.arg.rx[0] = reg,
+					});
+				return blk;
+			} break;
+			case DST_CPY: FAILWITH("TODO: unaop_cast"); break;
+			case DST_REF: FAILWITH("TODO: unaop_cast"); break;
+			case DST_NONE: FAILWITH("TODO: unaop_cast"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+			FAILWITH("TODO: unaop_cast");
 		} break;
 		default: FAILWITH("Unreachable"); break;
 		}
@@ -2288,6 +2397,18 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 	return NULL;
 }
 
+char *generate_mangled_name(struct strview ident, struct type *type)
+{
+	char *ptr;
+	size_t sz;
+	FILE *f = open_memstream(&ptr, &sz);
+	assert(f != NULL);
+	fprintf(f, SV_FMT"#", SV_ARGS(&ident));
+	ast_type_fprint(type, f);
+	fclose(f);
+	return ptr;
+}
+
 struct ir_toplevel ast_compile(struct scope *scope)
 {
 	struct symtbl *st = &scope->symtbl;
@@ -2300,14 +2421,23 @@ struct ir_toplevel ast_compile(struct scope *scope)
 		def->is_global = true;
 		if (exp->tag == ast_exp_procedure_literal) {
 			p.proc.tag  = IRO_PROC;
-			sv_unescape_string(def->id->sv, &p.proc.link);
+			if (sv_is_equal(def->id->sv, sv_of_cstr("main"))) {
+				/* entry point */
+				p.proc.link = strndup(def->id->sv.ptr, def->id->sv.len);
+			} else {
+				p.proc.link = generate_mangled_name(def->id->sv, def->type);
+			}
 			p.proc.def  = def;
 			p.proc.node = &exp->as.proc;
 			p.proc.regc = 0;
 			da_append(&tl, p);
 		} else if (exp->tag == ast_exp_extern_symbol) {
-			p.ext.tag  = IRO_EXTERN;
-			sv_unescape_string(exp->tok->sv, &p.ext.link);
+			if (type_is_procedure(def->type)) {
+				p.ext.tag = IRO_EXTERN_PROC;
+			} else {
+				p.ext.tag = IRO_EXTERN_DATA;
+			}
+			p.ext.link = strndup(def->id->sv.ptr, def->id->sv.len);
 			da_append(&tl, p);
 		} else {
 			FAILWITH("TODO: compile toplevel definitions.");
@@ -2359,6 +2489,11 @@ void ir_ins_fprint(IR_Ins *ins, FILE *file)
 		break;
 	case ir_op_neg: {
 		fprintf(file, "%%%d := neg<", ins->dst);
+		ast_type_fprint(ins->type, file);
+		fprintf(file, "> %%%d", ins->arg.rx[0]);
+	} break;
+	case ir_op_cast: {
+		fprintf(file, "%%%d := cast<", ins->dst);
 		ast_type_fprint(ins->type, file);
 		fprintf(file, "> %%%d", ins->arg.rx[0]);
 	} break;
@@ -2783,6 +2918,12 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 			addr->as.i = ins->op;
 			addr->type = ins->type;
 		} break;
+		case ir_op_cast: {
+			struct asm_address *addr = &ctx->vars[ins->dst];
+			assert(addr->tag == ADDR_NONE);
+			addr->tag = ADDR_TEMP_REG;
+			addr->type = ins->type;
+		} break;
 		case ir_op_getelemptr: {
 			struct asm_address *dst = &ctx->vars[ins->dst];
 			assert(dst->tag == ADDR_NONE);
@@ -3104,6 +3245,17 @@ bool must_alloc_stack_frame(struct asm_context *ctx)
 	return ctx->stack_size > 0 && can_optimize_red_zone(ctx) == false;
 }
 
+const char *ir_object_link_name(struct ir_toplevel *tl, union ir_object *obj)
+{
+	static char buf[400];
+	if (tl->is_dll && !obj->hddr.is_static && obj->hddr.tag == IRO_EXTERN_DATA) {
+		snprintf(buf, sizeof(buf), "\"%s\"@GOTPCREL", obj->hddr.link);
+	} else {
+		snprintf(buf, sizeof(buf), "\"%s\"", obj->hddr.link);
+	}
+	return buf;
+}
+
 const char *asm_source_operand_to_str(struct asm_address *src, struct type *type,
 									  struct asm_context *ctx, struct ir_toplevel *tl)
 {
@@ -3128,8 +3280,9 @@ const char *asm_source_operand_to_str(struct asm_address *src, struct type *type
 		snprintf(buf, sizeof(buf), "%d(%%rbp)", src->as.stack[0] + src->as.stack[1]);
 		break;
 	case ADDR_SYMBOL:
-		snprintf(buf, sizeof(buf), "%s", tl->elems[src->as.i].hddr.link);
-		break;
+		/* snprintf(buf, sizeof(buf), "\"%s\"", tl->elems[src->as.i].hddr.link); */
+		/* break; */
+		return ir_object_link_name(tl, &tl->elems[src->as.i]);
 		/* NOTE: These options should be invalid for the source operand */
 	case ADDR_TEMP_REG:	  FAILWITH("TODO: ADDR_TEMP_REG");   break;
 	case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");    break;
@@ -3293,12 +3446,12 @@ static void emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct asm_pro
 	asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
 	asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
 	if (tl->is_dll && !obj->hddr.is_static) {
-		append_line(&code->body, fmt_str("\tmovq %s@GOTPCREL(%%rip), %s\n",
-										 obj->data.link,
+		append_line(&code->body, fmt_str("\tmovq %s(%%rip), %s\n",
+										 ir_object_link_name(tl, obj),
 										 asm_reg_q_name[dst->as.wide[0]]));
 	} else {
 		append_line(&code->body, fmt_str("\tleaq %s(%%rip), %s\n",
-										 obj->data.link,
+										 ir_object_link_name(tl, obj),
 										 asm_reg_q_name[dst->as.wide[0]]));
 	}
 	append_line(&code->body, fmt_str("\tmovq $%zu, %s\n",
@@ -3318,8 +3471,8 @@ static void emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct asm
 	assert(type->tag != ast_type_array);
 	asm_reserve_register(ctx, dst->as.i, ins->dst);
 	if (tl->is_dll && !obj->hddr.is_static) {
-		append_line(&code->body, fmt_str("\tmovq %s@GOTPCREL(%%rip), %s\n",
-										 obj->data.link,
+		append_line(&code->body, fmt_str("\tmovq %s(%%rip), %s\n",
+										 ir_object_link_name(tl, obj),
 										 asm_reg_q_name[dst->as.i]));
 		append_line(&code->body, fmt_str("\tmov%c (%s), %s\n",
 										 asm_suffix(type),
@@ -3328,7 +3481,7 @@ static void emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct asm
 	} else {
 		append_line(&code->body, fmt_str("\tmov%c %s(%%rip), %s\n",
 										 asm_suffix(type),
-										 obj->data.link,
+										 ir_object_link_name(tl, obj),
 										 asm_reg_name(dst->as.i, type)));
 	}
 }
@@ -3421,6 +3574,30 @@ static void emit_op_neg_ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *da
 					asm_reg_name(dst->as.i, ins->type)));
 }
 
+static void emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
+{
+	assert(ins->op == ir_op_cast);
+	struct asm_context *ctx = &code->ctx;
+	struct asm_address *dst = &ctx->vars[ins->dst];
+	struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
+	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
+	assert(x->tag == ADDR_STACK_LOAD);
+	asm_reserve_register(ctx, dst->as.i, ins->dst);
+	if (type_is_integer(x->type) && ins->type->tag == ast_type_i8) {
+		append_line(&code->body, fmt_str(
+						"\tmov%c %d(%%rbp), %s\n",
+						asm_suffix(ins->type),
+						x->as.stack[0] + x->as.stack[1],
+						asm_reg_name(dst->as.i, ins->type)));
+	} else if (x->type->tag == ast_type_i32 && ins->type->tag == ast_type_i64) {
+		append_line(&code->body, fmt_str(
+						"\tmovslq %d(%%rbp), %s\n",
+						x->as.stack[0] + x->as.stack[1],
+						asm_reg_name(dst->as.i, ins->type)));
+	} else {
+		FAILWITH("TODO: cast %s -> %s", ast_type_to_str(x->type), ast_type_to_str(ins->type));
+	}
+}
 
 static void emit_basic_op_ADDR_REGISTER__ADDR_STACK_LOAD__ADDR_IMM_INT(IR_Ins *ins, void *dat,
 																	   struct asm_procedure *code)
@@ -3923,6 +4100,18 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 						 asm_addr_tag_to_str(x->tag));
 			}
 		} break;
+		case ir_op_cast: {
+			struct asm_address *dst = &ctx->vars[ins->dst];
+			struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
+			if (MATCH_ADDR2(ADDR_ARGUMENT, ADDR_STACK_LOAD)) {
+				dst->extra.defered.fun = emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD;
+				dst->extra.defered.ins = ins;
+			} else {
+				FAILWITH("Unhandled case: MATCH_ADDR2(%s, %s)",
+						 asm_addr_tag_to_str(dst->tag),
+						 asm_addr_tag_to_str(x->tag));
+			}
+		} break;
 		case ir_op_getelemptr: {
 			struct asm_address *dst  = &ctx->vars[ins->dst];
 			struct asm_address *base = &ctx->vars[ins->arg.rx[0]];
@@ -4029,6 +4218,7 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 							 asm_addr_tag_to_str(idx->tag));
 				}
 			} else {
+				printf("ins->type = %s\n", ast_type_to_str(ins->type));
 				FAILWITH("TODO: ir_op_getelemptr");
 			}
 		} break;
@@ -4229,12 +4419,12 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 					struct type *base_type = ins->type->as.slice;
 					enum asm_register tmp = asm_assign_register(ctx, ins->arg.rx[0]);
 					if (tl->is_dll && !obj->hddr.is_static) {
-						append_line(&code->body, fmt_str("\tmovq %s@GOTPCREL(%%rip), %s\n",
-														 obj->data.link,
+						append_line(&code->body, fmt_str("\tmovq %s(%%rip), %s\n",
+														 ir_object_link_name(tl, obj),
 														 asm_reg_q_name[tmp]));
 					} else {
 						append_line(&code->body, fmt_str("\tleaq %s(%%rip), %s\n",
-														 obj->data.link,
+														 ir_object_link_name(tl, obj),
 														 asm_reg_q_name[tmp]));
 					}
 					append_line(&code->body, fmt_str("\tmovq %s, (%s)\n",
@@ -4244,6 +4434,31 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 													 obj->data.size / type_size(base_type),
 													 asm_reg_q_name[dst->as.i]));
 					asm_unassign_register(ctx, dst->as.i);
+					asm_unassign_register(ctx, tmp);
+				} else {
+					FAILWITH("TODO: MATCH_ADDR2(ADDR_REGISTER, ADDR_SYMBOL)");
+				}
+			} else if (MATCH_ADDR2(ADDR_STACK, ADDR_SYMBOL)) {
+				union ir_object *obj = &tl->elems[x->as.i];
+				assert(obj->tag == IRO_DATA);
+				if (type_is_slice(ins->type)) {
+					struct type *base_type = ins->type->as.slice;
+					enum asm_register tmp = asm_assign_register(ctx, ins->arg.rx[0]);
+					if (tl->is_dll && !obj->hddr.is_static) {
+						append_line(&code->body, fmt_str("\tmovq %s(%%rip), %s\n",
+														 ir_object_link_name(tl, obj),
+														 asm_reg_q_name[tmp]));
+					} else {
+						append_line(&code->body, fmt_str("\tleaq %s(%%rip), %s\n",
+														 ir_object_link_name(tl, obj),
+														 asm_reg_q_name[tmp]));
+					}
+					append_line(&code->body, fmt_str("\tmovq %s, %ld(%%rbp)\n",
+													 asm_reg_q_name[tmp],
+													 dst->as.i));
+					append_line(&code->body, fmt_str("\tmovq $%zu, %ld(%%rbp)\n",
+													 obj->data.size / type_size(base_type),
+													 dst->as.i + 8));
 					asm_unassign_register(ctx, tmp);
 				} else {
 					FAILWITH("TODO: MATCH_ADDR2(ADDR_REGISTER, ADDR_SYMBOL)");
@@ -4353,7 +4568,7 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			}
 			struct asm_address *p = &ctx->vars[ins->arg.rx[0]];
 			if (p->tag == ADDR_SYMBOL) {
-				append_line(&code->body, fmt_str("\tcall %s\n", tl->elems[p->as.i].hddr.link));
+				append_line(&code->body, fmt_str("\tcall %s\n", ir_object_link_name(tl, &tl->elems[p->as.i])));
 			} else {
 				FAILWITH("TODO: unhandled case p->tag == %s", asm_addr_tag_to_str(p->tag));
 			}
@@ -4442,7 +4657,7 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			}
 		}
 		if (blk_id < blocks->len - 1) {
-			append_line(&code->body, fmt_str("\tjmp .R"SV_FMT"\n", SV_ARGS(&proc->def->id->sv)));
+			append_line(&code->body, fmt_str("\tjmp \".LR"SV_FMT"\"\n", SV_ARGS(&proc->def->id->sv)));
 		}
 	} break;
 	case ir_op_goto: {
@@ -4511,10 +4726,10 @@ void asm_emit_prologue_and_epilogue(struct ir_proc *proc, struct asm_procedure *
 {
 	struct asm_context *ctx = &code->ctx;
 	if (!proc->is_static) {
-		append_line(&code->prologue, fmt_str("\t.globl %s\n", proc->link));
+		append_line(&code->prologue, fmt_str("\t.globl \"%s\"\n", proc->link));
 	}
 	append_line(&code->prologue, strdup("\t.text\n"));
-	append_line(&code->prologue, fmt_str("%s:\n", proc->link));
+	append_line(&code->prologue, fmt_str("\"%s\":\n", proc->link));
 	/* procedure entry */
 	bool setup_frame = ctx->setup_frame;
 	bool alloc_frame = false;
@@ -4531,7 +4746,7 @@ void asm_emit_prologue_and_epilogue(struct ir_proc *proc, struct asm_procedure *
 		append_line(&code->prologue, fmt_str("\tsubq $%zu, %%rsp\n", ctx->stack_size));
 	}
 	/* epilogue label */
-	append_line(&code->epilogue, fmt_str(".R%s:\n", proc->link));
+	append_line(&code->epilogue, fmt_str("\".LR%s\":\n", proc->link));
 	/* callee save registers */
 	asm_emit_callee_save_code(callee_save_offset, code);
 	/* procedure exit */
@@ -4558,11 +4773,11 @@ void asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm
 void asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data)
 {
 	if (!data->is_static) {
-		append_line(&asm_data->body, fmt_str("\t.globl %s\n", data->link));
+		append_line(&asm_data->body, fmt_str("\t.globl \"%s\"\n", data->link));
 	}
 	append_line(&asm_data->body, strdup("\t.data\n"));
 	append_line(&asm_data->body, strdup("\t.align 16\n"));
-	append_line(&asm_data->body, fmt_str("%s:\n", data->link));
+	append_line(&asm_data->body, fmt_str("\"%s\":\n", data->link));
 	size_t size = data->size;
 	size_t q = size / 8;
 	size %= 8;
@@ -4647,9 +4862,6 @@ struct asm_module *compile_file(const char *filename, struct asm_module *asm_mod
 	/* Type check */
 	for (size_t i = 0; i < tl.len; ++i) {
 		infer_type(&parser, tl.elems[i], NULL, &sc);
-		puts("[Debug Info]");
-		ast_fprint(tl.elems[i], stdout);
-		fputc('\n', stdout);
 	}
 	/* Desugar */
 	for (size_t i = 0; i < tl.len; ++i) {
@@ -4671,7 +4883,8 @@ struct asm_module *compile_file(const char *filename, struct asm_module *asm_mod
 		case IRO_DATA:
 			asm_emit_datum(&ir.elems[i].data, da_allot(&asm_mod->data));
 			break;
-		case IRO_EXTERN: /* Do nothing */ break;
+		case IRO_EXTERN_DATA: /* Do nothing */ break;
+		case IRO_EXTERN_PROC: /* Do nothing */ break;
 		default: FAILWITH("Unreachable"); break;
 		}
 	}

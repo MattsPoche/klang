@@ -60,10 +60,10 @@ static struct type *parse_type(Parser *p);
 static void parse_definition(Parser *p, struct definition *def);
 static struct expression *parse_expression(Parser *p);
 
-struct definition *symtbl_find(struct symtbl *symtbl, struct token *name)
+struct definition *symtbl_find(struct symtbl *symtbl, struct strview name)
 {
 	for (size_t i = 0; i < symtbl->len; ++i) {
-		if (sv_is_equal(name->sv, symtbl->elems[i]->id->sv)) {
+		if (sv_is_equal(name, symtbl->elems[i]->id->sv)) {
 			return symtbl->elems[i];
 		}
 	}
@@ -72,14 +72,14 @@ struct definition *symtbl_find(struct symtbl *symtbl, struct token *name)
 
 void symtbl_add(struct symtbl *symtbl, struct definition *def)
 {
-	if (symtbl_find(symtbl, def->id) == NULL) {
+	if (symtbl_find(symtbl, def->id->sv) == NULL) {
 		da_append(symtbl, def);
 	} else {
 		FAILWITH("TODO: Variable already defined.");
 	}
 }
 
-struct definition *lookup_definition(struct token *name, struct scope *scope)
+struct definition *lookup_definition(struct scope *scope, struct strview name)
 {
 	while (scope) {
 		struct definition *def = symtbl_find(&scope->symtbl, name);
@@ -348,7 +348,7 @@ static int precedence(enum operator op)
 {
 	switch (op) {
 	case op_sequence:
-		return ASSOC_LEFT(1);
+		return ASSOC_LEFT(10);
 	case op_assign:
 	case op_and_assign:
 	case op_lor_assign:
@@ -362,43 +362,45 @@ static int precedence(enum operator op)
 	case op_shift_right:
 	case op_shift_left_assign:
 	case op_shift_right_assign:
-		return ASSOC_RIGHT(2);
+		return ASSOC_RIGHT(20);
 	case op_or:
-		return ASSOC_LEFT(3);
+		return ASSOC_LEFT(30);
 	case op_and:
-		return ASSOC_LEFT(4);
+		return ASSOC_LEFT(40);
 	case op_lor:
-		return ASSOC_LEFT(5);
+		return ASSOC_LEFT(50);
 	case op_xor:
-		return ASSOC_LEFT(6);
+		return ASSOC_LEFT(60);
 	case op_land:
-		return ASSOC_LEFT(7);
+		return ASSOC_LEFT(70);
 	case op_equal:
 	case op_not_equal:
-		return ASSOC_LEFT(8);
+		return ASSOC_LEFT(80);
 	case op_less_equal:
 	case op_more_equal:
 	case op_less_than:
 	case op_more_than:
-		return ASSOC_LEFT(9);
+		return ASSOC_LEFT(90);
 	case op_add:
 	case op_sub:
-		return ASSOC_LEFT(10);
+		return ASSOC_LEFT(100);
 	case op_mul:
 	case op_div:
 	case op_mod:
-		return ASSOC_LEFT(11);
+		return ASSOC_LEFT(110);
+	case op_cast:
+		return ASSOC_LEFT(120);
 	case op_lnot:
 	case op_not:
 	case op_neg:
 	case op_pos:
 	case op_address_of:
 	case op_dereference:
-		return ASSOC_RIGHT(12);
+		return ASSOC_RIGHT(130);
 	case op_index:
 	case op_member:
 	case op_call:
-		return ASSOC_LEFT(13);
+		return ASSOC_LEFT(140);
 	default:
 		FAILWITH("Unknown operator.");
 		return 0;
@@ -564,7 +566,6 @@ static struct expression *parse_expression(Parser *p)
 		case tt_quote: FAILWITH("TODO: tt_quote"); break;
 		case tt_double_quote: FAILWITH("TODO: tt_double_quote"); break;
 		case tt_question: FAILWITH("TODO: tt_question"); break;
-		case tt_as: FAILWITH("TODO: tt_as"); break;
 		case tt_for: FAILWITH("TODO: tt_for"); break;
 		case tt_break: FAILWITH("TODO: tt_break"); break;
 		case tt_continue: FAILWITH("TODO: tt_continue"); break;
@@ -603,7 +604,7 @@ static struct expression *parse_expression(Parser *p)
 			op_prev = false;
 			exp->tok = next_token(p, NULL);
 			EXPECT(next_token(p, NULL), tt_lparen);
-			EXPECT(next_token(p, &exp->tok), tt_string);
+			EXPECT(next_token(p, &exp->tok), tt_ident);
 			EXPECT(next_token(p, NULL), tt_rparen);
 			exp->tag = ast_exp_extern_symbol;
 			da_append(&out, exp);
@@ -776,6 +777,14 @@ static struct expression *parse_expression(Parser *p)
 				goto flush;
 			}
 			break;
+		case tt_as:
+			assert(op_prev == false);
+			next_token(p, &exp->tok);
+			exp->tag = ast_exp_unary;
+			exp->as.cast.op = op_cast;
+			exp->as.cast.type = parse_type(p);
+			shunt(exp, &out, &ops);
+			break;
 			/* binary ops */
 		case tt_semicolon:
 		case tt_slash:
@@ -944,6 +953,17 @@ const char *ast_binop_to_str(enum binop op)
 /* --- AST Printer --- */
 void ast_def_fprint(struct definition *def, FILE *file);
 void ast_type_fprint(struct type *t, FILE *file);
+
+char *ast_type_to_str(struct type *t)
+{
+	char *str;
+	size_t sz;
+	FILE *f = open_memstream(&str, &sz);
+	assert(f != NULL);
+	ast_type_fprint(t, f);
+	fclose(f);
+	return str;
+}
 
 void ast_type_fprint(struct type *t, FILE *file)
 {
@@ -1198,12 +1218,12 @@ void ast_fprint(struct expression *exp, FILE *file)
 			ast_fprint(exp->as.idx.exp, file);
 			fputc(')', file);
 			fputc('[', file);
-			if (exp->as.idx.type) {
-				ast_type_fprint(exp->as.idx.type, file);
-				fputs(", ", file);
-			}
 			ast_fprint(exp->as.idx.idx, file);
 			fputc(']', file);
+		} else if (exp->as.op == op_cast) {
+			ast_fprint(exp->as.cast.exp, file);
+			fputs(" as ", file);
+			ast_type_fprint(exp->as.cast.type, file);
 		} else {
 			switch ((int)exp->as.op) {
 			case op_pos:		 fputc('+', file); break;
@@ -1212,6 +1232,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 			case op_address_of:	 fputc('&', file); break;
 			case op_lnot:		 fputc('~', file); break;
 			case op_not:		 fputc('!', file); break;
+
 			default:
 				FAILWITH("Unreachable condition");
 				break;

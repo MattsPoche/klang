@@ -10,4 +10,5 @@ typedef struct parser {
 
 struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl);
 void ast_fprint(struct expression *exp, FILE *file);
-struct definition *lookup_definition(struct token *name, struct scope *scope);
+struct definition *lookup_definition(struct scope *scope, struct strview name);
+char *ast_type_to_str(struct type *t);

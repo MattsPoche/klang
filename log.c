@@ -89,7 +89,7 @@ char *strjoin(const char *s1, const char *s2, const char *delim)
 
 char *subst_file_suffix(const char *file_name, const char *prefix)
 {
-	char *end_ptr = strrchr(file_name, '.');
+	const char *end_ptr = strrchr(file_name, '.');
 	size_t len = end_ptr ? (size_t)(end_ptr - file_name) : strlen(file_name);
 	size_t prefix_len = strlen(prefix);
 	char *new_name = malloc(len + prefix_len + 2);

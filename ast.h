@@ -44,6 +44,7 @@ enum operator {
 	op_dereference, // *
 	op_index, // [ ... ]
 	op_call,
+	op_cast,
 };
 
 enum binop {
@@ -89,6 +90,7 @@ enum unaop {
 	unaop_dereference = op_dereference,
 	unaop_index		  = op_index,
 	unaop_call		  = op_call,
+	unaop_cast		  = op_cast,
 };
 
 
@@ -260,6 +262,12 @@ struct unary {
 	struct expression *exp;
 };
 
+struct cast {
+	enum operator op;
+	struct expression *exp;
+	struct type *type;
+};
+
 struct call {
 	enum operator op;
 	struct expression *proc;
@@ -269,15 +277,12 @@ struct call {
 struct index {
 	enum operator op;
 	struct expression *exp;
-	struct type *type;      // optional type
+	// struct type *type;      // optional type
 	struct expression *idx;
 };
 
 struct initializer {
 	struct expression_stack args;
-};
-
-struct named_initializer {
 };
 
 enum ast_exp_tag {
@@ -318,6 +323,7 @@ struct expression {
 		struct exp_while   wloop;
 		struct exp_case    ccase;
 		struct call        call;
+		struct cast        cast;
 		struct index       idx;
 		struct procedure   proc;
 		enum operator      op;
