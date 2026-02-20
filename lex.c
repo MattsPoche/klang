@@ -89,6 +89,7 @@ char *token_type_to_str(enum token_type tt)
 	case tt_pipe_pipe:			return "tt_pipe_pipe";
 	case tt_and_and:			return "tt_and_and";
 	case tt_minus_more:			return "tt_minus_more";
+	case tt_period_period:		return "tt_period_period";
 	case tt_void:				return "tt_void";
 	case tt_bool:				return "tt_bool";
 	case tt_string:				return "tt_string";
@@ -237,7 +238,7 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				tok.sv.len++;
 			}
 			/* Match Keywords */
-			CHECK_EXAUSTIVE_KEYWORDS(62);
+			CHECK_EXAUSTIVE_KEYWORDS(63);
 			if (sv_is_equal(tok.sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("let")))        tok.tt = tt_let;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("mut")))        tok.tt = tt_mut;
@@ -293,16 +294,20 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 					tok.sv.len++;
 				}
 				if (lex_peekc(lex) == '.') {
-					lex_nextc(lex);
-					tok.sv.len++;
-					if (!isdigit(lex_peekc(lex))) {
-						log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc, "Syntax error");
-					}
-					while (isdigit(lex_peekc(lex))) {
+					if (lex_lookahead(lex, 1) == '.') {
+						tok.tt = tt_intlit;
+					} else {
 						lex_nextc(lex);
 						tok.sv.len++;
+						if (!isdigit(lex_peekc(lex))) {
+							log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc, "Syntax error");
+						}
+						while (isdigit(lex_peekc(lex))) {
+							lex_nextc(lex);
+							tok.sv.len++;
+						}
+						tok.tt = tt_floatlit;
 					}
-					tok.tt = tt_floatlit;
 				} else {
 					tok.tt = tt_intlit;
 				}
@@ -372,6 +377,7 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				else if (sv_is_equal(tok.sv, sv_of_cstr("&&")))  tok.tt = tt_and_and;
 				else if (sv_is_equal(tok.sv, sv_of_cstr("||")))  tok.tt = tt_pipe_pipe;
 				else if (sv_is_equal(tok.sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
+				else if (sv_is_equal(tok.sv, sv_of_cstr("..")))  tok.tt = tt_period_period;
 				else {
 					log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc,
 									  "invalid operator `"SV_FMT"`.", SV_ARGS(&tok.sv));

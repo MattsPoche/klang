@@ -101,6 +101,9 @@ static struct proc_type procedure_type(struct procedure *proc)
 	return pt;
 }
 
+/* TODO: Improve error messages in parser
+ */
+
 static struct type *parse_type(Parser *p)
 {
 	struct type *type = NULL;
@@ -193,16 +196,12 @@ static struct type *parse_type(Parser *p)
 			if (ACCEPT(peek_token(p), tt_comma)) {
 				next_token(p, NULL);
 				struct expression *exp = parse_expression(p);
-				if (exp->tag == ast_exp_literal) {
-					assert(exp->tok->tt == tt_intlit || exp->tok->tt == tt_hexlit);
-					type->as.array.stag = AT_LITERAL;
-					type->as.array.size.sz = exp->as.lit.as.i;
-				} else {
-					type->as.array.stag = AT_EXPRESSION;
-					type->as.array.size.exp = exp;
-				}
+				assert(exp->tag == ast_exp_literal);
+				assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
+				type->as.array.is_sized = true;
+				type->as.array.size = exp->as.lit.as.i;
 			} else {
-				type->as.array.stag = AT_UNSIZED;
+				type->as.array.is_sized = false;
 			}
 			EXPECT(next_token(p, NULL), tt_rbracket);
 		} break;
@@ -399,6 +398,7 @@ static int precedence(enum operator op)
 		return ASSOC_RIGHT(130);
 	case op_index:
 	case op_member:
+	case op_slice:
 	case op_call:
 		return ASSOC_LEFT(140);
 	default:
@@ -438,7 +438,112 @@ static bool shunt(struct expression *op1, struct expression_stack *out, struct e
 	return 1;
 }
 
-static struct expression *build_expression_tree(struct expression_stack *out)
+static bool exp_is_intlit(struct expression *exp)
+{
+	return exp->tag == ast_exp_literal
+		&& exp->as.lit.token->tt == tt_intlit;
+}
+
+static struct expression *
+eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *right, struct expression *left)
+{
+	if (exp_is_intlit(right) && exp_is_intlit(left)) {
+		int64_t x = right->as.lit.as.i;
+		int64_t y = left->as.lit.as.i;
+		switch ((enum binop)exp->as.bin.op) {
+		case binop_sequence:
+			exp->as.bin.right = right;
+			exp->as.bin.left = left;
+			break;
+		case binop_add:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x + y;
+			break;
+		case binop_sub: FAILWITH("TODO: binop_sub"); break;
+		case binop_mul: FAILWITH("TODO: binop_mul"); break;
+		case binop_div: FAILWITH("TODO: binop_div"); break;
+		case binop_mod: FAILWITH("TODO: binop_mod"); break;
+		case binop_xor: FAILWITH("TODO: binop_xor"); break;
+		case binop_land: FAILWITH("TODO: binop_land"); break;
+		case binop_lor: FAILWITH("TODO: binop_lor"); break;
+		case binop_equal: FAILWITH("TODO: binop_equal"); break;
+		case binop_less_than: FAILWITH("TODO: binop_less_than"); break;
+		case binop_more_than: FAILWITH("TODO: binop_more_than"); break;
+		case binop_member: FAILWITH("TODO: binop_member"); break;
+		case binop_assign: FAILWITH("TODO: binop_assign"); break;
+		case binop_and_assign: FAILWITH("TODO: binop_and_assign"); break;
+		case binop_lor_assign: FAILWITH("TODO: binop_lor_assign"); break;
+		case binop_xor_assign: FAILWITH("TODO: binop_xor_assign"); break;
+		case binop_add_assign: FAILWITH("TODO: binop_add_assign"); break;
+		case binop_sub_assign: FAILWITH("TODO: binop_sub_assign"); break;
+		case binop_mul_assign: FAILWITH("TODO: binop_mul_assign"); break;
+		case binop_div_assign: FAILWITH("TODO: binop_div_assign"); break;
+		case binop_mod_assign: FAILWITH("TODO: binop_mod_assign"); break;
+		case binop_not_equal: FAILWITH("TODO: binop_not_equal"); break;
+		case binop_less_equal: FAILWITH("TODO: binop_less_equal"); break;
+		case binop_more_equal: FAILWITH("TODO: binop_more_equal"); break;
+		case binop_shift_left: FAILWITH("TODO: binop_shift_left"); break;
+		case binop_shift_right: FAILWITH("TODO: binop_shift_right"); break;
+		case binop_shift_left_assign: FAILWITH("TODO: binop_shift_left_assign"); break;
+		case binop_shift_right_assign: FAILWITH("TODO: binop_shift_right_assign"); break;
+		case binop_or: FAILWITH("TODO: binop_or"); break;
+		case binop_and: FAILWITH("TODO: binop_and"); break;
+		default: FAILWITH("Unreachable"); break;
+		}
+	} else {
+		exp->as.bin.right = right;
+		exp->as.bin.left = left;
+	}
+	return exp;
+}
+
+static struct expression *copy_exp(Parser *p, struct expression *exp)
+{
+	struct expression *new_exp = POOL_ALLOC(&p->data, struct expression);
+	*new_exp = *exp;
+	return new_exp;
+}
+
+static struct expression *
+eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
+{
+	if (exp_is_intlit(operand)) {
+		FAILWITH("TODO");
+	} else if (exp->as.una.op == op_slice) {
+		struct expression *idx = exp->as.slice.idx;
+		struct expression *len = exp->as.slice.len;
+		if (exp->as.slice.idx == NULL) {
+			idx = POOL_ALLOC(&p->data, struct expression);
+			idx->tag = ast_exp_literal;
+			idx->as.lit.token = POOL_ALLOC(&p->data, struct token);
+			idx->as.lit.token->tt = tt_intlit;
+			idx->as.lit.as.i = 0;
+			exp->as.slice.idx = idx;
+		}
+		if (exp->as.slice.len == NULL) {
+			len = POOL_ALLOC(&p->data, struct expression);
+			len->tag = ast_exp_get_len;
+			len->as.get_len = copy_exp(p, operand);
+			if (exp_is_intlit(idx) && idx->as.lit.as.i == 0) {
+				exp->as.slice.len = len;
+			} else {
+				exp->as.slice.len = POOL_ALLOC(&p->data, struct expression);
+				exp->as.slice.len->tag = ast_exp_binary;
+				exp->as.slice.len->as.bin.op = op_sub;
+				exp->as.slice.len->as.bin.left = len;
+				exp->as.slice.len->as.bin.right = copy_exp(p, idx);
+			}
+		}
+		exp->as.una.exp = operand;
+	} else {
+		exp->as.una.exp = operand;
+	}
+	return exp;
+}
+
+static struct expression *
+build_expression_tree(Parser *p, struct expression_stack *out)
 {
 	struct expression_stack stack = {0};
 	struct expression *exp;
@@ -449,11 +554,12 @@ static struct expression *build_expression_tree(struct expression_stack *out)
 				printf("exp->as.bin.op = %s\n", ast_binop_to_str((enum binop)exp->as.bin.op));
 				assert(stack.len >= 2);
 			}
-			exp->as.bin.right = da_pop(&stack);
-			exp->as.bin.left = da_pop(&stack);
+			struct expression *right = da_pop(&stack);
+			struct expression *left  = da_pop(&stack);
+			eval_binop_exp(p, exp, right, left);
 		} else if (exp->tag == ast_exp_unary) {
 			assert(stack.len >= 1);
-			exp->as.una.exp = da_pop(&stack);
+			eval_unaop_exp(p, exp, da_pop(&stack));
 		}
 		da_append(&stack, exp);
 	}
@@ -480,6 +586,66 @@ static struct expression *parse_if(Parser *p, struct expression *exp)
 		EXPECT(tok, tt_end);
 	}
 	return exp;
+}
+
+static struct expression *parse_square_bracket_expression(Parser *p, struct expression *exp)
+{
+#define PARSE_INIT       0
+#define PARSE_INDEX      1
+#define PARSE_LENGTH     2
+#define BUILD_SLICE_EXP  3
+#define BUILD_INDEX_EXP  4
+#define PARSE_DONE      -1
+	struct expression *idx = NULL;
+	struct expression *len = NULL;
+	exp->tag = ast_exp_unary;
+	for (int state = PARSE_INIT; state != PARSE_DONE;) {
+		switch (state) {
+		case PARSE_INIT:
+			if (ACCEPT(peek_token(p), tt_period_period)) {
+				next_token(p, NULL);
+				state = PARSE_LENGTH;
+			} else {
+				state = PARSE_INDEX;
+			}
+			break;
+		case PARSE_LENGTH:
+			if (!ACCEPT(peek_token(p), tt_rbracket)) {
+				len = parse_expression(p);
+			}
+			state = BUILD_SLICE_EXP;
+			break;
+		case PARSE_INDEX:
+			idx = parse_expression(p);
+			if (ACCEPT(peek_token(p), tt_period_period)) {
+				next_token(p, NULL);
+				state = PARSE_LENGTH;
+			} else {
+				state = BUILD_INDEX_EXP;
+			}
+			break;
+		case BUILD_SLICE_EXP:
+			exp->as.slice.op = op_slice;
+			exp->as.slice.idx = idx;
+			exp->as.slice.len = len;
+			state = PARSE_DONE;
+			break;
+		case BUILD_INDEX_EXP:
+			exp->as.idx.op = op_index;
+			exp->as.idx.idx = idx;
+			state = PARSE_DONE;
+			break;
+		default: FAILWITH("Unreachable");
+		}
+	}
+	EXPECT(next_token(p, NULL), tt_rbracket);
+	return exp;
+#undef PARSE_INIT
+#undef PARSE_INDEX
+#undef PARSE_LENGTH
+#undef BUILD_SLICE
+#undef BUILD_INDEX
+#undef PARSE_DONE
 }
 
 static struct expression *parse_expression(Parser *p)
@@ -735,16 +901,11 @@ static struct expression *parse_expression(Parser *p)
 			}
 			da_append(&out, exp);
 			break;
-		case tt_lbracket:
-			// TODO: slice constructor
+		case tt_lbracket: {
 			next_token(p, &exp->tok);
 			assert(op_prev == false);
-			exp->tag = ast_exp_unary;
-			exp->as.idx.op = op_index;
-			exp->as.idx.idx = parse_expression(p);
-			EXPECT(next_token(p, NULL), tt_rbracket);
-			shunt(exp, &out, &ops);
-			break;
+			shunt(parse_square_bracket_expression(p, exp), &out, &ops);
+		} break;
 			/* operators */
 		case tt_lparen: {
 			next_token(p, &exp->tok);
@@ -895,6 +1056,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_of:
 		case tt_do:
 		case tt_minus_more:
+		case tt_period_period:
 		case tt_eof:
 			assert(op_prev == false);
 			goto flush;
@@ -906,7 +1068,7 @@ static struct expression *parse_expression(Parser *p)
 	}
 flush:
 	while (ops.len) da_append(&out, da_pop(&ops));
-	exp = build_expression_tree(&out);
+	exp = build_expression_tree(p, &out);
 	da_free(&out);
 	da_free(&ops);
 	return exp;
@@ -1023,11 +1185,8 @@ void ast_type_fprint(struct type *t, FILE *file)
 	case ast_type_array:
 		fputc('[', file);
 		ast_type_fprint(t->as.array.base, file);
-		if (t->as.array.stag == AT_EXPRESSION) {
-			fputs(", ", file);
-			ast_fprint(t->as.array.size.exp, file);
-		} else if (t->as.array.stag == AT_LITERAL) {
-			fprintf(file, ", %zu", t->as.array.size.sz);
+		if (t->as.array.is_sized) {
+			fprintf(file, ", %zu", t->as.array.size);
 		}
 		fputc(']', file);
 		break;

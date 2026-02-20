@@ -45,6 +45,7 @@ enum operator {
 	op_index, // [ ... ]
 	op_call,
 	op_cast,
+	op_slice,
 };
 
 enum binop {
@@ -91,6 +92,7 @@ enum unaop {
 	unaop_index		  = op_index,
 	unaop_call		  = op_call,
 	unaop_cast		  = op_cast,
+	unaop_slice       = op_slice,
 };
 
 
@@ -140,19 +142,10 @@ struct proc_type {
 	} args;
 };
 
-enum array_type_size_tag {
-	AT_UNSIZED,
-	AT_LITERAL,
-	AT_EXPRESSION,
-};
-
 struct array_type {
 	struct type *base;
-	enum array_type_size_tag stag;
-	union {
-		struct expression *exp;
-		size_t sz;
-	} size;
+	size_t size;
+	bool is_sized;
 };
 
 struct struct_type {
@@ -277,8 +270,14 @@ struct call {
 struct index {
 	enum operator op;
 	struct expression *exp;
-	// struct type *type;      // optional type
 	struct expression *idx;
+};
+
+struct exp_slice {
+	enum operator op;
+	struct expression *exp;
+	struct expression *idx;
+	struct expression *len;
 };
 
 struct initializer {
@@ -329,6 +328,7 @@ struct expression {
 		enum operator      op;
 		struct unary       una;
 		struct binary      bin;
+		struct exp_slice   slice;
 		struct expression *get_ptr;
 		struct expression *get_len;
 		struct expression *ret;

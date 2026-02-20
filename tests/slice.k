@@ -31,24 +31,26 @@ let print_int(n: i64) =
 
 let print_newline() = print_char("\n"[0])
 
-let fizzbuzz(n: i32) =
-  let mod3: bool = (n % 3) = 0 in
-  let mod5: bool = (n % 5) = 0 in
-  if mod3 && mod5 then
-    print_string("fizzbuzz\n")
-  elif mod3 then
-    print_string("fizz\n")
-  elif mod5 then
-    print_string("buzz\n")
-  else
-    print_int(n as i64);
-	print_newline()
-  end
+let puts(str: &[i8]) =
+  print_string(str);
+  print_newline()
+
+let print_slice(slice: &[i64]) =
+  let mut i: u64 = 0 in
+  while i < #len(slice) do
+    print_int(slice[i]);
+    print_char(" "[0]);
+    i += 1
+  done;
+  print_newline()
 
 let main() i32 =
-  let mut n: i32 = 0 in
-  while n < 100 do
-    fizzbuzz(n);
-	n += 1
-  done;
+  let msg: &[i8] = "Hello, World" in
+  puts(msg);
+  puts(msg[0..5]);
+  puts(msg[7..]);
+  let arr: [i64, 5] = {0, 1, 2, 3, 4} in
+  print_slice(arr[..]);
+  print_slice(arr[..3]);
+  print_slice(arr[2..3]);
   0

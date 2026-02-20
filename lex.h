@@ -77,6 +77,7 @@ enum token_type {
 	tt_pipe_pipe,       // ||
 	tt_and_and,         // &&
 	tt_minus_more,      // ->
+	tt_period_period,   // ..
 	/* Basic Data Types */
 	tt_void,
 	tt_bool,
@@ -107,7 +108,7 @@ enum token_type {
 };
 
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
-CHECK_EXAUSTIVE_KEYWORDS(62);
+CHECK_EXAUSTIVE_KEYWORDS(63);
 
 struct srcloc {
 	int32_t line;

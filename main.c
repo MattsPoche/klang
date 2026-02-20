@@ -24,9 +24,9 @@ struct da_pointers {
 static uintptr_t align_adjust(uintptr_t x, uintptr_t alignment);
 
 /* --- TYPE-CHECKER --- */
-bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok);
-bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
-			 char *debug_file, int debug_line);
+static bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok);
+static bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
+					char *debug_file, int debug_line);
 struct expression *infer_type(Parser *p, struct expression *exp, struct type *ret, struct scope *scope);
 
 #define TYPE_EQ(t, u, exp) type_eq(p, t, u, exp, __FILE__, __LINE__)
@@ -274,16 +274,9 @@ bool type_is_slice_ptr(struct type *t)
 
 bool type_has_length(struct type *t)
 {
-	if (type_is_array(t)) {
-		return t->as.array.stag == AT_LITERAL
-			|| t->as.array.stag == AT_EXPRESSION;
-	}
-	if (type_is_array_ptr(t)) {
-		return t->as.ptr->as.array.stag == AT_LITERAL
-			|| t->as.ptr->as.array.stag == AT_EXPRESSION;
-	}
-	return type_is_slice(t)
-		|| type_is_slice_ptr(t);
+	if (type_is_array(t))     return t->as.array.is_sized;
+	if (type_is_array_ptr(t)) return type_has_length(t->as.ptr);
+	return type_is_slice(t);
 }
 
 
@@ -292,12 +285,12 @@ bool type_is_scalar(struct type *t)
 	return type_is_numeric_scalar(t) || type_is_pointer(t) || type_is_bool(t);
 }
 
-struct type *slice_type_to_array_ptr_type(struct mem_arena *pool, struct type *t)
+struct type *type_slice_to_array_ptr(struct mem_arena *pool, struct type *t)
 {
 	struct type *ptr = POOL_ALLOC(pool, struct type);
 	struct type *array = POOL_ALLOC(pool, struct type);
 	array->tag = ast_type_array;
-	array->as.array.stag = AT_UNSIZED;
+	array->as.array.is_sized = false;
 	array->as.array.base = t->as.slice;
 	if (t->tag == ast_type_mut_slice) {
 		ptr->tag = ast_type_mut_ptr;
@@ -309,7 +302,15 @@ struct type *slice_type_to_array_ptr_type(struct mem_arena *pool, struct type *t
 	return ptr;
 }
 
-bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
+struct type *type_array_to_slice(struct mem_arena *pool, struct type *t, bool mutable_p)
+{
+	struct type *slice = POOL_ALLOC(pool, struct type);
+	slice->tag = mutable_p ? ast_type_mut_slice : ast_type_slice;
+	slice->as.slice = t->as.array.base;
+	return slice;
+}
+
+static bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
 {
 	if (u->tag == ast_type_void) return true;
 	switch (t->tag) {
@@ -351,11 +352,9 @@ bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
 	case ast_type_array: {
 		if (u->tag != ast_type_array) return false;
 		if (!type_coerce(p, t->as.array.base, u->as.array.base, tok)) return false;
-		if (t->as.array.stag == AT_UNSIZED) return true;
-		if (u->as.array.stag == AT_UNSIZED) return true;
-		assert(t->as.array.stag == AT_LITERAL);
-		assert(u->as.array.stag == AT_LITERAL);
-		return t->as.array.size.sz == u->as.array.size.sz;
+		if (t->as.array.is_sized == false) return true;
+		if (u->as.array.is_sized == false) return true;
+		return t->as.array.size == u->as.array.size;
 	} break;
 	case ast_type_struct: FAILWITH("TODO: ast_type_struct"); break;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
@@ -369,7 +368,7 @@ bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
 				if (!type_coerce(p, arg_t, arg_u, tok)) {
 					return false;
 				}
-				if (arg_t->tag == ast_type_array && arg_t->as.array.stag == AT_UNSIZED) {
+				if (arg_t->tag == ast_type_array && arg_t->as.array.is_sized == false) {
 					log_error_and_die(p->lexer.filename, p->lexer.contents, tok->sv, tok->loc,
 									  "Unable to determine the size of array parameter.");
 					return false;
@@ -386,8 +385,8 @@ bool type_coerce(Parser *p, struct type *t, struct type *u, struct token *tok)
 	return false;
 }
 
-bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
-			 char *debug_file, int debug_line)
+static bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
+					char *debug_file, int debug_line)
 {
 	if (!type_coerce(p, t, u, exp->tok)) {
 		fflush(stdout);
@@ -405,7 +404,7 @@ bool type_eq(Parser *p, struct type *t, struct type *u, struct expression *exp,
 	return true;
 }
 
-bool def_coerce(Parser *p, struct type *def_type, struct expression *exp)
+static bool def_coerce(Parser *p, struct type *def_type, struct expression *exp)
 {
 	switch (def_type->tag) {
 	case ast_type_void:
@@ -432,13 +431,12 @@ bool def_coerce(Parser *p, struct type *def_type, struct expression *exp)
 	case ast_type_array: {
 		struct array_type *array_type = &def_type->as.array;
 		if (exp->tag == ast_exp_zero_initializer) {
-			switch (array_type->stag) {
-			case AT_UNSIZED:    FAILWITH("TODO: Unsized array used with zero initializer"); break;
-			case AT_EXPRESSION: FAILWITH("TODO: AT_EXPRESSION"); break;
-			case AT_LITERAL:
+			if (array_type->is_sized) {
 				assert(exp->type == NULL);
 				exp->type = def_type;
 				return true;
+			} else {
+				FAILWITH("TODO: Unsized array used with zero initializer");
 			}
 		} else if (exp->tag == ast_exp_initializer) {
 			assert(exp->type == NULL);
@@ -447,25 +445,21 @@ bool def_coerce(Parser *p, struct type *def_type, struct expression *exp)
 			da_foreach(exp, init_exps) {
 				TYPE_EQ(base, (*exp)->type, *exp);
 			}
-			switch (array_type->stag) {
-			case AT_UNSIZED:
-				array_type->stag = AT_LITERAL;
-				array_type->size.sz = init_exps->len;
-				break;
-			case AT_EXPRESSION: FAILWITH("TODO: AT_EXPRESSION"); break;
-			case AT_LITERAL:
-				if (init_exps->len != array_type->size.sz) {
+			if (array_type->is_sized) {
+				if (init_exps->len != array_type->size) {
 					log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
 									  "Invalid size of array initializer.");
 				}
-				break;
+			} else {
+				array_type->is_sized = true;
+				array_type->size = init_exps->len;
 			}
 			exp->type = def_type;
 			return true;
 		} else if (exp->tag == ast_exp_named_initializer) {
 			FAILWITH("TODO: type error");
 		} else {
-			assert(array_type->stag != AT_UNSIZED);
+			assert(array_type->is_sized == false);
 			assert(exp->type != NULL);
 			return TYPE_EQ(def_type, exp->type, exp);
 		}
@@ -499,7 +493,6 @@ bool def_coerce(Parser *p, struct type *def_type, struct expression *exp)
 			/* return TYPE_EQ(def_type, exp->type, exp); */
 		}
 	} break;
-
 	case ast_type_alias: FAILWITH("TODO: ast_type_alias"); break;
 	case ast_type_cons: FAILWITH("TODO: ast_type_cons"); break;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
@@ -574,11 +567,11 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 		if (obj->type->tag == ast_type_slice) {
 			exp->is_addressable = false;
 			exp->is_mutable = false;
-			exp->type = slice_type_to_array_ptr_type(&p->data, obj->type);
+			exp->type = type_slice_to_array_ptr(&p->data, obj->type);
 		} else if (obj->type->tag == ast_type_mut_slice) {
 			exp->is_addressable = false;
 			exp->is_mutable = true;
-			exp->type = slice_type_to_array_ptr_type(&p->data, obj->type);
+			exp->type = type_slice_to_array_ptr(&p->data, obj->type);
 		} else {
 			log_error_and_die(p->lexer.filename, p->lexer.contents, exp->tok->sv, exp->tok->loc,
 							  "Invalid argument type for operator `#ptr`. Expected slice.");
@@ -951,6 +944,54 @@ struct expression *infer_type(Parser *p, struct expression *exp, struct type *re
 				break;
 			}
 		} break;
+		case unaop_slice: {
+			struct expression *base = infer_type(p, exp->as.slice.exp, ret, scope); // base
+			struct expression *idx  = infer_type(p, exp->as.slice.idx, ret, scope); // index
+			struct expression *len  = infer_type(p, exp->as.slice.len, ret, scope); // length
+			if (!type_is_integer(idx->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, idx->tok->sv, idx->tok->loc,
+								  "Index expression is not integer type.");
+			}
+			if (!type_is_integer(len->type)) {
+				log_error_and_die(p->lexer.filename, p->lexer.contents, len->tok->sv, len->tok->loc,
+								  "Length expression is not integer type.");
+			}
+			if (idx->type->tag == ast_type_intlit) {
+				idx->type->tag = ast_type_i64;
+			}
+			if (len->type->tag == ast_type_intlit) {
+				len->type->tag = ast_type_i64;
+			}
+			switch ((int)base->type->tag) {
+			case ast_type_mut_ptr:
+			case ast_type_ptr: {
+				struct type *ptr_base = base->type->as.ptr;
+				if (ptr_base->tag == ast_type_array) {
+					exp->type = type_array_to_slice(&p->data, ptr_base, base->is_mutable);
+					exp->is_addressable = true;
+					exp->is_mutable = base->is_mutable;
+				} else {
+					log_error_and_die(p->lexer.filename, p->lexer.contents, base->tok->sv, base->tok->loc,
+									  "Expression cannot be indexed.");
+				}
+			} break;
+			case ast_type_mut_slice:
+			case ast_type_slice:
+				exp->type = base->type;
+				exp->is_addressable = true;
+				exp->is_mutable = base->is_mutable;
+				break;
+			case ast_type_array:
+				exp->type = type_array_to_slice(&p->data, base->type, base->is_mutable);
+				exp->is_addressable = true;
+				exp->is_mutable = base->is_mutable;
+				break;
+			default:
+				log_error_and_die(p->lexer.filename, p->lexer.contents, base->tok->sv, base->tok->loc,
+								  "Expression cannot be indexed.");
+				break;
+			}
+		} break;
 		case unaop_call: {
 			struct call *call = &exp->as.call;
 			struct expression *proc = infer_type(p, call->proc, ret, scope);
@@ -1211,6 +1252,7 @@ enum ir_opcode {
 	ir_op_cmpge,
 	ir_op_cast,
 	ir_op_retval,
+	ir_op_conslice,
 	ir_op_alloca,
 	ir_op_load,
 	ir_op_loadglobl,
@@ -1355,16 +1397,10 @@ size_t type_size(struct type *t)
 	case ast_type_mut_slice:
 		return 16;
 	case ast_type_array:
-		switch (t->as.array.stag) {
-		case AT_UNSIZED:
+		if (t->as.array.is_sized) {
+			return type_size(t->as.array.base) * t->as.array.size;
+		} else {
 			FAILWITH("TODO: Error: Cannot determine size of type unsized array.");
-			break;
-		case AT_EXPRESSION:
-			FAILWITH("TODO: AT_EXPRESSION (type_size)");
-			break;
-		case AT_LITERAL:
-			return type_size(t->as.array.base) * t->as.array.size.sz;
-		default: FAILWITH("Unreachable"); break;
 		}
 		break;
 	case ast_type_struct: {
@@ -2081,11 +2117,10 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 			}
 		} else if (type_is_array(target->type)) {
 			size_t len = 0;
-			switch (target->type->as.array.stag) {
-			case AT_LITERAL: len = target->type->as.array.size.sz; break;
-			case AT_EXPRESSION: FAILWITH("TODO: AT_EXPRESSION"); break;
-			case AT_UNSIZED: FAILWITH("TODO: AT_UNSIZED"); break;
-			default: FAILWITH("Unreachable"); break;
+			if (target->type->as.array.is_sized) {
+				len = target->type->as.array.size;
+			} else {
+				FAILWITH("TODO: unsized array");
 			}
 			switch (dst.tag) {
 			case DST_VAL: {
@@ -2209,7 +2244,7 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = slice_type_to_array_ptr_type(&tl->data, base->type);
+					base_type = type_slice_to_array_ptr(&tl->data, base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
 							.type = base_type,
@@ -2243,6 +2278,63 @@ struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_de
 			default: FAILWITH("Unreachable"); break;
 			}
 			FAILWITH("TODO: unaop_index");
+		} break;
+		case unaop_slice: {
+			struct expression *base = exp->as.slice.exp;
+			struct expression *idx =  exp->as.slice.idx;
+			struct expression *len =  exp->as.slice.len;
+			switch (dst.tag) {
+			case DST_VAL: {
+				int base_reg = ir_proc_new_reg(tl, proc_id);
+				int index_reg = ir_proc_new_reg(tl, proc_id);
+				int length_reg = ir_proc_new_reg(tl, proc_id);
+				struct type *base_type = base->type;
+				if (type_is_pointer(base->type)) {
+					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
+				} else if (type_is_array(base->type)) {
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					base_type = POOL_ALLOC(&tl->data, struct type);
+					base_type->tag = ast_type_ptr;
+					base_type->as.ptr = base->type;
+				} else if (type_is_slice(base->type)) {
+					int tmp = ir_proc_new_reg(tl, proc_id);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					base_type = type_slice_to_array_ptr(&tl->data, base->type);
+					da_append(&blk->code, (IR_Ins){
+							.op   = ir_op_load,
+							.type = base_type,
+							.dst  = tmp,
+							.arg.rx[0] = base_reg,
+						});
+					base_reg = tmp;
+				} else {
+					FAILWITH("Unreachable");
+				}
+				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(len, DEST_VAL(length_reg), proc_id, blk, scope, tl);
+				int tmp = ir_proc_new_reg(tl, proc_id);
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_getelemptr,
+						.type = base_type,
+						.dst  = tmp,
+						.arg.rx[0] = base_reg,
+						.arg.rx[1] = index_reg,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_conslice,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.rx[0] = tmp,
+						.arg.rx[1] = length_reg,
+					});
+				return blk;
+			} break;
+			case DST_REF: FAILWITH("Unreachable"); break;
+			case DST_CPY: FAILWITH("Unreachable"); break;
+			case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
+			default: FAILWITH("Unreachable"); break;
+			}
+			FAILWITH("TODO: unaop_slice");
 		} break;
 		case unaop_call: {
 			struct call *call = &exp->as.call;
@@ -2501,6 +2593,11 @@ void ir_ins_fprint(IR_Ins *ins, FILE *file)
 		fprintf(file, "%%%d := retval<", ins->dst);
 		ast_type_fprint(ins->type, file);
 		fputc('>', file);
+	} break;
+	case ir_op_conslice: {
+		fprintf(file, "%%%d := conslice<", ins->dst);
+		ast_type_fprint(ins->type, file);
+		fprintf(file, "> %%%d, %%%d", ins->arg.rx[0], ins->arg.rx[1]);
 	} break;
 	case ir_op_alloca: {
 		fprintf(file, "%%%d := alloca<", ins->dst);
@@ -2790,6 +2887,7 @@ const char *asm_addr_tag_to_str(enum asm_addr_tag tag)
 	case ADDR_ARGUMENT:	  return "ADDR_ARGUMENT";
 	case ADDR_WIDE:	      return "ADDR_WIDE";
 	case ADDR_WIDE_ARG:	  return "ADDR_WIDE_ARG";
+	case ADDR_TEMP_WIDE:  return "ADDR_TEMP_WIDE";
 	case ADDR_STACK_ARG:  return "ADDR_STACK_ARG";
 	case ADDR_PUSH_ARG:	  return "ADDR_PUSH_ARG";
 	case ADDR_REGISTER:	  return "ADDR_REGISTER";
@@ -2958,6 +3056,12 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 				addr->type->tag = ast_type_ptr;
 				addr->type->as.ptr = ins->type;
 			}
+		} break;
+		case ir_op_conslice: {
+			struct asm_address *addr = &ctx->vars[ins->dst];
+			assert(addr->tag == ADDR_NONE);
+			addr->tag = ADDR_WIDE_ARG;
+			addr->type = ins->type;
 		} break;
 		case ir_op_alloca: {
 			struct asm_address *addr = &ctx->vars[ins->dst];
@@ -3183,18 +3287,6 @@ int asm_reserve_register(struct asm_context *ctx, enum asm_register reg, int loc
 	return reg;
 }
 
-enum asm_register asm_emit_move_to_callee_save(struct asm_address *addr, struct asm_procedure *code);
-
-int asm_reserve_register_safe_mov(struct asm_context *ctx, enum asm_register reg, int dst, int src,
-								  struct asm_procedure *code)
-{
-	if (ctx->assigned[reg] == dst) return reg;
-	if (ctx->assigned[reg] == src) {
-		asm_emit_move_to_callee_save(&ctx->vars[src], code);
-	}
-	return asm_reserve_register(ctx, reg, dst);
-}
-
 enum asm_register asm_assign_callee_save_register(struct asm_context *ctx, int local)
 {
 	enum asm_register reg;
@@ -3288,6 +3380,7 @@ const char *asm_source_operand_to_str(struct asm_address *src, struct type *type
 	case ADDR_BLK_ARG:    FAILWITH("TODO: ADDR_BLK_ARG");    break;
 	case ADDR_FLAGS:	  FAILWITH("TODO: ADDR_FLAGS");	     break;
 	case ADDR_WIDE_ARG:	  FAILWITH("TODO: ADDR_WIDE_ARG");	 break;
+	case ADDR_TEMP_WIDE:  FAILWITH("TODO: ADDR_TEMP_WIDE");	 break;
 	case ADDR_NONE:		  FAILWITH("TODO: ADDR_NONE");	     break;
 	case ADDR_ARGUMENT:
 	default: FAILWITH("Unreachable"); break;
@@ -3416,15 +3509,29 @@ static void emit_op_load_ADDR_WIDE__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat,
 	assert(x->tag == ADDR_REGISTER);
 	size_t ts = type_size(ins->type);
 	if (ts == 16) {
-		asm_reserve_register_safe_mov(ctx, dst->as.wide[0], ins->dst, ins->arg.rx[0], code);
-		asm_reserve_register_safe_mov(ctx, dst->as.wide[1], ins->dst, ins->arg.rx[0], code);
-		append_line(&code->body, fmt_str("\tmovq (%s), %s\n",
-										 asm_reg_q_name[x->as.i],
-										 asm_reg_q_name[dst->as.wide[0]]));
-		append_line(&code->body, fmt_str("\tmovq 8(%s), %s\n",
-										 asm_reg_q_name[x->as.i],
-										 asm_reg_q_name[dst->as.wide[1]]));
-		asm_unassign_local(ctx, ins->arg.rx[0]);
+		asm_unassign_register(ctx, x->as.i);
+		asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
+		asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
+		if (dst->as.wide[0] == x->as.i || dst->as.wide[1] == x->as.i) {
+			enum asm_register tmp = asm_assign_callee_save_register(ctx, ins->arg.rx[0]);
+			append_line(&code->body, fmt_str("\tmovq %s, %s\n",
+											 asm_reg_q_name[x->as.i],
+											 asm_reg_q_name[tmp]));
+			append_line(&code->body, fmt_str("\tmovq (%s), %s\n",
+											 asm_reg_q_name[tmp],
+											 asm_reg_q_name[dst->as.wide[0]]));
+			append_line(&code->body, fmt_str("\tmovq 8(%s), %s\n",
+											 asm_reg_q_name[tmp],
+											 asm_reg_q_name[dst->as.wide[1]]));
+			asm_unassign_register(ctx, tmp);
+		} else {
+			append_line(&code->body, fmt_str("\tmovq (%s), %s\n",
+											 asm_reg_q_name[x->as.i],
+											 asm_reg_q_name[dst->as.wide[0]]));
+			append_line(&code->body, fmt_str("\tmovq 8(%s), %s\n",
+											 asm_reg_q_name[x->as.i],
+											 asm_reg_q_name[dst->as.wide[1]]));
+		}
 	} else {
 		FAILWITH("TODO");
 	}
@@ -3537,10 +3644,6 @@ static void emit_op_loadimm_ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct 
 	struct asm_context *ctx = &code->ctx;
 	struct asm_address *dst = &ctx->vars[ins->dst];
 	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
-	if (asm_register_assigned_p(ctx, dst->as.i)) {
-		printf("ins->dst = %%%d\n", ins->dst);
-		printf("owner = %%%d\n", asm_get_register_owner(ctx, dst->as.i));
-	}
 	asm_reserve_register(ctx, dst->as.i, ins->dst);
 	append_line(&code->body, fmt_str(
 					"\tmov%c $%d, %s\n",
@@ -3596,6 +3699,64 @@ static void emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void
 						asm_reg_name(dst->as.i, ins->type)));
 	} else {
 		FAILWITH("TODO: cast %s -> %s", ast_type_to_str(x->type), ast_type_to_str(ins->type));
+	}
+}
+
+static void emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_IMM_INT(
+	IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
+{
+	assert(ins->op == ir_op_conslice);
+	struct asm_context *ctx = &code->ctx;
+	struct asm_address *dst = &ctx->vars[ins->dst];
+	struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
+	struct asm_address *y   = &ctx->vars[ins->arg.rx[1]];
+	assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG);
+	assert(x->tag == ADDR_REGISTER);
+	assert(y->tag == ADDR_IMM_INT);
+	size_t ts = type_size(ins->type);
+	if (ts == 16) {
+		asm_unassign_register(ctx, x->as.i);
+		asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
+		asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
+		if (dst->as.wide[0] == x->as.i) {
+			append_line(&code->body, fmt_str("\tmovq $%ld, %s\n",
+											 y->as.i,
+											 asm_reg_q_name[dst->as.wide[1]]));
+		} else {
+			append_line(&code->body, fmt_str("\tmovq %s, %s\n",
+											 asm_reg_q_name[x->as.i],
+											 asm_reg_q_name[dst->as.wide[0]]));
+			append_line(&code->body, fmt_str("\tmovq $%ld, %s\n",
+											 y->as.i,
+											 asm_reg_q_name[dst->as.wide[1]]));
+		}
+	} else {
+		FAILWITH("TODO");
+	}
+}
+
+static void emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_REGISTER(
+	IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
+{
+	assert(ins->op == ir_op_conslice);
+	struct asm_context *ctx = &code->ctx;
+	struct asm_address *dst = &ctx->vars[ins->dst];
+	struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
+	struct asm_address *y   = &ctx->vars[ins->arg.rx[1]];
+	assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG);
+	assert(x->tag == ADDR_REGISTER);
+	assert(y->tag == ADDR_REGISTER);
+
+
+	asm_unassign_register(ctx, x->as.i);
+	asm_unassign_register(ctx, y->as.i);
+	asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
+	asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
+	if (dst->as.wide[0] != x->as.i || dst->as.wide[1] != y->as.i) {
+		append_line(&code->body, fmt_str("\tpushq %s\n", asm_reg_q_name[x->as.i]));
+		append_line(&code->body, fmt_str("\tpushq %s\n", asm_reg_q_name[y->as.i]));
+		append_line(&code->body, fmt_str("\tpopq %s\n",  asm_reg_q_name[dst->as.wide[1]]));
+		append_line(&code->body, fmt_str("\tpopq %s\n",  asm_reg_q_name[dst->as.wide[0]]));
 	}
 }
 
@@ -3827,16 +3988,29 @@ void asm_emit_basic_op(const char *asm_op, IR_Ins *ins, struct asm_address *dst,
 						dst_name));
 	} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_REGISTER, ADDR_STACK_LOAD)) {
 		asm_unassign_register(ctx, x->as.i);
-		int dst_reg = dst->as.i = asm_reserve_register(ctx, x->as.i, ins->dst);
+		dst->as.i = asm_reserve_register(ctx, x->as.i, ins->dst);
 		dst->tag = ADDR_REGISTER;
-		const char *dst_name = asm_reg_name(dst_reg, type);
-		const char *src_name = asm_source_operand_to_str(y, type, ctx, tl);
+		append_line(&code->body, fmt_str(
+						"\t%s%c %d(%%rbp), %s\n",
+						asm_op,
+						asm_suffix(type),
+						y->as.stack[0] + y->as.stack[1],
+						asm_reg_name(dst->as.i, type)));
+	} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_STACK_LOAD, ADDR_REGISTER)) {
+		dst->as.i = asm_assign_register(ctx, ins->dst);
+		dst->tag = ADDR_REGISTER;
+		append_line(&code->body, fmt_str(
+						"\tmov%c %d(%%rbp), %s\n",
+						asm_suffix(type),
+						x->as.stack[0] + x->as.stack[1],
+						asm_reg_name(dst->as.i, type)));
 		append_line(&code->body, fmt_str(
 						"\t%s%c %s, %s\n",
 						asm_op,
 						asm_suffix(type),
-						src_name,
-						dst_name));
+						asm_reg_name(y->as.i, type),
+						asm_reg_name(dst->as.i, type)));
+		asm_unassign_register(ctx, y->as.i);
 	} else if (MATCH_ADDR3(ADDR_REGISTER, ADDR_REGISTER, ADDR_STACK_LOAD)) {
 		asm_reserve_register(ctx, dst->as.i, ins->dst);
 		const char *d_name = asm_reg_name(dst->as.i, type);
@@ -4110,6 +4284,23 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 				FAILWITH("Unhandled case: MATCH_ADDR2(%s, %s)",
 						 asm_addr_tag_to_str(dst->tag),
 						 asm_addr_tag_to_str(x->tag));
+			}
+		} break;
+		case ir_op_conslice: {
+			struct asm_address *dst = &ctx->vars[ins->dst];
+			struct asm_address *x   = &ctx->vars[ins->arg.rx[0]];
+			struct asm_address *y   = &ctx->vars[ins->arg.rx[1]];
+			if (MATCH_ADDR3(ADDR_WIDE_ARG, ADDR_REGISTER, ADDR_IMM_INT)) {
+				dst->extra.defered.fun = emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_IMM_INT;
+				dst->extra.defered.ins = ins;
+			} else if (MATCH_ADDR3(ADDR_WIDE_ARG, ADDR_REGISTER, ADDR_REGISTER)) {
+				dst->extra.defered.fun = emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_REGISTER;
+				dst->extra.defered.ins = ins;
+			} else {
+				FAILWITH("Unhandled case: MATCH_ADDR3(%s, %s, %s)",
+						 asm_addr_tag_to_str(dst->tag),
+						 asm_addr_tag_to_str(x->tag),
+						 asm_addr_tag_to_str(y->tag));
 			}
 		} break;
 		case ir_op_getelemptr: {
@@ -5013,7 +5204,8 @@ int main(int argc, char **argv)
 	if (run_p) {
 		char *dlname = strjoin(cwd, "dlrun.so", "/");
 		link_object_files(&obj_files, dlname, true);
-		printf("%d\n", run(dlname));
+		printf("[Info] Running program...\n");
+		printf("[Info] Program exited with error code: %d\n", run(dlname));
 	} else {
 		link_object_files(&obj_files, target_file, false);
 	}

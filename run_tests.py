@@ -103,6 +103,8 @@ fizzbuzz = ("fizzbuzz\n"
 			"98\n"
 			"fizz\n")
 
+slice_output = "Hello, World\nHello\nWorld\n0 1 2 3 4 \n0 1 2 \n2 3 4 \n"
+
 tests = [
 	{"file_name": "tests/fibonacci.k",			 "exit_code": 89,  "output": None},
 	{"file_name": "tests/small_array.k",		 "exit_code": 111, "output": None},
@@ -113,6 +115,7 @@ tests = [
 	{"file_name": "tests/hello_world.k",		 "exit_code": 0,   "output": "Hello, World\n"},
 	{"file_name": "tests/simple_struct.k",		 "exit_code": 69,  "output": "Hello, World\n"},
 	{"file_name": "tests/fizzbuzz.k",		     "exit_code": 0,   "output": fizzbuzz},
+	{"file_name": "tests/slice.k",		         "exit_code": 0,   "output": slice_output},
 ]
 
 def run_test(file_name, exit_code, output):
