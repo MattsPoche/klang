@@ -444,12 +444,20 @@ static bool exp_is_intlit(struct expression *exp)
 		&& exp->as.lit.token->tt == tt_intlit;
 }
 
+static struct token *
+copy_token(struct mem_arena *data, struct token *tok)
+{
+	struct token *new_tok = POOL_ALLOC(data, struct token);
+	*new_tok = *tok;
+	return new_tok;
+}
+
 static struct expression *
 eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *right, struct expression *left)
 {
 	if (exp_is_intlit(right) && exp_is_intlit(left)) {
-		int64_t x = right->as.lit.as.i;
-		int64_t y = left->as.lit.as.i;
+		int64_t x = left->as.lit.as.i;
+		int64_t y = right->as.lit.as.i;
 		switch ((enum binop)exp->as.bin.op) {
 		case binop_sequence:
 			exp->as.bin.right = right;
@@ -460,35 +468,113 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			exp->as.lit.token = right->as.lit.token;
 			exp->as.lit.as.i = x + y;
 			break;
-		case binop_sub: FAILWITH("TODO: binop_sub"); break;
-		case binop_mul: FAILWITH("TODO: binop_mul"); break;
-		case binop_div: FAILWITH("TODO: binop_div"); break;
-		case binop_mod: FAILWITH("TODO: binop_mod"); break;
-		case binop_xor: FAILWITH("TODO: binop_xor"); break;
-		case binop_land: FAILWITH("TODO: binop_land"); break;
-		case binop_lor: FAILWITH("TODO: binop_lor"); break;
-		case binop_equal: FAILWITH("TODO: binop_equal"); break;
-		case binop_less_than: FAILWITH("TODO: binop_less_than"); break;
-		case binop_more_than: FAILWITH("TODO: binop_more_than"); break;
+		case binop_sub:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x - y;
+			break;
+		case binop_mul:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x * y;
+			break;
+		case binop_div:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x / y;
+			break;
+		case binop_mod:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x % y;
+			break;
+		case binop_xor:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x ^ y;
+			break;
+		case binop_land:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x & y;
+			break;
+		case binop_lor:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.as.i = x | y;
+			break;
+		case binop_equal:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			if (x == y) {
+				exp->as.lit.token->tt = tt_true;
+				exp->as.lit.as.i = 1;
+			} else {
+				exp->as.lit.token->tt = tt_false;
+				exp->as.lit.as.i = 0;
+			}
+			break;
+		case binop_less_than:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			if (x < y) {
+				exp->as.lit.token->tt = tt_true;
+				exp->as.lit.as.i = 1;
+			} else {
+				exp->as.lit.token->tt = tt_false;
+				exp->as.lit.as.i = 0;
+			}
+			break;
+		case binop_more_than:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			if (x > y) {
+				exp->as.lit.token->tt = tt_true;
+				exp->as.lit.as.i = 1;
+			} else {
+				exp->as.lit.token->tt = tt_false;
+				exp->as.lit.as.i = 0;
+			}
+			break;
+		case binop_less_equal:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			if (x <= y) {
+				exp->as.lit.token->tt = tt_true;
+				exp->as.lit.as.i = 1;
+			} else {
+				exp->as.lit.token->tt = tt_false;
+				exp->as.lit.as.i = 0;
+			}
+			break;
+		case binop_more_equal:
+			exp->tag = ast_exp_literal;
+			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			if (x >= y) {
+				exp->as.lit.token->tt = tt_true;
+				exp->as.lit.as.i = 1;
+			} else {
+				exp->as.lit.token->tt = tt_false;
+				exp->as.lit.as.i = 0;
+			}
+			break;
+		case binop_or:
+		case binop_and:
+		case binop_assign:
+		case binop_and_assign:
+		case binop_lor_assign:
+		case binop_xor_assign:
+		case binop_add_assign:
+		case binop_sub_assign:
+		case binop_mul_assign:
+		case binop_div_assign:
+		case binop_mod_assign:
+		case binop_not_equal:
+		case binop_shift_left:
+		case binop_shift_right:
+		case binop_shift_left_assign:
+		case binop_shift_right_assign:
 		case binop_member: FAILWITH("TODO: binop_member"); break;
-		case binop_assign: FAILWITH("TODO: binop_assign"); break;
-		case binop_and_assign: FAILWITH("TODO: binop_and_assign"); break;
-		case binop_lor_assign: FAILWITH("TODO: binop_lor_assign"); break;
-		case binop_xor_assign: FAILWITH("TODO: binop_xor_assign"); break;
-		case binop_add_assign: FAILWITH("TODO: binop_add_assign"); break;
-		case binop_sub_assign: FAILWITH("TODO: binop_sub_assign"); break;
-		case binop_mul_assign: FAILWITH("TODO: binop_mul_assign"); break;
-		case binop_div_assign: FAILWITH("TODO: binop_div_assign"); break;
-		case binop_mod_assign: FAILWITH("TODO: binop_mod_assign"); break;
-		case binop_not_equal: FAILWITH("TODO: binop_not_equal"); break;
-		case binop_less_equal: FAILWITH("TODO: binop_less_equal"); break;
-		case binop_more_equal: FAILWITH("TODO: binop_more_equal"); break;
-		case binop_shift_left: FAILWITH("TODO: binop_shift_left"); break;
-		case binop_shift_right: FAILWITH("TODO: binop_shift_right"); break;
-		case binop_shift_left_assign: FAILWITH("TODO: binop_shift_left_assign"); break;
-		case binop_shift_right_assign: FAILWITH("TODO: binop_shift_right_assign"); break;
-		case binop_or: FAILWITH("TODO: binop_or"); break;
-		case binop_and: FAILWITH("TODO: binop_and"); break;
 		default: FAILWITH("Unreachable"); break;
 		}
 	} else {
@@ -498,9 +584,10 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 	return exp;
 }
 
-static struct expression *copy_exp(Parser *p, struct expression *exp)
+static struct expression *
+copy_exp(struct mem_arena *data, struct expression *exp)
 {
-	struct expression *new_exp = POOL_ALLOC(&p->data, struct expression);
+	struct expression *new_exp = POOL_ALLOC(data, struct expression);
 	*new_exp = *exp;
 	return new_exp;
 }
@@ -524,7 +611,7 @@ eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
 		if (exp->as.slice.len == NULL) {
 			len = POOL_ALLOC(&p->data, struct expression);
 			len->tag = ast_exp_get_len;
-			len->as.get_len = copy_exp(p, operand);
+			len->as.get_len = copy_exp(&p->data, operand);
 			if (exp_is_intlit(idx) && idx->as.lit.as.i == 0) {
 				exp->as.slice.len = len;
 			} else {
@@ -532,7 +619,7 @@ eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
 				exp->as.slice.len->tag = ast_exp_binary;
 				exp->as.slice.len->as.bin.op = op_sub;
 				exp->as.slice.len->as.bin.left = len;
-				exp->as.slice.len->as.bin.right = copy_exp(p, idx);
+				exp->as.slice.len->as.bin.right = copy_exp(&p->data, idx);
 			}
 		}
 		exp->as.una.exp = operand;
@@ -1144,10 +1231,10 @@ void ast_type_fprint(struct type *t, FILE *file)
 	case ast_type_f32:		fputs("f32", file); break;
 	case ast_type_f64:		fputs("f64", file); break;
 	case ast_type_intlit:
-		fputs("_builtin_intlit_t", file);
+		fputs("#builtin_intlit_t", file);
 		break;
 	case ast_type_floatlit:
-		fputs("_builtin_floatlit_t", file);
+		fputs("#builtin_floatlit_t", file);
 		break;
 	case ast_type_alias:
 		FAILWITH("TODO: print type alias.");

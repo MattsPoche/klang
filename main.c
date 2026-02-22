@@ -3212,6 +3212,8 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 			assert(addr->tag != ADDR_NONE);
 			addr->tag = ADDR_BLK_ARG;
 			addr->as.i = term->b0->args.elems[i];
+			struct asm_address *formal = &ctx->vars[term->b0->args.elems[i]];
+			formal->type = addr->type;
 		}
 	} break;
 	case ir_op_if: {
@@ -3403,18 +3405,21 @@ enum asm_register asm_emit_move_to_callee_save(struct asm_address *addr, struct 
 	return reg;
 }
 
-enum asm_register asm_get_blk_arg_register(struct asm_context *ctx, int blk_arg)
+void asm_unassign_blk_arg_register(struct asm_context *ctx, int blk_arg)
 {
 	struct asm_address *b = &ctx->vars[blk_arg];
 	assert(b->tag == ADDR_BLK_ARG);
 	struct asm_address *a = &ctx->vars[b->as.i];
-	if (a->tag == ADDR_REGISTER) {
-		return a->as.i;
+	if (a->tag == ADDR_REGISTER || a->tag == ADDR_ARGUMENT) {
+		asm_unassign_register(ctx, a->as.i);
 	} else if (a->tag == ADDR_BLK_ARG) {
-		return asm_get_blk_arg_register(ctx, b->as.i);
+		asm_unassign_blk_arg_register(ctx, b->as.i);
+	} else if (a->tag == ADDR_WIDE_ARG) {
+		asm_unassign_register(ctx, a->as.wide[0]);
+		asm_unassign_register(ctx, a->as.wide[1]);
+	} else {
+		FAILWITH("TODO: %s", asm_addr_tag_to_str(a->tag));
 	}
-	FAILWITH("Unreachable");
-	return 0;
 }
 
 #define MATCH_ADDR3(_a0, _a1, _a2)				\
@@ -3545,10 +3550,14 @@ static void emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct asm_pro
 	struct asm_address *dst = &ctx->vars[ins->dst];
 	union ir_object *obj = &tl->elems[ins->arg.u32];
 	struct type *type = ins->type;
-	assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG);
+	assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG || dst->tag == ADDR_BLK_ARG);
 	assert(obj->tag == IRO_DATA);
 	assert(type->tag == ast_type_slice || type->tag == ast_type_mut_slice);
 	assert(type_size(type) == 16);
+	if (dst->tag == ADDR_BLK_ARG) {
+		dst = &ctx->vars[dst->as.i];
+		assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG);
+	}
 	struct type *base_type = type->as.slice;
 	asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
 	asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
@@ -4528,8 +4537,33 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 				dst->extra.defered.fun = emit_op_load_ADDR_REGISTER__GLOBL;
 				dst->extra.defered.ins = ins;
 				dst->extra.defered.dat = tl;
-			} else {
-				FAILWITH("TODO: unhandled case dst->tag == %s", asm_addr_tag_to_str(dst->tag));
+			} else if (dst->tag == ADDR_BLK_ARG) {
+				struct asm_address *arg_addr = &ctx->vars[dst->as.i]; // lookup the addr for the formal block arg
+				if (arg_addr->tag == ADDR_TEMP_REG) {
+					arg_addr->tag = ADDR_REGISTER;
+					arg_addr->as.i = asm_assign_callee_save_register(ctx, ins->dst);
+				}
+				if (arg_addr->tag == ADDR_WIDE_ARG) {
+					dst = arg_addr;
+					union ir_object *obj = &tl->elems[ins->arg.u32];
+					struct type *base_type = ins->type->as.slice;
+					asm_reserve_register(ctx, dst->as.wide[0], ins->dst);
+					asm_reserve_register(ctx, dst->as.wide[1], ins->dst);
+					if (tl->is_dll && !obj->hddr.is_static) {
+						append_line(&code->body, fmt_str("\tmovq %s(%%rip), %s\n",
+														 ir_object_link_name(tl, obj),
+														 asm_reg_q_name[dst->as.wide[0]]));
+					} else {
+						append_line(&code->body, fmt_str("\tleaq %s(%%rip), %s\n",
+														 ir_object_link_name(tl, obj),
+														 asm_reg_q_name[dst->as.wide[0]]));
+					}
+					append_line(&code->body, fmt_str("\tmovq $%zu, %s\n",
+													 obj->data.size / type_size(base_type),
+													 asm_reg_q_name[dst->as.wide[1]]));
+				} else {
+					FAILWITH("TODO: unhandled case arg_addr->tag == %s", asm_addr_tag_to_str(arg_addr->tag));
+				}
 			}
 		} break;
 		case ir_op_loadconst: FAILWITH("TODO: ir_op_loadconst"); break;
@@ -4551,7 +4585,7 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 					arg_addr->tag = ADDR_REGISTER;
 					arg_addr->as.i = asm_assign_callee_save_register(ctx, ins->dst);
 				}
-				assert(arg_addr->tag == ADDR_REGISTER);
+				assert(arg_addr->tag == ADDR_REGISTER || arg_addr->tag == ADDR_ARGUMENT);
 				dst = arg_addr;
 				append_line(&code->body, fmt_str(
 								"\tmov%c $%d, %s\n",
@@ -4708,7 +4742,8 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			case ADDR_ARGUMENT:
 			case ADDR_WIDE_ARG:
 			case ADDR_PUSH_ARG:
-				arg->extra.defered.fun(arg->extra.defered.ins, arg->extra.defered.dat, code);
+				if (arg->extra.defered.fun)
+					arg->extra.defered.fun(arg->extra.defered.ins, arg->extra.defered.dat, code);
 				break;
 			default:
 				FAILWITH("TODO: unhandled case arg->tag == %s", asm_addr_tag_to_str(arg->tag));
@@ -4853,7 +4888,7 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 	} break;
 	case ir_op_goto: {
 		for (size_t i = 0; i < term->args.len; ++i) {
-			asm_unassign_register(ctx, asm_get_blk_arg_register(ctx, term->args.elems[i]));
+			asm_unassign_blk_arg_register(ctx, term->args.elems[i]);
 		}
 		if (blk_id < blocks->len - 1
 			&& term->b0 == blocks->elems[blk_id + 1]) {

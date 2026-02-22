@@ -104,18 +104,20 @@ fizzbuzz = ("fizzbuzz\n"
 			"fizz\n")
 
 slice_output = "Hello, World\nHello\nWorld\n0 1 2 3 4 \n0 1 2 \n2 3 4 \n"
+constexpr_output = "489\n-351\n28980\n0\n481\n4\nfalse\ntrue\nfalse\ntrue\nfalse\n"
 
 tests = [
-	{"file_name": "tests/fibonacci.k",			 "exit_code": 89,  "output": None},
-	{"file_name": "tests/small_array.k",		 "exit_code": 111, "output": None},
-	{"file_name": "tests/stack_args.k",			 "exit_code": 36,  "output": None},
-	{"file_name": "tests/memory_arg.k",			 "exit_code": 15,  "output": None},
-	{"file_name": "tests/bit_shift.k",			 "exit_code": 72,  "output": None},
-	{"file_name": "tests/large_return_values.k", "exit_code": 11,  "output": None},
-	{"file_name": "tests/hello_world.k",		 "exit_code": 0,   "output": "Hello, World\n"},
-	{"file_name": "tests/simple_struct.k",		 "exit_code": 69,  "output": "Hello, World\n"},
-	{"file_name": "tests/fizzbuzz.k",		     "exit_code": 0,   "output": fizzbuzz},
-	{"file_name": "tests/slice.k",		         "exit_code": 0,   "output": slice_output},
+	{"file_name": "tests/fibonacci.k",			  "exit_code": 89,  "output": None},
+	{"file_name": "tests/small_array.k",		  "exit_code": 111, "output": None},
+	{"file_name": "tests/stack_args.k",			  "exit_code": 36,  "output": None},
+	{"file_name": "tests/memory_arg.k",			  "exit_code": 15,  "output": None},
+	{"file_name": "tests/bit_shift.k",			  "exit_code": 72,  "output": None},
+	{"file_name": "tests/large_return_values.k",  "exit_code": 11,  "output": None},
+	{"file_name": "tests/hello_world.k",		  "exit_code": 0,   "output": "Hello, World\n"},
+	{"file_name": "tests/simple_struct.k",		  "exit_code": 69,  "output": "Hello, World\n"},
+	{"file_name": "tests/fizzbuzz.k",		      "exit_code": 0,   "output": fizzbuzz},
+	{"file_name": "tests/slice.k",		          "exit_code": 0,   "output": slice_output},
+	{"file_name": "tests/constant_expressions.k", "exit_code": 0,   "output": constexpr_output},
 ]
 
 def run_test(file_name, exit_code, output):
