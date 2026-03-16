@@ -18,6 +18,8 @@
 #include "log.h"
 
 const char *ast_binop_to_str(enum binop op);
+void ast_def_fprint(struct definition *def, FILE *file);
+void ast_type_fprint(struct type *t, FILE *file);
 
 /* --- Parser --- */
 static struct token *peek_token2(Parser *p)
@@ -56,9 +58,9 @@ static struct token *expect(Parser *p, struct token *token, enum token_type tag,
 #define ACCEPT(token, tag) ((token)->tt == (tag))
 #define EXPECT(token, tag) expect(p, token, tag, __FILE__, __LINE__)
 
-static struct type *parse_type(Parser *p);
-static void parse_definition(Parser *p, struct definition *def);
-static struct expression *parse_expression(Parser *p);
+static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
+static struct expression *parse_expression(Parser *p, struct scope *scope);
 
 struct definition *symtbl_find(struct symtbl *symtbl, struct strview name)
 {
@@ -79,6 +81,25 @@ void symtbl_add(struct symtbl *symtbl, struct definition *def)
 	}
 }
 
+struct type *typetbl_find(struct typetbl *typetbl, struct strview name)
+{
+	for (size_t i = 0; i < typetbl->len; ++i) {
+		if (sv_is_equal(name, typetbl->elems[i].name)) {
+			return typetbl->elems[i].type;
+		}
+	}
+	return NULL;
+}
+
+void typetbl_add(struct typetbl *typetbl, struct strview name, struct type *type)
+{
+	if (typetbl_find(typetbl, name) == NULL) {
+		da_append(typetbl, (struct typetbl_entry){name, type});
+	} else {
+		FAILWITH("TODO: Type is already defined.");
+	}
+}
+
 struct definition *lookup_definition(struct scope *scope, struct strview name)
 {
 	while (scope) {
@@ -89,7 +110,17 @@ struct definition *lookup_definition(struct scope *scope, struct strview name)
 	return NULL;
 }
 
-static struct proc_type procedure_type(struct procedure *proc)
+struct type *lookup_type(struct scope *scope, struct strview name)
+{
+	while (scope) {
+		struct type *type = typetbl_find(&scope->typetbl, name);
+		if (type) return type;
+		scope = scope->parent;
+	}
+	return NULL;
+}
+
+struct proc_type procedure_type(struct procedure *proc)
 {
 	struct proc_type pt = {0};
 	pt.ret = proc->ret;
@@ -104,7 +135,7 @@ static struct proc_type procedure_type(struct procedure *proc)
 /* TODO: Improve error messages in parser
  */
 
-static struct type *parse_type(Parser *p)
+static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	struct type *type = NULL;
 	/* Build type signature */
@@ -124,7 +155,7 @@ static struct type *parse_type(Parser *p)
 				type = POOL_ALLOC(&p->data, struct type);
 				type->tag = ast_type_slice;
 			}
-			type->as.slice = parse_type(p);
+			type->as.slice = parse_type(p, scope, introduce_type_var_p);
 			EXPECT(next_token(p, NULL), tt_rbracket);
 		} break;
 		case tt_lparen: {
@@ -136,14 +167,14 @@ static struct type *parse_type(Parser *p)
 			/* parse formal parameter list */
 			if (!ACCEPT(peek_token(p), tt_rparen)) {
 				for (;;) {
-					da_append(&type->as.proc.args, parse_type(p));
+					da_append(&type->as.proc.args, parse_type(p, scope, introduce_type_var_p));
 					if (ACCEPT(peek_token(p), tt_rparen)) break;
 					EXPECT(next_token(p, NULL), tt_comma);
 				}
 			}
 			next_token(p, NULL);
 			EXPECT(next_token(p, NULL), tt_minus_more); // ->
-			type->as.proc.ret = parse_type(p);
+			type->as.proc.ret = parse_type(p, scope, introduce_type_var_p);
 		} break;
 		case tt_lbrace: {
 			assert(type == NULL);
@@ -157,7 +188,7 @@ static struct type *parse_type(Parser *p)
 				&& peek_token2(p)->tt == tt_colon) {
 				next_token(p, &mem.name);
 				next_token(p, NULL);
-				mem.type = parse_type(p);
+				mem.type = parse_type(p, scope, introduce_type_var_p);
 				da_append(&st, mem);
 				if (ACCEPT(next_token(p, &tok), tt_comma)) {
 					if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -172,7 +203,7 @@ static struct type *parse_type(Parser *p)
 				FAILWITH("TODO: parse struct type.");
 			} else {
 				for (;;) {
-					mem.type = parse_type(p);
+					mem.type = parse_type(p, scope, introduce_type_var_p);
 					da_append(&st, mem);
 					if (ACCEPT(next_token(p, &tok), tt_comma)) {
 						if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -192,10 +223,10 @@ static struct type *parse_type(Parser *p)
 			next_token(p, NULL);
 			type = POOL_ALLOC(&p->data, struct type);
 			type->tag = ast_type_array;
-			type->as.array.base = parse_type(p);
+			type->as.array.base = parse_type(p, scope, introduce_type_var_p);
 			if (ACCEPT(peek_token(p), tt_comma)) {
 				next_token(p, NULL);
-				struct expression *exp = parse_expression(p);
+				struct expression *exp = parse_expression(p, scope);
 				assert(exp->tag == ast_exp_literal);
 				assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
 				type->as.array.is_sized = true;
@@ -239,18 +270,30 @@ static struct type *parse_type(Parser *p)
 			type->tag = tag;
 			type->as.basic = next_token(p, NULL);
 			break;
-		case tt_ident:
-			type = POOL_ALLOC(&p->data, struct type);
-			if (type == NULL) {
-				type->tag = ast_type_alias;
-				type->as.alias = next_token(p, NULL);
-			} else {
-				struct type *tmp = type;
-				type->tag = ast_type_cons;
-				type->as.cons.name = next_token(p, NULL);
-				type->as.cons.arg = tmp;
+		case tt_ident: {
+			struct token *tok;
+			assert(type == NULL);
+			next_token(p, &tok);
+			type = lookup_type(scope, tok->sv);
+			assert(type != NULL);
+		} break;
+		case tt_typevar: {
+			struct token *tok;
+			assert(type == NULL);
+			next_token(p, &tok);
+			type = lookup_type(scope, tok->sv);
+			if (introduce_type_var_p) {
+				if (type == NULL) {
+					type = POOL_ALLOC(&p->data, struct type);
+					type->tag = ast_type_var;
+					type->as.var.name = tok;
+					typetbl_add(&scope->typetbl, tok->sv, type);
+				}
+				return type;
 			}
-			break;
+			assert(type != NULL);
+			return type;
+		} break;
 		default: goto done;
 		}
 	}
@@ -258,7 +301,7 @@ done:
 	return type;
 }
 
-static void parse_definition(Parser *p, struct definition *def)
+static void parse_definition(Parser *p, struct definition *def, struct scope *scope)
 {
 	/* We enter with `let` token already consumed */
 	struct token *tok;
@@ -272,9 +315,9 @@ static void parse_definition(Parser *p, struct definition *def)
 	def->id = tok;
 	if (ACCEPT(next_token(p, &tok), tt_colon)) {
 		/* variable definition */
-		def->type = parse_type(p);
+		def->type = parse_type(p, scope, false);
 		EXPECT(next_token(p, NULL), tt_equal);
-		def->exp = parse_expression(p);
+		def->exp = parse_expression(p, scope);
 	} else {
 		/* procedure definition */
 		EXPECT(tok, tt_lparen);
@@ -282,20 +325,21 @@ static void parse_definition(Parser *p, struct definition *def)
 		proc->tok = def->id;
 		proc->tag = ast_exp_procedure_literal;
 		/* parse formal parameter list */
+		proc->as.proc.scope.parent = scope;
 		if (!ACCEPT(peek_token(p), tt_rparen)) {
 			for (;;) {
-				struct definition arg = {0};
+				struct definition *arg = da_allot(&proc->as.proc.formals);
 				if (ACCEPT(next_token(p, &tok), tt_mut)) {
-					arg.is_mut = true;
+					arg->is_mut = true;
 					next_token(p, &tok);
 				} else {
-					arg.is_mut = false;
+					arg->is_mut = false;
 				}
 				EXPECT(tok, tt_ident);
 				EXPECT(next_token(p, NULL), tt_colon);
-				arg.id = tok;
-				arg.type = parse_type(p);
-				da_append(&proc->as.proc.formals, arg);
+				arg->id = tok;
+				arg->type = parse_type(p, &proc->as.proc.scope, true);
+				da_append(&proc->as.proc.scope.symtbl, arg);
 				if (ACCEPT(peek_token(p), tt_rparen)) break;
 				EXPECT(next_token(p, NULL), tt_comma);
 			}
@@ -305,30 +349,78 @@ static void parse_definition(Parser *p, struct definition *def)
 		if (ACCEPT(peek_token(p), tt_equal)) {
 			proc->as.proc.ret = &AST_TYPE_VOID;
 		} else {
-			proc->as.proc.ret = parse_type(p);
+			proc->as.proc.ret = parse_type(p, &proc->as.proc.scope, true);
 		}
-		def->type = POOL_ALLOC(&p->data, struct type);
-		def->type->tag = ast_type_proc;
-		def->type->as.proc = procedure_type(&proc->as.proc);
+		struct type *type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_proc;
+		type->as.proc = procedure_type(&proc->as.proc);
+		//proc->type = type;
+		def->type = type;
 		/* parse body */
 		EXPECT(next_token(p, NULL), tt_equal);
-		proc->as.proc.body = parse_expression(p);
+		proc->as.proc.body = parse_expression(p, &proc->as.proc.scope);
 		def->exp = proc;
 	}
 }
 
-struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl)
+static struct type *parse_type_def(Parser *p, struct scope *scope, bool is_alias)
+{
+	struct type *type = POOL_ALLOC(&p->data, struct type);
+	type->tag = ast_type_cons;
+	if (ACCEPT(peek_token(p), tt_typevar)) {
+		struct type *var = POOL_ALLOC(&p->data, struct type);
+		var->tag = ast_type_var;
+		var->as.var.name = next_token(p, NULL);
+		da_append(&type->as.cons.args, var);
+		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+	} else if (ACCEPT(peek_token(p), tt_lparen)) {
+		next_token(p, NULL);
+		struct type *var = POOL_ALLOC(&p->data, struct type);
+		var->tag = ast_type_var;
+		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
+		da_append(&type->as.cons.args, var);
+		while (ACCEPT(peek_token(p), tt_comma)) {
+			next_token(p, NULL);
+			var = POOL_ALLOC(&p->data, struct type);
+			var->tag = ast_type_var;
+			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
+			da_append(&type->as.cons.args, var);
+			typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+		}
+		EXPECT(next_token(p, NULL), tt_rparen);
+	}
+	struct token *tok;
+	EXPECT(next_token(p, &tok), tt_ident);
+	EXPECT(next_token(p, NULL), tt_equal);
+	type->as.cons.type = parse_type(p, scope, false);
+	type->as.cons.name = tok->sv;
+	type->as.cons.is_alias = is_alias;
+	return type;
+}
+
+struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 {
 	struct token *tok;
 	struct expression *exp = NULL;
+	struct type *type = NULL;
 	switch ((int)next_token(p, &tok)->tt) {
 	case tt_let:
 		exp = POOL_ALLOC(&p->data, struct expression);
 		exp->tok = tok;
 		exp->tag = ast_exp_definition;
-		parse_definition(p, &exp->as.def);
-		symtbl_add(symtbl, &exp->as.def);
+		parse_definition(p, &exp->as.def, scope);
+		symtbl_add(&scope->symtbl, &exp->as.def);
 		break;
+	case tt_type: {
+		struct scope sc = {.parent = scope};
+		type = parse_type_def(p, &sc, true);
+		typetbl_add(&scope->typetbl, type->as.cons.name, type);
+	} break;
+	case tt_newtype: {
+		struct scope sc = {.parent = scope};
+		type = parse_type_def(p, &sc, true);
+		typetbl_add(&scope->typetbl, type->as.cons.name, type);
+	} break;
 	case tt_eof: break;
 	default: {
 		char str[0x1000] = {0};
@@ -337,6 +429,11 @@ struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl)
 	} break;
 	}
 	return exp;
+}
+
+bool parser_is_at_end(Parser *p)
+{
+	return peek_token(p)->tt == tt_eof;
 }
 
 #define ASSOC_LEFT(x)   (-(x))
@@ -450,6 +547,14 @@ copy_token(struct mem_arena *data, struct token *tok)
 	struct token *new_tok = POOL_ALLOC(data, struct token);
 	*new_tok = *tok;
 	return new_tok;
+}
+
+static struct expression *
+copy_exp(struct mem_arena *data, struct expression *exp)
+{
+	struct expression *new_exp = POOL_ALLOC(data, struct expression);
+	*new_exp = *exp;
+	return new_exp;
 }
 
 static struct expression *
@@ -585,18 +690,30 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 }
 
 static struct expression *
-copy_exp(struct mem_arena *data, struct expression *exp)
-{
-	struct expression *new_exp = POOL_ALLOC(data, struct expression);
-	*new_exp = *exp;
-	return new_exp;
-}
-
-static struct expression *
 eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
 {
 	if (exp_is_intlit(operand)) {
-		FAILWITH("TODO");
+		switch ((enum unaop)exp->as.bin.op) {
+		case unaop_not: FAILWITH("TODO: unaop_not"); break;
+		case unaop_lnot:
+			exp = operand;
+			exp->as.lit.as.i = ~exp->as.lit.as.i;
+			break;
+		case unaop_neg:
+			*exp = *operand;
+			exp->as.lit.as.i = -exp->as.lit.as.i;
+			break;
+		case unaop_pos:
+			*exp = *operand;
+			break;
+		case unaop_address_of:
+		case unaop_dereference:
+		case unaop_index:
+		case unaop_call:
+		case unaop_slice:
+		case unaop_cast: exp->as.una.exp = operand; break;
+		default: FAILWITH("Unreachable"); break;
+		}
 	} else if (exp->as.una.op == op_slice) {
 		struct expression *idx = exp->as.slice.idx;
 		struct expression *len = exp->as.slice.len;
@@ -656,17 +773,17 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 	return exp;
 }
 
-static struct expression *parse_if(Parser *p, struct expression *exp)
+static struct expression *parse_if(Parser *p, struct expression *exp, struct scope *scope)
 {
 	struct token *tok = NULL;
 	exp->tag = ast_exp_if;
-	exp->as.iff.cond = parse_expression(p);
+	exp->as.iff.cond = parse_expression(p, scope);
 	EXPECT(next_token(p, NULL), tt_then);
-	exp->as.iff.tb = parse_expression(p);
+	exp->as.iff.tb = parse_expression(p, scope);
 	if (ACCEPT(next_token(p, &tok), tt_elif)) {
-		exp->as.iff.fb = parse_if(p, POOL_ALLOC(&p->data, struct expression));
+		exp->as.iff.fb = parse_if(p, POOL_ALLOC(&p->data, struct expression), scope);
 	} else if (ACCEPT(tok, tt_else)) {
-		exp->as.iff.fb = parse_expression(p);
+		exp->as.iff.fb = parse_expression(p, scope);
 		EXPECT(next_token(p, NULL), tt_end);
 	} else {
 		exp->as.iff.fb = NULL;
@@ -675,7 +792,8 @@ static struct expression *parse_if(Parser *p, struct expression *exp)
 	return exp;
 }
 
-static struct expression *parse_square_bracket_expression(Parser *p, struct expression *exp)
+static struct expression *
+parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope *scope)
 {
 #define PARSE_INIT       0
 #define PARSE_INDEX      1
@@ -698,12 +816,12 @@ static struct expression *parse_square_bracket_expression(Parser *p, struct expr
 			break;
 		case PARSE_LENGTH:
 			if (!ACCEPT(peek_token(p), tt_rbracket)) {
-				len = parse_expression(p);
+				len = parse_expression(p, scope);
 			}
 			state = BUILD_SLICE_EXP;
 			break;
 		case PARSE_INDEX:
-			idx = parse_expression(p);
+			idx = parse_expression(p, scope);
 			if (ACCEPT(peek_token(p), tt_period_period)) {
 				next_token(p, NULL);
 				state = PARSE_LENGTH;
@@ -735,7 +853,7 @@ static struct expression *parse_square_bracket_expression(Parser *p, struct expr
 #undef PARSE_DONE
 }
 
-static struct expression *parse_expression(Parser *p)
+static struct expression *parse_expression(Parser *p, struct scope *scope)
 {
 	struct expression_stack out = {0};
 	struct expression_stack ops = {0};
@@ -754,25 +872,27 @@ static struct expression *parse_expression(Parser *p)
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_let;
-			parse_definition(p, &exp->as.def);
+			parse_definition(p, &exp->as.let.def, scope);
 			EXPECT(next_token(p, NULL), tt_in);
-			exp->as.let.body = parse_expression(p);
+			exp->as.let.scope.parent = scope;
+			symtbl_add(&exp->as.let.scope.symtbl, &exp->as.let.def);
+			exp->as.let.body = parse_expression(p, &exp->as.let.scope);
 			da_append(&out, exp);
 			break;
 		case tt_if:
 			assert(op_prev == true);
 			op_prev = false;
 			next_token(p, &exp->tok);
-			da_append(&out, parse_if(p, exp));
+			da_append(&out, parse_if(p, exp, scope));
 			break;
 		case tt_while:
 			assert(op_prev == true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_while;
-			exp->as.wloop.cond = parse_expression(p);
+			exp->as.wloop.cond = parse_expression(p, scope);
 			EXPECT(next_token(p, NULL), tt_do);
-			exp->as.wloop.body = parse_expression(p);
+			exp->as.wloop.body = parse_expression(p, scope);
 			EXPECT(next_token(p, NULL), tt_done);
 			da_append(&out, exp);
 			break;
@@ -782,17 +902,17 @@ static struct expression *parse_expression(Parser *p)
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_case;
 			struct exp_case *c = &exp->as.ccase;
-			c->cexp = parse_expression(p);
+			c->cexp = parse_expression(p, scope);
 			/* parse branches */
 			for (;;) {
 				if (ACCEPT(next_token(p, &tok), tt_of)) {
 					struct case_branch branch = {0};
 					for (;;) { // parse matches
-						da_append(&branch.matches, parse_expression(p));
+						da_append(&branch.matches, parse_expression(p, scope));
 						if (ACCEPT(next_token(p, &tok), tt_do)) break;
 						EXPECT(tok, tt_comma);
 					}
-					branch.exp = parse_expression(p);
+					branch.exp = parse_expression(p, scope);
 					da_append(&c->branches, branch);
 					if (ACCEPT(peek_token(p), tt_end)) {
 						next_token(p, NULL);
@@ -800,7 +920,7 @@ static struct expression *parse_expression(Parser *p)
 					}
 				} else {
 					EXPECT(tok, tt_else);
-					c->else_exp = parse_expression(p);
+					c->else_exp = parse_expression(p, scope);
 					EXPECT(next_token(p, NULL), tt_end);
 					break;
 				}
@@ -834,6 +954,10 @@ static struct expression *parse_expression(Parser *p)
 		case tt_u64: FAILWITH("TODO: tt_u64"); break;
 		case tt_f32: FAILWITH("TODO: tt_f32"); break;
 		case tt_f64: FAILWITH("TODO: tt_f64"); break;
+		case tt_type: FAILWITH("TODO: tt_type"); break;
+		case tt_newtype: FAILWITH("TODO: tt_newtype"); break;
+		case tt_typevar: FAILWITH("TODO: tt_typevar"); break;
+		case tt_struct: FAILWITH("TODO: tt_struct"); break;
 		case tt_return:
 			assert(op_prev == true);
 			op_prev = false;
@@ -845,7 +969,7 @@ static struct expression *parse_expression(Parser *p)
 				FAILWITH("TODO: parse array literal");
 			} else { // return expression
 				EXPECT(tok, tt_lparen);
-				exp->as.ret = parse_expression(p);
+				exp->as.ret = parse_expression(p, scope);
 				EXPECT(next_token(p, NULL), tt_rparen);
 			}
 			da_append(&out, exp);
@@ -868,7 +992,7 @@ static struct expression *parse_expression(Parser *p)
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_ptr;
 			EXPECT(next_token(p, NULL), tt_lparen);
-			exp->as.get_ptr = parse_expression(p);
+			exp->as.get_ptr = parse_expression(p, scope);
 			EXPECT(next_token(p, NULL), tt_rparen);
 			da_append(&out, exp);
 			break;
@@ -878,7 +1002,7 @@ static struct expression *parse_expression(Parser *p)
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_len;
 			EXPECT(next_token(p, NULL), tt_lparen);
-			exp->as.get_ptr = parse_expression(p);
+			exp->as.get_ptr = parse_expression(p, scope);
 			EXPECT(next_token(p, NULL), tt_rparen);
 			da_append(&out, exp);
 			break;
@@ -893,7 +1017,7 @@ static struct expression *parse_expression(Parser *p)
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tag = ast_exp_string;
-			exp->tok = next_token(p, &exp->as.id);
+			exp->as.str = exp->tok = next_token(p, &exp->as.id);
 			da_append(&out, exp);
 			break;
 		case tt_true:
@@ -955,7 +1079,7 @@ static struct expression *parse_expression(Parser *p)
 					EXPECT(next_token(p, &tok), tt_ident);
 					da_append(&ids, tok);
 					EXPECT(next_token(p, NULL), tt_equal);
-					da_append(&exps, parse_expression(p));
+					da_append(&exps, parse_expression(p, scope));
 					if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
 					EXPECT(tok, tt_comma);
 					/* allow trailing comma */
@@ -974,7 +1098,7 @@ static struct expression *parse_expression(Parser *p)
 				struct expression_stack exps = {0};
 				if (peek_token(p)->tt != tt_rbrace) {
 					for (;;) {
-						da_append(&exps, parse_expression(p));
+						da_append(&exps, parse_expression(p, scope));
 						if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
 						EXPECT(tok, tt_comma);
 						/* allow trailing comma */
@@ -991,7 +1115,7 @@ static struct expression *parse_expression(Parser *p)
 		case tt_lbracket: {
 			next_token(p, &exp->tok);
 			assert(op_prev == false);
-			shunt(parse_square_bracket_expression(p, exp), &out, &ops);
+			shunt(parse_square_bracket_expression(p, exp, scope), &out, &ops);
 		} break;
 			/* operators */
 		case tt_lparen: {
@@ -1008,7 +1132,7 @@ static struct expression *parse_expression(Parser *p)
 			da_init(args);
 			if (!ACCEPT(peek_token(p), tt_rparen)) {
 				for (;;) {
-					da_append(args, parse_expression(p));
+					da_append(args, parse_expression(p, scope));
 					if (ACCEPT(peek_token(p), tt_rparen)) break;
 					EXPECT(next_token(p, NULL), tt_comma);
 				}
@@ -1030,7 +1154,7 @@ static struct expression *parse_expression(Parser *p)
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_unary;
 			exp->as.cast.op = op_cast;
-			exp->as.cast.type = parse_type(p);
+			exp->as.cast.type = parse_type(p, scope, false);
 			shunt(exp, &out, &ops);
 			break;
 			/* binary ops */
@@ -1200,8 +1324,6 @@ const char *ast_binop_to_str(enum binop op)
 }
 
 /* --- AST Printer --- */
-void ast_def_fprint(struct definition *def, FILE *file);
-void ast_type_fprint(struct type *t, FILE *file);
 
 char *ast_type_to_str(struct type *t)
 {
@@ -1230,17 +1352,24 @@ void ast_type_fprint(struct type *t, FILE *file)
 	case ast_type_u64:		fputs("u64", file); break;
 	case ast_type_f32:		fputs("f32", file); break;
 	case ast_type_f64:		fputs("f64", file); break;
-	case ast_type_intlit:
-		fputs("#builtin_intlit_t", file);
-		break;
-	case ast_type_floatlit:
-		fputs("#builtin_floatlit_t", file);
-		break;
-	case ast_type_alias:
-		FAILWITH("TODO: print type alias.");
+	case ast_type_var:
+		if (t->as.var.name) {
+			fprintf(file, SV_FMT, SV_ARGS(&t->as.var.name->sv));
+		} else {
+			fprintf(file, "'%p", t);
+		}
 		break;
 	case ast_type_cons:
-		FAILWITH("TODO: print type cons.");
+		if (t->as.cons.args.len) {
+			fputc('(', file);
+			ast_type_fprint(t->as.cons.args.elems[0], file);
+			for (size_t i = 1; i < t->as.cons.args.len; ++i) {
+				fputs(", ", file);
+				ast_type_fprint(t->as.cons.args.elems[i], file);
+			}
+			fputs(") ", file);
+		}
+		fprintf(file, SV_FMT, SV_ARGS(&t->as.cons.name));
 		break;
 	case ast_type_proc:
 		fputc('(', file);

@@ -95,7 +95,6 @@ enum unaop {
 	unaop_slice       = op_slice,
 };
 
-
 enum ast_type_tag {
 	ast_type_void = 0,
 	ast_type_noreturn,
@@ -108,12 +107,10 @@ enum ast_type_tag {
 	ast_type_u16,
 	ast_type_u32,
 	ast_type_u64,
-	ast_type_intlit,
 	ast_type_f32,
 	ast_type_f64,
-	ast_type_floatlit,
-	ast_type_alias,
 	ast_type_cons,
+	ast_type_var,
 	ast_type_ptr,
 	ast_type_mut_ptr,
 	ast_type_slice,
@@ -129,17 +126,28 @@ struct symtbl {
 	struct definition **elems;
 };
 
+struct typetbl {
+	uint32_t len, cap;
+	struct typetbl_entry {
+		struct strview name;
+		struct type *type;
+	} *elems;
+};
+
 struct scope {
-	struct symtbl symtbl;
-	struct scope *parent;
+	struct symtbl  symtbl;
+	struct typetbl typetbl;
+	struct scope  *parent;
+};
+
+struct type_ptrs {
+	uint32_t len, cap;
+	struct type **elems;
 };
 
 struct proc_type {
 	struct type *ret;
-	struct type_ptrs {
-		uint32_t len, cap;
-		struct type **elems;
-	} args;
+	struct type_ptrs args;
 };
 
 struct array_type {
@@ -157,8 +165,28 @@ struct struct_type {
 };
 
 struct type_cons {
+	struct type_ptrs args;
+	struct type *type;
+	struct strview name;
+	bool is_alias;
+};
+
+enum type_class {
+	type_class_any,
+	type_class_signed_integer,
+	type_class_unsigned_integer,
+	type_class_integer,
+	type_class_float,
+	type_class_numeric,
+	type_class_length,
+	type_class_indexable,
+	type_class_struct,
+	type_class_procedure,
+};
+
+struct type_var {
 	struct token *name;
-	struct type *arg;
+	enum type_class class;
 };
 
 struct type {
@@ -173,17 +201,22 @@ struct type {
 		struct type *slice;
 		struct type *mut_slice;
 		struct token *basic;
-		struct token *alias;
+		struct type_var var;
 	} as;
 };
 
-struct formals {
+struct expression_stack {
+	uint32_t len, cap;
+	struct expression **elems;
+};
+
+struct def_array {
 	uint32_t len, cap;
 	struct definition *elems;
 };
 
 struct procedure {
-	struct formals formals;
+	struct def_array formals;
 	struct type *ret;
 	struct scope scope;
 	struct expression *body;
@@ -193,9 +226,11 @@ struct definition {
 	struct token *id;
 	struct type *type;
 	struct expression *exp;
+	struct def_array specs;
 	size_t ir_symbol;
 	bool is_mut;
 	bool is_global;
+	bool is_polymorphic;
 };
 
 struct let {
@@ -221,11 +256,6 @@ struct exp_if {
 struct exp_while {
 	struct expression *cond;
 	struct expression *body;
-};
-
-struct expression_stack {
-	uint32_t len, cap;
-	struct expression **elems;
 };
 
 struct case_branch {
@@ -273,7 +303,7 @@ struct index {
 	struct expression *idx;
 };
 
-struct exp_slice {
+struct slice {
 	enum operator op;
 	struct expression *exp;
 	struct expression *idx;
@@ -311,8 +341,8 @@ enum ast_exp_tag {
 struct expression {
 	enum ast_exp_tag tag;
 	struct token *tok;
+	bool is_lvalue;
 	bool is_mutable;
-	bool is_addressable;
 	struct type *type;    // type anotation
 	union _exp_internal {
 		struct definition  def;
@@ -328,11 +358,12 @@ struct expression {
 		enum operator      op;
 		struct unary       una;
 		struct binary      bin;
-		struct exp_slice   slice;
+		struct slice       slice;
 		struct expression *get_ptr;
 		struct expression *get_len;
 		struct expression *ret;
 		struct token      *id;
+		struct token      *str;
 		struct expression_stack init;
 		struct {
 			struct expression_stack exps;
@@ -341,11 +372,16 @@ struct expression {
 	} as;
 };
 
-struct type AST_TYPE_BOOL   = {.tag = ast_type_bool};
-struct type AST_TYPE_VOID   = {.tag = ast_type_void};
-struct type AST_TYPE_U64    = {.tag = ast_type_u64};
-struct type AST_TYPE_U32	= {.tag = ast_type_u32};
-struct type AST_TYPE_U16	= {.tag = ast_type_u16};
-struct type AST_TYPE_U8		= {.tag = ast_type_u8};
-struct type AST_TYPE_I8     = {.tag = ast_type_i8};
-struct type AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
+struct type AST_TYPE_BOOL     = {.tag = ast_type_bool};
+struct type AST_TYPE_VOID     = {.tag = ast_type_void};
+struct type AST_TYPE_U8		  = {.tag = ast_type_u8};
+struct type AST_TYPE_U16	  = {.tag = ast_type_u16};
+struct type AST_TYPE_U32	  = {.tag = ast_type_u32};
+struct type AST_TYPE_U64      = {.tag = ast_type_u64};
+struct type AST_TYPE_I8       = {.tag = ast_type_i8};
+struct type AST_TYPE_I16      = {.tag = ast_type_i16};
+struct type AST_TYPE_I32      = {.tag = ast_type_i32};
+struct type AST_TYPE_I64      = {.tag = ast_type_i64};
+struct type AST_TYPE_F32      = {.tag = ast_type_f32};
+struct type AST_TYPE_F64      = {.tag = ast_type_f64};
+struct type AST_TYPE_STRING   = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};

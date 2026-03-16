@@ -6,9 +6,10 @@ typedef struct parser {
 	struct mem_arena data;
 } Parser;
 
-#define POOL_ALLOC(p, type) ((type*)mem_arena_alloc(p, sizeof(type)))
+#define POOL_ALLOC(p, type) ((type*)mem_arena_zero_alloc(p, sizeof(type)))
 
-struct expression *parse_toplevel_expression(Parser *p, struct symtbl *symtbl);
+bool parser_is_at_end(Parser *p);
+struct expression *parse_toplevel_expression(Parser *p, struct scope *scope);
 void ast_fprint(struct expression *exp, FILE *file);
 struct definition *lookup_definition(struct scope *scope, struct strview name);
 char *ast_type_to_str(struct type *t);

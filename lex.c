@@ -53,6 +53,9 @@ char *token_type_to_str(enum token_type tt)
 	case tt_slash:				return "tt_slash";
 	case tt_eof:				return "tt_eof";
 	case tt_let:                return "tt_let";
+	case tt_type:				return "tt_type";
+	case tt_newtype:			return "tt_newtype";
+	case tt_struct:			    return "tt_struct";
 	case tt_mut:                return "tt_mut";
 	case tt_in:                 return "tt_in";
 	case tt_end:                return "tt_end";
@@ -112,6 +115,7 @@ char *token_type_to_str(enum token_type tt)
 	case tt_extern:			    return "tt_extern";
 	case tt_ptr:			    return "tt_ptr";
 	case tt_len:			    return "tt_len";
+	case tt_typevar:            return "tt_typevar";
 	case TOKEN_TYPE_MAX:
 	default:
 		assert(0 && "TODO: Unknown token tag");
@@ -183,12 +187,18 @@ static void lex_skip_line(struct lexer *lex)
 
 static void lex_skip_comment(struct lexer *lex)
 {
-	for (;;) {
-		int c = lex_nextc(lex);
+	int c, n;
+	int nest_level = 1;
+	while (nest_level) {
+		c = lex_nextc(lex);
+		n = lex_peekc(lex);
 		assert(c != EOF);
-		if (c == '*' && lex_peekc(lex) == '/') {
+		if (c == '/' && n == '*') {
 			lex_nextc(lex);
-			break;
+			nest_level++;
+		} else if (c == '*' && n == '/') {
+			lex_nextc(lex);
+			nest_level--;
 		}
 	}
 }
@@ -238,9 +248,12 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				tok.sv.len++;
 			}
 			/* Match Keywords */
-			CHECK_EXAUSTIVE_KEYWORDS(63);
+			CHECK_EXAUSTIVE_KEYWORDS(67);
 			if (sv_is_equal(tok.sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("let")))        tok.tt = tt_let;
+			else if (sv_is_equal(tok.sv, sv_of_cstr("type")))       tok.tt = tt_type;
+			else if (sv_is_equal(tok.sv, sv_of_cstr("newtype")))    tok.tt = tt_newtype;
+			else if (sv_is_equal(tok.sv, sv_of_cstr("struct")))     tok.tt = tt_struct;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("mut")))        tok.tt = tt_mut;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("in")))         tok.tt = tt_in;
 			else if (sv_is_equal(tok.sv, sv_of_cstr("end")))        tok.tt = tt_end;
@@ -335,7 +348,9 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 				}
 			} break;
 			case '\'':
-				assert(0 && "TODO: lex char literal.");
+				tok.tt = tt_typevar;
+				lex_nextc(lex);
+				tok.sv.len++;
 				break;
 			case '(':
 			case ')':

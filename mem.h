@@ -24,6 +24,7 @@ void mem_region_align_head(struct mem_region *r);
 void *mem_arena_alloc_small(struct mem_arena *arena, size_t sz);
 void *mem_arena_alloc_large(struct mem_arena *arena, size_t sz);
 void *mem_arena_alloc(struct mem_arena *arena, size_t sz);
+void *mem_arena_zero_alloc(struct mem_arena *arena, size_t sz);
 void mem_arena_free(struct mem_arena *arena);
 
 #endif /* MEM_H_ */
@@ -115,6 +116,13 @@ void *mem_arena_alloc(struct mem_arena *arena, size_t sz)
 	} else {
 		return mem_arena_alloc_large(arena, sz);
 	}
+}
+
+void *mem_arena_zero_alloc(struct mem_arena *arena, size_t sz)
+{
+	void *ptr = mem_arena_alloc(arena, sz);
+	memset(ptr, 0, sz);
+	return ptr;
 }
 
 void mem_arena_free(struct mem_arena *arena)

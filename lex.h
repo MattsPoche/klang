@@ -38,6 +38,9 @@ enum token_type {
 	tt_slash        = '/',
 	tt_eof = 0x100,
 	/* Keywords */
+	tt_struct,
+	tt_type,
+	tt_newtype,
 	tt_let,
 	tt_mut,
 	tt_in,
@@ -82,6 +85,7 @@ enum token_type {
 	tt_void,
 	tt_bool,
 	tt_string,
+	tt_typevar,
 	/* Integer */
 	tt_i8,
 	tt_i16,
@@ -108,7 +112,7 @@ enum token_type {
 };
 
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
-CHECK_EXAUSTIVE_KEYWORDS(63);
+CHECK_EXAUSTIVE_KEYWORDS(67);
 
 struct srcloc {
 	int32_t line;
