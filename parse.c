@@ -134,170 +134,262 @@ struct proc_type procedure_type(struct procedure *proc)
 
 /* TODO: Improve error messages in parser
  */
+static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 
-static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+static struct type_ptrs
+parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
+				struct scope *scope, bool introduce_type_var_p)
+{
+	struct type_ptrs list = {0};
+	struct token *tok = NULL;
+	if (ACCEPT(peek_token(p), terminal)) {
+		next_token(p, NULL);
+		return list;
+	}
+	do {
+		if (allow_trailing_comma && ACCEPT(peek_token(p), terminal)) {
+			next_token(p, NULL);
+			return list;
+		}
+		da_append(&list, parse_type(p, scope, introduce_type_var_p));
+	} while (ACCEPT(next_token(p, &tok), tt_comma));
+	EXPECT(tok, terminal);
+	return list;
+}
+
+static struct type *
+parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+{
+	struct type *type = POOL_ALLOC(&p->data, struct type);
+	type->tag = ast_type_struct;
+	struct token *tok = NULL;
+	if (ACCEPT(peek_token(p), tt_rbrace)) {
+		next_token(p, NULL);
+		return type;
+	}
+	do {
+		if (ACCEPT(peek_token(p), tt_rbrace)) {
+			next_token(p, NULL);
+			return type;
+		}
+		EXPECT(next_token(p, &tok), tt_ident);
+		EXPECT(next_token(p, NULL), tt_colon);
+		struct struct_member m = {
+			.name = tok,
+			.type = parse_type(p, scope, introduce_type_var_p),
+		};
+		assert(m.type != NULL);
+		da_append(&type->as.strct, m);
+	} while (ACCEPT(next_token(p, &tok), tt_comma));
+	EXPECT(tok, tt_rbrace);
+	return type;
+}
+
+static struct type *
+parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+{
+	struct type *type = POOL_ALLOC(&p->data, struct type);
+	type->tag = ast_type_struct;
+	struct token *tok = NULL;
+	if (ACCEPT(peek_token(p), tt_rbrace)) {
+		next_token(p, NULL);
+		return type;
+	}
+	do {
+		if (ACCEPT(peek_token(p), tt_rbrace)) {
+			next_token(p, NULL);
+			return type;
+		}
+		da_append(&type->as.strct, (struct struct_member) {
+				.type = parse_type(p, scope, introduce_type_var_p),
+			});
+	} while (ACCEPT(next_token(p, &tok), tt_comma));
+	EXPECT(tok, tt_rbrace);
+	return type;
+}
+
+static struct type *
+parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	struct type *type = NULL;
 	/* Build type signature */
-	for (;;) {
-		enum ast_type_tag tag;
-		switch ((int)peek_token(p)->tt) {
-		case tt_and: {
-			struct token *tok;
-			assert(type == NULL);
-			next_token(p, NULL);
-			if (ACCEPT(next_token(p, &tok), tt_bang)) {
-				EXPECT(next_token(p, NULL), tt_lbracket);
-				type = POOL_ALLOC(&p->data, struct type);
-				type->tag = ast_type_mut_slice;
-			} else {
-				EXPECT(tok, tt_lbracket);
-				type = POOL_ALLOC(&p->data, struct type);
-				type->tag = ast_type_slice;
-			}
-			type->as.slice = parse_type(p, scope, introduce_type_var_p);
-			EXPECT(next_token(p, NULL), tt_rbracket);
-		} break;
-		case tt_lparen: {
-			assert(type == NULL);
-			next_token(p, NULL);
+	enum ast_type_tag tag;
+	switch ((int)peek_token(p)->tt) {
+	case tt_and: {
+		struct token *tok;
+		next_token(p, NULL);
+		if (ACCEPT(next_token(p, &tok), tt_bang)) {
+			EXPECT(next_token(p, NULL), tt_lbracket);
+			type = POOL_ALLOC(&p->data, struct type);
+			type->tag = ast_type_mut_slice;
+		} else {
+			EXPECT(tok, tt_lbracket);
+			type = POOL_ALLOC(&p->data, struct type);
+			type->tag = ast_type_slice;
+		}
+		type->as.slice = parse_type(p, scope, introduce_type_var_p);
+		EXPECT(next_token(p, NULL), tt_rbracket);
+	} break;
+	case tt_lparen: {
+		next_token(p, NULL);
+		/* parse formal parameter list */
+		struct type_ptrs args = parse_type_list(p, true, tt_rparen, scope, introduce_type_var_p);
+		struct type *app = parse_type(p, scope, introduce_type_var_p);
+		if (app == NULL) {
+			EXPECT(next_token(p, NULL), tt_minus_more);
 			type = POOL_ALLOC(&p->data, struct type);
 			type->tag = ast_type_proc;
-			da_init(&type->as.proc.args);
-			/* parse formal parameter list */
-			if (!ACCEPT(peek_token(p), tt_rparen)) {
-				for (;;) {
-					da_append(&type->as.proc.args, parse_type(p, scope, introduce_type_var_p));
-					if (ACCEPT(peek_token(p), tt_rparen)) break;
-					EXPECT(next_token(p, NULL), tt_comma);
-				}
-			}
-			next_token(p, NULL);
-			EXPECT(next_token(p, NULL), tt_minus_more); // ->
+			type->as.proc.args = args;
 			type->as.proc.ret = parse_type(p, scope, introduce_type_var_p);
-		} break;
-		case tt_lbrace: {
-			assert(type == NULL);
-			next_token(p, NULL);
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_struct;
-			struct struct_type st = {0};
-			struct struct_member mem = {0};
-			struct token *tok;
-			if (peek_token(p)->tt == tt_ident
-				&& peek_token2(p)->tt == tt_colon) {
-				next_token(p, &mem.name);
-				next_token(p, NULL);
-				mem.type = parse_type(p, scope, introduce_type_var_p);
-				da_append(&st, mem);
-				if (ACCEPT(next_token(p, &tok), tt_comma)) {
-					if (ACCEPT(peek_token(p), tt_rbrace)) {
-						FAILWITH("TODO: done parsing struct type.");
-					} else {
-						FAILWITH("TODO: continue parsing struct type.");
-					}
-				} else {
-					EXPECT(tok, tt_rbrace);
-					FAILWITH("TODO: done parsing struct type.");
-				}
-				FAILWITH("TODO: parse struct type.");
-			} else {
-				for (;;) {
-					mem.type = parse_type(p, scope, introduce_type_var_p);
-					da_append(&st, mem);
-					if (ACCEPT(next_token(p, &tok), tt_comma)) {
-						if (ACCEPT(peek_token(p), tt_rbrace)) {
-							next_token(p, NULL);
-							break;
-						}
-					} else {
-						EXPECT(tok, tt_rbrace);
-						break;
-					}
-				}
-			}
-			type->as.strct = st;
-		} break;
-		case tt_lbracket: {
-			assert(type == NULL);
-			next_token(p, NULL);
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_array;
-			type->as.array.base = parse_type(p, scope, introduce_type_var_p);
-			if (ACCEPT(peek_token(p), tt_comma)) {
-				next_token(p, NULL);
-				struct expression *exp = parse_expression(p, scope);
-				assert(exp->tag == ast_exp_literal);
-				assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
-				type->as.array.is_sized = true;
-				type->as.array.size = exp->as.lit.as.i;
-			} else {
-				type->as.array.is_sized = false;
-			}
-			EXPECT(next_token(p, NULL), tt_rbracket);
-		} break;
-		case tt_star: {
-			assert(type != NULL);
-			next_token(p, NULL);
-			struct type *tmp = type;
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_ptr;
-			type->as.ptr = tmp;
-		} break;
-		case tt_bang: {
-			assert(type != NULL);
-			next_token(p, NULL);
-			struct type *tmp = type;
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_mut_ptr;
-			type->as.ptr = tmp;
-		} break;
-		case tt_void: tag = ast_type_void; goto basic_type;
-		case tt_bool: tag = ast_type_bool; goto basic_type;
-		case tt_i8:   tag = ast_type_i8;   goto basic_type;
-		case tt_i16:  tag = ast_type_i16;  goto basic_type;
-		case tt_i32:  tag = ast_type_i32;  goto basic_type;
-		case tt_i64:  tag = ast_type_i64;  goto basic_type;
-		case tt_u8:	  tag = ast_type_u8;   goto basic_type;
-		case tt_u16:  tag = ast_type_u16;  goto basic_type;
-		case tt_u32:  tag = ast_type_u32;  goto basic_type;
-		case tt_u64:  tag = ast_type_u64;  goto basic_type;
-		case tt_f32:  tag = ast_type_f32;  goto basic_type;
-		case tt_f64:  tag = ast_type_f64;  goto basic_type;
-		basic_type:
-			assert(type == NULL);
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = tag;
-			type->as.basic = next_token(p, NULL);
-			break;
-		case tt_ident: {
-			struct token *tok;
-			assert(type == NULL);
-			next_token(p, &tok);
-			type = lookup_type(scope, tok->sv);
-			assert(type != NULL);
-		} break;
-		case tt_typevar: {
-			struct token *tok;
-			assert(type == NULL);
-			next_token(p, &tok);
-			type = lookup_type(scope, tok->sv);
-			if (introduce_type_var_p) {
-				if (type == NULL) {
-					type = POOL_ALLOC(&p->data, struct type);
-					type->tag = ast_type_var;
-					type->as.var.name = tok;
-					typetbl_add(&scope->typetbl, tok->sv, type);
-				}
-				return type;
-			}
-			assert(type != NULL);
-			return type;
-		} break;
-		default: goto done;
+		} else {
+			assert(app->tag == ast_type_app);
+			assert(app->as.app.cons->tag == ast_type_cons);
+			assert(args.len == app->as.app.cons->as.cons.args.len);
+			app->as.app.args = args;
+			type = app;
 		}
+	} break;
+	case tt_lbrace: {
+		next_token(p, NULL);
+		if (peek_token(p)->tt == tt_ident && peek_token2(p)->tt == tt_colon) {
+			/* begin parsing named members */
+			type = parse_named_struct_type(p, scope, introduce_type_var_p);
+		} else {
+			type = parse_struct_type(p, scope, introduce_type_var_p);
+		}
+	} break;
+	case tt_lbracket: {
+		next_token(p, NULL);
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_array;
+		type->as.array.base = parse_type(p, scope, introduce_type_var_p);
+		if (ACCEPT(peek_token(p), tt_comma)) {
+			next_token(p, NULL);
+			struct expression *exp = parse_expression(p, scope);
+			assert(exp->tag == ast_exp_literal);
+			assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
+			type->as.array.is_sized = true;
+			type->as.array.size = exp->as.lit.as.i;
+		} else {
+			type->as.array.is_sized = false;
+		}
+		EXPECT(next_token(p, NULL), tt_rbracket);
+	} break;
+	case tt_star: {
+		next_token(p, NULL);
+		struct type *tmp = type;
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_ptr;
+		type->as.ptr = tmp;
+	} break;
+	case tt_bang: {
+		next_token(p, NULL);
+		struct type *tmp = type;
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_mut_ptr;
+		type->as.ptr = tmp;
+	} break;
+	case tt_void: tag = ast_type_void; goto basic_type;
+	case tt_bool: tag = ast_type_bool; goto basic_type;
+	case tt_i8:   tag = ast_type_i8;   goto basic_type;
+	case tt_i16:  tag = ast_type_i16;  goto basic_type;
+	case tt_i32:  tag = ast_type_i32;  goto basic_type;
+	case tt_i64:  tag = ast_type_i64;  goto basic_type;
+	case tt_u8:	  tag = ast_type_u8;   goto basic_type;
+	case tt_u16:  tag = ast_type_u16;  goto basic_type;
+	case tt_u32:  tag = ast_type_u32;  goto basic_type;
+	case tt_u64:  tag = ast_type_u64;  goto basic_type;
+	case tt_f32:  tag = ast_type_f32;  goto basic_type;
+	case tt_f64:  tag = ast_type_f64;  goto basic_type;
+	basic_type:
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = tag;
+		type->as.basic = next_token(p, NULL);
+		break;
+	case tt_ident: {
+		struct token *tok;
+		next_token(p, &tok);
+		struct type *cons = lookup_type(scope, tok->sv);
+		assert(cons != NULL);
+		assert(cons->tag == ast_type_cons);
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_app;
+		type->as.app.cons = cons;
+	} break;
+	case tt_typevar: {
+		struct token *tok;
+		next_token(p, &tok);
+		type = lookup_type(scope, tok->sv);
+		if (introduce_type_var_p) {
+			if (type == NULL) {
+				type = POOL_ALLOC(&p->data, struct type);
+				type->tag = ast_type_var;
+				type->as.var.name = tok;
+				typetbl_add(&scope->typetbl, tok->sv, type);
+			}
+		} else {
+			assert(type != NULL);
+		}
+	} break;
 	}
-done:
+	if (type == NULL) return type;
+	struct type *cons = parse_type(p, scope, introduce_type_var_p);
+	if (cons == NULL) return type;
+	switch ((int)cons->tag) {
+	case ast_type_app:
+		assert(cons->as.app.cons->tag == ast_type_cons);
+		if (cons->as.app.cons->as.cons.args.len != 1) {
+			ast_type_fprint(type, stdout);
+			fputc('\n', stdout);
+			ast_type_fprint(cons, stdout);
+			fputc('\n', stdout);
+			FAILWITH("TODO: type error");
+		}
+		da_append(&cons->as.app.args, type);
+		return cons;
+	case ast_type_ptr:
+	case ast_type_mut_ptr:
+		cons->as.ptr = type;
+		return cons;
+	default: FAILWITH("TODO: syntax error"); break;
+	}
+	FAILWITH("Unreachable");
+	return NULL;
+}
+
+static struct type *parse_type_def(Parser *p, struct scope *scope, bool is_alias)
+{
+	struct type *type = POOL_ALLOC(&p->data, struct type);
+	type->tag = ast_type_cons;
+	if (ACCEPT(peek_token(p), tt_typevar)) {
+		struct type *var = POOL_ALLOC(&p->data, struct type);
+		var->tag = ast_type_var;
+		var->as.var.name = next_token(p, NULL);
+		da_append(&type->as.cons.args, var);
+		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+	} else if (ACCEPT(peek_token(p), tt_lparen)) {
+		next_token(p, NULL);
+		struct type *var = POOL_ALLOC(&p->data, struct type);
+		var->tag = ast_type_var;
+		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
+		da_append(&type->as.cons.args, var);
+		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+		while (ACCEPT(peek_token(p), tt_comma)) {
+			next_token(p, NULL);
+			var = POOL_ALLOC(&p->data, struct type);
+			var->tag = ast_type_var;
+			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
+			da_append(&type->as.cons.args, var);
+			typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+		}
+		EXPECT(next_token(p, NULL), tt_rparen);
+	}
+	struct token *tok;
+	EXPECT(next_token(p, &tok), tt_ident);
+	EXPECT(next_token(p, NULL), tt_equal);
+	type->as.cons.type = parse_type(p, scope, false);
+	type->as.cons.name = tok->sv;
+	type->as.cons.is_alias = is_alias;
 	return type;
 }
 
@@ -363,41 +455,6 @@ static void parse_definition(Parser *p, struct definition *def, struct scope *sc
 	}
 }
 
-static struct type *parse_type_def(Parser *p, struct scope *scope, bool is_alias)
-{
-	struct type *type = POOL_ALLOC(&p->data, struct type);
-	type->tag = ast_type_cons;
-	if (ACCEPT(peek_token(p), tt_typevar)) {
-		struct type *var = POOL_ALLOC(&p->data, struct type);
-		var->tag = ast_type_var;
-		var->as.var.name = next_token(p, NULL);
-		da_append(&type->as.cons.args, var);
-		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
-	} else if (ACCEPT(peek_token(p), tt_lparen)) {
-		next_token(p, NULL);
-		struct type *var = POOL_ALLOC(&p->data, struct type);
-		var->tag = ast_type_var;
-		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
-		da_append(&type->as.cons.args, var);
-		while (ACCEPT(peek_token(p), tt_comma)) {
-			next_token(p, NULL);
-			var = POOL_ALLOC(&p->data, struct type);
-			var->tag = ast_type_var;
-			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
-			da_append(&type->as.cons.args, var);
-			typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
-		}
-		EXPECT(next_token(p, NULL), tt_rparen);
-	}
-	struct token *tok;
-	EXPECT(next_token(p, &tok), tt_ident);
-	EXPECT(next_token(p, NULL), tt_equal);
-	type->as.cons.type = parse_type(p, scope, false);
-	type->as.cons.name = tok->sv;
-	type->as.cons.is_alias = is_alias;
-	return type;
-}
-
 struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 {
 	struct token *tok;
@@ -418,7 +475,7 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 	} break;
 	case tt_newtype: {
 		struct scope sc = {.parent = scope};
-		type = parse_type_def(p, &sc, true);
+		type = parse_type_def(p, &sc, false);
 		typetbl_add(&scope->typetbl, type->as.cons.name, type);
 	} break;
 	case tt_eof: break;
@@ -1370,6 +1427,19 @@ void ast_type_fprint(struct type *t, FILE *file)
 			fputs(") ", file);
 		}
 		fprintf(file, SV_FMT, SV_ARGS(&t->as.cons.name));
+		break;
+	case ast_type_app:
+		if (t->as.app.args.len) {
+			fputc('(', file);
+			ast_type_fprint(t->as.app.args.elems[0], file);
+			for (size_t i = 1; i < t->as.app.args.len; ++i) {
+				fputs(", ", file);
+				ast_type_fprint(t->as.app.args.elems[i], file);
+			}
+			fputs(") ", file);
+		}
+		assert(t->as.app.cons->tag == ast_type_cons);
+		fprintf(file, SV_FMT, SV_ARGS(&t->as.app.cons->as.cons.name));
 		break;
 	case ast_type_proc:
 		fputc('(', file);

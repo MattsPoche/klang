@@ -110,6 +110,7 @@ enum ast_type_tag {
 	ast_type_f32,
 	ast_type_f64,
 	ast_type_cons,
+	ast_type_app,
 	ast_type_var,
 	ast_type_ptr,
 	ast_type_mut_ptr,
@@ -171,6 +172,11 @@ struct type_cons {
 	bool is_alias;
 };
 
+struct type_app {
+	struct type_ptrs args;
+	struct type *cons;
+};
+
 enum type_class {
 	type_class_any,
 	type_class_signed_integer,
@@ -196,6 +202,7 @@ struct type {
 		struct array_type array;
 		struct struct_type strct;
 		struct type_cons cons;
+		struct type_app app;
 		struct type *ptr;
 		struct type *mut_ptr;
 		struct type *slice;
