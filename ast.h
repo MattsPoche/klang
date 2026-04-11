@@ -109,7 +109,6 @@ enum ast_type_tag {
 	ast_type_u64,
 	ast_type_f32,
 	ast_type_f64,
-	ast_type_cons,
 	ast_type_app,
 	ast_type_var,
 	ast_type_ptr,
@@ -118,21 +117,40 @@ enum ast_type_tag {
 	ast_type_mut_slice,
 	ast_type_array,
 	ast_type_struct,
+	ast_type_union,
 	ast_type_vector,
 	ast_type_proc,
 };
 
+struct expression_stack {
+	uint32_t len, cap;
+	struct expression **elems;
+};
+
+struct symtbl_entry {
+	struct token *name;
+	enum symtbl_entry_tag {
+		SYMTBL_VAR,
+		SYMTBL_VALCONS,
+	} tag;
+	union {
+		struct valcons_entry {
+			struct type *type;
+			int64_t tag_val;
+			struct type_definition *td;
+		} valcons;
+		struct definition *var;
+	} as;
+};
+
 struct symtbl {
 	uint32_t len, cap;
-	struct definition **elems;
+	struct symtbl_entry *elems;
 };
 
 struct typetbl {
 	uint32_t len, cap;
-	struct typetbl_entry {
-		struct strview name;
-		struct type *type;
-	} *elems;
+	struct type_definition *elems;
 };
 
 struct scope {
@@ -165,16 +183,18 @@ struct struct_type {
 	} *elems;
 };
 
-struct type_cons {
-	struct type_ptrs args;
-	struct type *type;
-	struct strview name;
-	bool is_alias;
+struct union_type {
+	uint32_t len, cap;
+	struct union_member {
+		struct token *name;
+		struct type *type;
+		int64_t tag_value;
+	} *elems;
 };
 
 struct type_app {
 	struct type_ptrs args;
-	struct type *cons;
+	struct token *cons;
 };
 
 enum type_class {
@@ -184,15 +204,19 @@ enum type_class {
 	type_class_integer,
 	type_class_float,
 	type_class_numeric,
-	type_class_length,
+	type_class_scalar,           // any non-aggregate type
+	type_class_length,           // type that can be used with the #len operator
 	type_class_indexable,
 	type_class_struct,
+	type_class_union,
 	type_class_procedure,
+	type_class_defered,
 };
 
 struct type_var {
-	struct token *name;
 	enum type_class class;
+	struct token *name;
+	struct expression_stack defered;
 };
 
 struct type {
@@ -200,8 +224,8 @@ struct type {
 	union {
 		struct proc_type proc;
 		struct array_type array;
-		struct struct_type strct;
-		struct type_cons cons;
+		struct struct_type struct_t;
+		struct union_type union_t;
 		struct type_app app;
 		struct type *ptr;
 		struct type *mut_ptr;
@@ -212,21 +236,20 @@ struct type {
 	} as;
 };
 
-struct expression_stack {
-	uint32_t len, cap;
-	struct expression **elems;
-};
-
-struct def_array {
-	uint32_t len, cap;
-	struct definition *elems;
-};
-
 struct procedure {
-	struct def_array formals;
+	struct def_array {
+		uint32_t len, cap;
+		struct definition *elems;
+	} formals;
 	struct type *ret;
 	struct scope scope;
 	struct expression *body;
+};
+
+struct value_cons {
+	struct token *cons;
+	struct expression *exp;
+	int64_t tag_val;
 };
 
 struct definition {
@@ -238,6 +261,14 @@ struct definition {
 	bool is_mut;
 	bool is_global;
 	bool is_polymorphic;
+};
+
+struct type_definition {
+	struct token *name;
+	struct type_ptrs args;
+	struct type *type;
+	bool is_alias;
+	bool is_var;
 };
 
 struct let {
@@ -266,19 +297,23 @@ struct exp_while {
 };
 
 struct case_branch {
-	struct expression_stack matches;
-	struct expression *exp;
-};
-
-struct case_branches {
-	uint32_t len, cap;
-	struct case_branch *elems;
+	struct token *cons;
+	struct definition binding;
+	struct scope scope;
+	struct expression *guard;
+	struct expression *body;
+	int64_t tag_val;
+	bool binds_value;
+	bool binding_is_ref;
 };
 
 struct exp_case {
 	struct expression *cexp;
 	struct expression *else_exp;
-	struct case_branches branches;
+	struct case_branches {
+		uint32_t len, cap;
+		struct case_branch *elems;
+	} branches;
 };
 
 struct binary {
@@ -329,6 +364,7 @@ enum ast_exp_tag {
 	ast_exp_initializer,
 	ast_exp_named_initializer,
 	ast_exp_zero_initializer,
+	ast_exp_value_cons,
 	ast_exp_procedure_literal,
 	ast_exp_undefined,
 	ast_exp_ident,
@@ -361,6 +397,7 @@ struct expression {
 		struct call        call;
 		struct cast        cast;
 		struct index       idx;
+		struct value_cons  valcons;
 		struct procedure   proc;
 		enum operator      op;
 		struct unary       una;
@@ -369,7 +406,6 @@ struct expression {
 		struct expression *get_ptr;
 		struct expression *get_len;
 		struct expression *ret;
-		struct token      *id;
 		struct token      *str;
 		struct expression_stack init;
 		struct {
@@ -392,3 +428,5 @@ struct type AST_TYPE_I64      = {.tag = ast_type_i64};
 struct type AST_TYPE_F32      = {.tag = ast_type_f32};
 struct type AST_TYPE_F64      = {.tag = ast_type_f64};
 struct type AST_TYPE_STRING   = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
+
+#define AST_TYPE_UNION_TAG AST_TYPE_I64

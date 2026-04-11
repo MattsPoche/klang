@@ -14,6 +14,13 @@
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define DEBUG_BREAK() __asm__("int3")
+#if KC_DEBUG
+#    define EXIT(code) do { DEBUG_BREAK(); exit(code); } while (0)
+#else
+#    define EXIT(code) exit(code)
+#endif
+
 #define FAILWITH(_fmt_msg, ...)										\
 	do {															\
 		fflush(stdout);												\
@@ -21,7 +28,6 @@
 		fprintf(stderr, "%s: %d: [FAILWITH] ", __FILE__, __LINE__); \
 		fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);		\
 		fputc('\n', stderr);										\
-		asm("int3");												\
-		exit(1);													\
+		EXIT(1);													\
 	} while (0)
 #define UNUSED __attribute__((unused))

@@ -91,7 +91,6 @@ struct asm_address {
 };
 
 struct asm_context {
-	uint64_t clobbered;
 	size_t stack_size;
 	size_t arg_stack_size;
 	struct asm_addresses {
@@ -101,6 +100,7 @@ struct asm_context {
 	size_t varc;
 	struct asm_address *vars;
 	int assigned[ASM_REG_COUNT];
+	uint32_t clobbered;
 	bool setup_frame;
 	bool is_leaf;
 };

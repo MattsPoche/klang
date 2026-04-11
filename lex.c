@@ -125,18 +125,19 @@ char *token_type_to_str(enum token_type tt)
 
 char *show_token(char *str, size_t len, struct token *tok)
 {
-	snprintf(str, len, "%s(`"SV_FMT"`), %d, %d",
+	snprintf(str, len, "%s(`%.*s`), %d, %d",
 			 token_type_to_str(tok->tt),
-			 SV_ARGS(&tok->sv),
-			 tok->loc.line,
-			 tok->loc.column);
+			 tok->tok_len,
+			 &tok->text[tok->offset],
+			 tok->line,
+			 tok->column);
 	return str;
 }
 
 static bool isbrace(int c)
 {
-	static const int braces[] = { '(', ')', '[', ']', '{', '}' };
-	for (size_t i = 0; i < sizeof(braces)-1; ++i) {
+	static const char braces[] = { '(', ')', '[', ']', '{', '}' };
+	for (size_t i = 0; i < sizeof(braces); ++i) {
 		if (braces[i] == c) return true;
 	}
 	return false;
@@ -144,8 +145,9 @@ static bool isbrace(int c)
 
 static int lex_lookahead(struct lexer *lex, size_t n)
 {
-	if (n < lex->sv.len) {
-		return lex->sv.ptr[n];
+	size_t offset = lex->offset + n;
+	if (offset < lex->length) {
+		return lex->text[offset];
 	} else {
 		return EOF;
 	}
@@ -158,20 +160,18 @@ static int lex_peekc(struct lexer *lex)
 
 static int lex_nextc(struct lexer *lex)
 {
-	if (lex->sv.len == 0) return EOF;
-	int c = lex->sv.ptr[0];
-	lex->sv.len--;
-	lex->sv.ptr++;
+	if (lex->offset >= lex->length) return EOF;
+	int c = lex->text[lex->offset++];
 	switch (c) {
 	case '\n':
-		lex->loc.line++;
-		lex->loc.column = 0;
+		lex->line++;
+		lex->column = 0;
 		break;
 	case '\t':
-		lex->loc.column += TAB_WIDTH;
+		lex->column += TAB_WIDTH;
 		break;
 	default:
-		lex->loc.column++;
+		lex->column++;
 		break;
 	}
 	return c;
@@ -225,17 +225,33 @@ static void lex_skip_ws(struct lexer *lex)
 	}
 }
 
+static struct token make_token(struct lexer *lex)
+{
+	return (struct token) {
+		.text	  = lex->text,
+		.offset	  = lex->offset,
+		.text_len = lex->length,
+		.tok_len  = 0,
+		.line	  = lex->line,
+		.column	  = lex->column,
+	};
+}
+
+struct strview token_to_strview(struct token *tok)
+{
+	return (struct strview) {
+		.ptr = tok->text + tok->offset,
+		.len = tok->tok_len,
+	};
+}
+
 void tokenize(struct lexer *lex, struct token_buffer *tokens)
 {
 	for (;;) {
 		lex_skip_ws(lex);
-		struct token tok = {
-			.loc = lex->loc,
-			.sv.len = 0,
-			.sv.ptr = lex->sv.ptr,
-		};
+		struct token tok = make_token(lex);
 		int c = lex_nextc(lex);
-		tok.sv.len++;
+		tok.tok_len++;
 		if (c == EOF) {
 			tok.tt = tt_eof;
 			da_append(tokens, tok);
@@ -245,79 +261,80 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 			/* Identifier */
 			while ((c = lex_peekc(lex)) == '_' || isalnum(c)) {
 				lex_nextc(lex);
-				tok.sv.len++;
+				tok.tok_len++;
 			}
 			/* Match Keywords */
+			struct strview sv = token_to_strview(&tok);
 			CHECK_EXAUSTIVE_KEYWORDS(67);
-			if (sv_is_equal(tok.sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("let")))        tok.tt = tt_let;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("type")))       tok.tt = tt_type;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("newtype")))    tok.tt = tt_newtype;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("struct")))     tok.tt = tt_struct;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("mut")))        tok.tt = tt_mut;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("in")))         tok.tt = tt_in;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("end")))        tok.tt = tt_end;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("as")))         tok.tt = tt_as;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("while")))      tok.tt = tt_while;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("for")))        tok.tt = tt_for;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("do")))         tok.tt = tt_do;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("done")))       tok.tt = tt_done;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("break")))      tok.tt = tt_break;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("continue")))   tok.tt = tt_continue;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("if")))         tok.tt = tt_if;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("then")))       tok.tt = tt_then;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("else")))       tok.tt = tt_else;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("elif")))       tok.tt = tt_elif;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("case")))       tok.tt = tt_case;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("of")))         tok.tt = tt_of;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("return")))     tok.tt = tt_return;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("true")))       tok.tt = tt_true;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("false")))      tok.tt = tt_false;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("void")))       tok.tt = tt_void;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("bool")))       tok.tt = tt_bool;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("i8")))         tok.tt = tt_i8;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("i16")))        tok.tt = tt_i16;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("i32")))        tok.tt = tt_i32;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("i64")))        tok.tt = tt_i64;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("u8")))         tok.tt = tt_u8;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("u16")))        tok.tt = tt_u16;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("u32")))        tok.tt = tt_u32;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("u64")))        tok.tt = tt_u64;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("f32")))        tok.tt = tt_f32;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("f64")))        tok.tt = tt_f64;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("#undefined"))) tok.tt = tt_undefined;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("#noreturn")))  tok.tt = tt_noreturn;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("#extern")))    tok.tt = tt_extern;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("#ptr")))       tok.tt = tt_ptr;
-			else if (sv_is_equal(tok.sv, sv_of_cstr("#len")))       tok.tt = tt_len;
+			if (sv_is_equal(sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
+			else if (sv_is_equal(sv, sv_of_cstr("let")))        tok.tt = tt_let;
+			else if (sv_is_equal(sv, sv_of_cstr("type")))       tok.tt = tt_type;
+			else if (sv_is_equal(sv, sv_of_cstr("newtype")))    tok.tt = tt_newtype;
+			else if (sv_is_equal(sv, sv_of_cstr("struct")))     tok.tt = tt_struct;
+			else if (sv_is_equal(sv, sv_of_cstr("mut")))        tok.tt = tt_mut;
+			else if (sv_is_equal(sv, sv_of_cstr("in")))         tok.tt = tt_in;
+			else if (sv_is_equal(sv, sv_of_cstr("end")))        tok.tt = tt_end;
+			else if (sv_is_equal(sv, sv_of_cstr("as")))         tok.tt = tt_as;
+			else if (sv_is_equal(sv, sv_of_cstr("while")))      tok.tt = tt_while;
+			else if (sv_is_equal(sv, sv_of_cstr("for")))        tok.tt = tt_for;
+			else if (sv_is_equal(sv, sv_of_cstr("do")))         tok.tt = tt_do;
+			else if (sv_is_equal(sv, sv_of_cstr("done")))       tok.tt = tt_done;
+			else if (sv_is_equal(sv, sv_of_cstr("break")))      tok.tt = tt_break;
+			else if (sv_is_equal(sv, sv_of_cstr("continue")))   tok.tt = tt_continue;
+			else if (sv_is_equal(sv, sv_of_cstr("if")))         tok.tt = tt_if;
+			else if (sv_is_equal(sv, sv_of_cstr("then")))       tok.tt = tt_then;
+			else if (sv_is_equal(sv, sv_of_cstr("else")))       tok.tt = tt_else;
+			else if (sv_is_equal(sv, sv_of_cstr("elif")))       tok.tt = tt_elif;
+			else if (sv_is_equal(sv, sv_of_cstr("case")))       tok.tt = tt_case;
+			else if (sv_is_equal(sv, sv_of_cstr("of")))         tok.tt = tt_of;
+			else if (sv_is_equal(sv, sv_of_cstr("return")))     tok.tt = tt_return;
+			else if (sv_is_equal(sv, sv_of_cstr("true")))       tok.tt = tt_true;
+			else if (sv_is_equal(sv, sv_of_cstr("false")))      tok.tt = tt_false;
+			else if (sv_is_equal(sv, sv_of_cstr("void")))       tok.tt = tt_void;
+			else if (sv_is_equal(sv, sv_of_cstr("bool")))       tok.tt = tt_bool;
+			else if (sv_is_equal(sv, sv_of_cstr("i8")))         tok.tt = tt_i8;
+			else if (sv_is_equal(sv, sv_of_cstr("i16")))        tok.tt = tt_i16;
+			else if (sv_is_equal(sv, sv_of_cstr("i32")))        tok.tt = tt_i32;
+			else if (sv_is_equal(sv, sv_of_cstr("i64")))        tok.tt = tt_i64;
+			else if (sv_is_equal(sv, sv_of_cstr("u8")))         tok.tt = tt_u8;
+			else if (sv_is_equal(sv, sv_of_cstr("u16")))        tok.tt = tt_u16;
+			else if (sv_is_equal(sv, sv_of_cstr("u32")))        tok.tt = tt_u32;
+			else if (sv_is_equal(sv, sv_of_cstr("u64")))        tok.tt = tt_u64;
+			else if (sv_is_equal(sv, sv_of_cstr("f32")))        tok.tt = tt_f32;
+			else if (sv_is_equal(sv, sv_of_cstr("f64")))        tok.tt = tt_f64;
+			else if (sv_is_equal(sv, sv_of_cstr("#undefined"))) tok.tt = tt_undefined;
+			else if (sv_is_equal(sv, sv_of_cstr("#noreturn")))  tok.tt = tt_noreturn;
+			else if (sv_is_equal(sv, sv_of_cstr("#extern")))    tok.tt = tt_extern;
+			else if (sv_is_equal(sv, sv_of_cstr("#ptr")))       tok.tt = tt_ptr;
+			else if (sv_is_equal(sv, sv_of_cstr("#len")))       tok.tt = tt_len;
 			else tok.tt = tt_ident;
 		} else if (isdigit(c)) {
 			c = lex_peekc(lex);
 			if (c == 'x' || c == 'X') {
 				lex_nextc(lex);
-				tok.sv.len++;
+				tok.tok_len++;
 				while (isxdigit(lex_peekc(lex))) {
 					lex_nextc(lex);
-					tok.sv.len++;
+					tok.tok_len++;
 				}
 				tok.tt = tt_hexlit;
 			} else {
 				while (isdigit(lex_peekc(lex))) {
 					lex_nextc(lex);
-					tok.sv.len++;
+					tok.tok_len++;
 				}
 				if (lex_peekc(lex) == '.') {
 					if (lex_lookahead(lex, 1) == '.') {
 						tok.tt = tt_intlit;
 					} else {
 						lex_nextc(lex);
-						tok.sv.len++;
+						tok.tok_len++;
 						if (!isdigit(lex_peekc(lex))) {
-							log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc, "Syntax error");
+							log_error_and_die(lex->filename, &tok, "Syntax error");
 						}
 						while (isdigit(lex_peekc(lex))) {
 							lex_nextc(lex);
-							tok.sv.len++;
+							tok.tok_len++;
 						}
 						tok.tt = tt_floatlit;
 					}
@@ -335,22 +352,22 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 					switch (lex_nextc(lex)) {
 					case '\\':
 						lex_nextc(lex);
-						tok.sv.len++;
+						tok.tok_len++;
 						break;
 					case '"':
 						loop = false;
 						break;
 					case EOF:
-						log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc, "Syntax error");
+						log_error_and_die(lex->filename, &tok, "Syntax error");
 						break;
 					}
-					tok.sv.len++;
+					tok.tok_len++;
 				}
 			} break;
 			case '\'':
 				tok.tt = tt_typevar;
 				lex_nextc(lex);
-				tok.sv.len++;
+				tok.tok_len++;
 				break;
 			case '(':
 			case ')':
@@ -370,32 +387,32 @@ void tokenize(struct lexer *lex, struct token_buffer *tokens)
 						|| !ispunct(c)
 						|| isbrace(c)) break;
 					lex_nextc(lex);
-					tok.sv.len++;
+					tok.tok_len++;
 				}
-				if (tok.sv.len == 1) tok.tt = c;
-				else if (sv_is_equal(tok.sv, sv_of_cstr(":=")))  tok.tt = tt_colon_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("&=")))  tok.tt = tt_and_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("|=")))  tok.tt = tt_pipe_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("^=")))  tok.tt = tt_caret_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("+=")))  tok.tt = tt_plus_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("-=")))  tok.tt = tt_minus_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("*=")))  tok.tt = tt_star_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("/=")))  tok.tt = tt_slash_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("%=")))  tok.tt = tt_percent_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("!=")))  tok.tt = tt_bang_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("<=")))  tok.tt = tt_less_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr(">=")))  tok.tt = tt_more_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("<<")))  tok.tt = tt_less_less;
-				else if (sv_is_equal(tok.sv, sv_of_cstr(">>")))  tok.tt = tt_more_more;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("<<="))) tok.tt = tt_less_less_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr(">>="))) tok.tt = tt_more_more_equal;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("&&")))  tok.tt = tt_and_and;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("||")))  tok.tt = tt_pipe_pipe;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
-				else if (sv_is_equal(tok.sv, sv_of_cstr("..")))  tok.tt = tt_period_period;
+				struct strview sv = token_to_strview(&tok);
+				if (tok.tok_len == 1) tok.tt = c;
+				else if (sv_is_equal(sv, sv_of_cstr(":=")))  tok.tt = tt_colon_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("&=")))  tok.tt = tt_and_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("|=")))  tok.tt = tt_pipe_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("^=")))  tok.tt = tt_caret_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("+=")))  tok.tt = tt_plus_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("-=")))  tok.tt = tt_minus_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("*=")))  tok.tt = tt_star_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("/=")))  tok.tt = tt_slash_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("%=")))  tok.tt = tt_percent_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("!=")))  tok.tt = tt_bang_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("<=")))  tok.tt = tt_less_equal;
+				else if (sv_is_equal(sv, sv_of_cstr(">=")))  tok.tt = tt_more_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("<<")))  tok.tt = tt_less_less;
+				else if (sv_is_equal(sv, sv_of_cstr(">>")))  tok.tt = tt_more_more;
+				else if (sv_is_equal(sv, sv_of_cstr("<<="))) tok.tt = tt_less_less_equal;
+				else if (sv_is_equal(sv, sv_of_cstr(">>="))) tok.tt = tt_more_more_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("&&")))  tok.tt = tt_and_and;
+				else if (sv_is_equal(sv, sv_of_cstr("||")))  tok.tt = tt_pipe_pipe;
+				else if (sv_is_equal(sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
+				else if (sv_is_equal(sv, sv_of_cstr("..")))  tok.tt = tt_period_period;
 				else {
-					log_error_and_die(lex->filename, lex->contents, tok.sv, tok.loc,
-									  "invalid operator `"SV_FMT"`.", SV_ARGS(&tok.sv));
+					log_error_and_die(lex->filename, &tok, "invalid operator `"SV_FMT"`.", SV_ARGS(sv));
 				}
 				break;
 			}

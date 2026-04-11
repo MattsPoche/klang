@@ -43,30 +43,43 @@ static struct token *next_token(Parser *p, struct token **rt)
 	return tok;
 }
 
-static struct token *expect(Parser *p, struct token *token, enum token_type tag,
-							const char *debug_filename, const int debug_line)
+static void
+error_unexpected_token(Parser *p, struct token *token, const char *debug_filename, const int debug_line)
+{
+	log_error_impl(p->lexer.filename, token, debug_filename, debug_line,
+				   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(token_to_strview(token)));
+	EXIT(1);
+}
+
+void error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, const int debug_line)
+{
+	log_error_impl(p->lexer.filename, id, debug_filename, debug_line,
+				   "Undefined identifier `"SV_FMT"`.", SV_ARGS(token_to_strview(id)));
+	EXIT(1);
+}
+
+static struct token *
+expect(Parser *p, struct token *token, enum token_type tag, const char *debug_filename, const int debug_line)
 {
 	if (token->tt != tag) {
-		log_error_impl(p->lexer.filename, p->lexer.contents, token->sv, token->loc,
-					   debug_filename, debug_line,
-					   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(&token->sv));
-		exit(1);
+		error_unexpected_token(p, token, debug_filename, debug_line);
 	}
 	return token;
 }
 
-#define ACCEPT(token, tag) ((token)->tt == (tag))
-#define EXPECT(token, tag) expect(p, token, tag, __FILE__, __LINE__)
+#define ACCEPT(token, tag)      ((token)->tt == (tag))
+#define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __LINE__)
+#define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __LINE__)
 
 static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
 static struct expression *parse_expression(Parser *p, struct scope *scope);
 
-struct definition *symtbl_find(struct symtbl *symtbl, struct strview name)
+struct symtbl_entry *symtbl_find(struct symtbl *symtbl, struct strview name)
 {
 	for (size_t i = 0; i < symtbl->len; ++i) {
-		if (sv_is_equal(name, symtbl->elems[i]->id->sv)) {
-			return symtbl->elems[i];
+		if (sv_is_equal(name, token_to_strview(symtbl->elems[i].name))) {
+			return &symtbl->elems[i];
 		}
 	}
 	return NULL;
@@ -74,47 +87,68 @@ struct definition *symtbl_find(struct symtbl *symtbl, struct strview name)
 
 void symtbl_add(struct symtbl *symtbl, struct definition *def)
 {
-	if (symtbl_find(symtbl, def->id->sv) == NULL) {
-		da_append(symtbl, def);
+	if (symtbl_find(symtbl, token_to_strview(def->id)) == NULL) {
+		da_append(symtbl, (struct symtbl_entry) {
+				.name   = def->id,
+				.tag    = SYMTBL_VAR,
+				.as.var = def,
+			});
 	} else {
-		FAILWITH("TODO: Variable already defined.");
+		FAILWITH("TODO: Symbol already defined.");
 	}
 }
 
-struct type *typetbl_find(struct typetbl *typetbl, struct strview name)
+void symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
+						int64_t tag_val, struct type *type, struct type_definition *def)
+{
+	if (symtbl_find(symtbl, token_to_strview(name)) == NULL) {
+		da_append(symtbl, (struct symtbl_entry) {
+				.name				= name,
+				.tag				= SYMTBL_VALCONS,
+				.as.valcons.td		= def,
+				.as.valcons.tag_val = tag_val,
+				.as.valcons.type    = type,
+			});
+	} else {
+		FAILWITH("TODO: Symbol already defined.");
+	}
+}
+
+struct type_definition *typetbl_find(struct typetbl *typetbl, struct strview name)
 {
 	for (size_t i = 0; i < typetbl->len; ++i) {
-		if (sv_is_equal(name, typetbl->elems[i].name)) {
-			return typetbl->elems[i].type;
+		if (sv_is_equal(name, token_to_strview(typetbl->elems[i].name))) {
+			return &typetbl->elems[i];
 		}
 	}
 	return NULL;
 }
 
-void typetbl_add(struct typetbl *typetbl, struct strview name, struct type *type)
+void typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
 {
-	if (typetbl_find(typetbl, name) == NULL) {
-		da_append(typetbl, (struct typetbl_entry){name, type});
-	} else {
+	assert(def.name != NULL);
+	if (typetbl_find(typetbl, token_to_strview(def.name)) != NULL)
 		FAILWITH("TODO: Type is already defined.");
-	}
+	da_append(typetbl, def);
 }
 
-struct definition *lookup_definition(struct scope *scope, struct strview name)
+#define typetbl_add(tbl, ...) typetbl_add_impl(tbl, (struct type_definition){__VA_ARGS__})
+
+struct symtbl_entry *lookup_entry(struct scope *scope, struct strview name)
 {
 	while (scope) {
-		struct definition *def = symtbl_find(&scope->symtbl, name);
-		if (def) return def;
+		struct symtbl_entry *entry = symtbl_find(&scope->symtbl, name);
+		if (entry) return entry;
 		scope = scope->parent;
 	}
 	return NULL;
 }
 
-struct type *lookup_type(struct scope *scope, struct strview name)
+struct type_definition *lookup_type(struct scope *scope, struct strview name)
 {
 	while (scope) {
-		struct type *type = typetbl_find(&scope->typetbl, name);
-		if (type) return type;
+		struct type_definition *def = typetbl_find(&scope->typetbl, name);
+		if (def) return def;
 		scope = scope->parent;
 	}
 	return NULL;
@@ -179,7 +213,7 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 			.type = parse_type(p, scope, introduce_type_var_p),
 		};
 		assert(m.type != NULL);
-		da_append(&type->as.strct, m);
+		da_append(&type->as.struct_t, m);
 	} while (ACCEPT(next_token(p, &tok), tt_comma));
 	EXPECT(tok, tt_rbrace);
 	return type;
@@ -200,7 +234,7 @@ parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 			next_token(p, NULL);
 			return type;
 		}
-		da_append(&type->as.strct, (struct struct_member) {
+		da_append(&type->as.struct_t, (struct struct_member) {
 				.type = parse_type(p, scope, introduce_type_var_p),
 			});
 	} while (ACCEPT(next_token(p, &tok), tt_comma));
@@ -212,11 +246,11 @@ static struct type *
 parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	struct type *type = NULL;
+	struct token *tok = NULL;
 	/* Build type signature */
 	enum ast_type_tag tag;
 	switch ((int)peek_token(p)->tt) {
 	case tt_and: {
-		struct token *tok;
 		next_token(p, NULL);
 		if (ACCEPT(next_token(p, &tok), tt_bang)) {
 			EXPECT(next_token(p, NULL), tt_lbracket);
@@ -234,19 +268,29 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		/* parse formal parameter list */
 		struct type_ptrs args = parse_type_list(p, true, tt_rparen, scope, introduce_type_var_p);
-		struct type *app = parse_type(p, scope, introduce_type_var_p);
-		if (app == NULL) {
-			EXPECT(next_token(p, NULL), tt_minus_more);
-			type = POOL_ALLOC(&p->data, struct type);
+		type = POOL_ALLOC(&p->data, struct type);
+		if (ACCEPT(peek_token(p), tt_minus_more)) {
+			next_token(p, NULL);
 			type->tag = ast_type_proc;
 			type->as.proc.args = args;
 			type->as.proc.ret = parse_type(p, scope, introduce_type_var_p);
+		} else if (ACCEPT(peek_token(p), tt_star)) {
+			next_token(p, NULL);
+			assert(args.len == 1);
+			type->tag = ast_type_ptr;
+			type->as.ptr = args.elems[0];
+			da_free(&args);
+		} else if (ACCEPT(peek_token(p), tt_bang)) {
+			next_token(p, NULL);
+			assert(args.len == 1);
+			type->tag = ast_type_mut_ptr;
+			type->as.mut_ptr = args.elems[0];
+			da_free(&args);
 		} else {
-			assert(app->tag == ast_type_app);
-			assert(app->as.app.cons->tag == ast_type_cons);
-			assert(args.len == app->as.app.cons->as.cons.args.len);
-			app->as.app.args = args;
-			type = app;
+			EXPECT(next_token(p, &tok), tt_ident);
+			type->tag = ast_type_app;
+			type->as.app.args = args;
+			type->as.app.cons = tok;
 		}
 	} break;
 	case tt_lbrace: {
@@ -275,20 +319,8 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		}
 		EXPECT(next_token(p, NULL), tt_rbracket);
 	} break;
-	case tt_star: {
-		next_token(p, NULL);
-		struct type *tmp = type;
-		type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_ptr;
-		type->as.ptr = tmp;
-	} break;
-	case tt_bang: {
-		next_token(p, NULL);
-		struct type *tmp = type;
-		type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_mut_ptr;
-		type->as.ptr = tmp;
-	} break;
+	case tt_star: FAILWITH("TODO: parse error"); break;
+	case tt_bang: FAILWITH("TODO: parse error"); break;
 	case tt_void: tag = ast_type_void; goto basic_type;
 	case tt_bool: tag = ast_type_bool; goto basic_type;
 	case tt_i8:   tag = ast_type_i8;   goto basic_type;
@@ -307,90 +339,123 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		type->as.basic = next_token(p, NULL);
 		break;
 	case tt_ident: {
-		struct token *tok;
 		next_token(p, &tok);
-		struct type *cons = lookup_type(scope, tok->sv);
-		assert(cons != NULL);
-		assert(cons->tag == ast_type_cons);
 		type = POOL_ALLOC(&p->data, struct type);
 		type->tag = ast_type_app;
-		type->as.app.cons = cons;
+		type->as.app.cons = tok;
 	} break;
 	case tt_typevar: {
-		struct token *tok;
 		next_token(p, &tok);
-		type = lookup_type(scope, tok->sv);
+		struct type_definition *def = lookup_type(scope, token_to_strview(tok));
 		if (introduce_type_var_p) {
-			if (type == NULL) {
+			if (def == NULL) {
 				type = POOL_ALLOC(&p->data, struct type);
 				type->tag = ast_type_var;
 				type->as.var.name = tok;
-				typetbl_add(&scope->typetbl, tok->sv, type);
+				typetbl_add(&scope->typetbl, .name = tok, .type = type, .is_var = true);
+			} else {
+				assert(def->is_var);
+				type = def->type;
 			}
 		} else {
-			assert(type != NULL);
+			assert(def != NULL);
+			assert(def->is_var);
+			type = def->type;
 		}
 	} break;
 	}
-	if (type == NULL) return type;
-	struct type *cons = parse_type(p, scope, introduce_type_var_p);
-	if (cons == NULL) return type;
-	switch ((int)cons->tag) {
-	case ast_type_app:
-		assert(cons->as.app.cons->tag == ast_type_cons);
-		if (cons->as.app.cons->as.cons.args.len != 1) {
-			ast_type_fprint(type, stdout);
-			fputc('\n', stdout);
-			ast_type_fprint(cons, stdout);
-			fputc('\n', stdout);
-			FAILWITH("TODO: type error");
-		}
-		da_append(&cons->as.app.args, type);
-		return cons;
-	case ast_type_ptr:
-	case ast_type_mut_ptr:
-		cons->as.ptr = type;
-		return cons;
-	default: FAILWITH("TODO: syntax error"); break;
+	if (ACCEPT(peek_token(p), tt_ident)) {
+		next_token(p, &tok);
+		struct type_ptrs args = {0};
+		da_append(&args, type);
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_app;
+		type->as.app.args = args;
+		type->as.app.cons = tok;
+	} else if (ACCEPT(peek_token(p), tt_star)) {
+		next_token(p, NULL);
+		struct type *tmp = type;
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_ptr;
+		type->as.ptr = tmp;
+	} else if (ACCEPT(peek_token(p), tt_bang)) {
+		next_token(p, NULL);
+		struct type *tmp = type;
+		type = POOL_ALLOC(&p->data, struct type);
+		type->tag = ast_type_mut_ptr;
+		type->as.mut_ptr = tmp;
 	}
-	FAILWITH("Unreachable");
-	return NULL;
+	return type;
 }
 
-static struct type *parse_type_def(Parser *p, struct scope *scope, bool is_alias)
+static void
+parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 {
-	struct type *type = POOL_ALLOC(&p->data, struct type);
-	type->tag = ast_type_cons;
+	struct type_ptrs args = {0};
+	struct scope sc = {.parent = scope};
 	if (ACCEPT(peek_token(p), tt_typevar)) {
 		struct type *var = POOL_ALLOC(&p->data, struct type);
 		var->tag = ast_type_var;
 		var->as.var.name = next_token(p, NULL);
-		da_append(&type->as.cons.args, var);
-		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+		da_append(&args, var);
+		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 	} else if (ACCEPT(peek_token(p), tt_lparen)) {
 		next_token(p, NULL);
 		struct type *var = POOL_ALLOC(&p->data, struct type);
 		var->tag = ast_type_var;
 		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
-		da_append(&type->as.cons.args, var);
-		typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+		da_append(&args, var);
+		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 		while (ACCEPT(peek_token(p), tt_comma)) {
 			next_token(p, NULL);
 			var = POOL_ALLOC(&p->data, struct type);
 			var->tag = ast_type_var;
 			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
-			da_append(&type->as.cons.args, var);
-			typetbl_add(&scope->typetbl, var->as.var.name->sv, var);
+			da_append(&args, var);
+			typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 		}
 		EXPECT(next_token(p, NULL), tt_rparen);
 	}
-	struct token *tok;
-	EXPECT(next_token(p, &tok), tt_ident);
+	struct token *name;
+	EXPECT(next_token(p, &name), tt_ident);
 	EXPECT(next_token(p, NULL), tt_equal);
-	type->as.cons.type = parse_type(p, scope, false);
-	type->as.cons.name = tok->sv;
-	type->as.cons.is_alias = is_alias;
-	return type;
+	struct type_definition *type_def = da_allot(&scope->typetbl);
+	type_def->name = name;
+	type_def->args = args;
+	type_def->is_alias = !is_newtype;
+	if (!is_newtype || !ACCEPT(peek_token(p), tt_pipe)) {
+		type_def->type = parse_type(p, &sc, false);
+		return;
+	}
+	struct type *type = POOL_ALLOC(&p->data, struct type);
+	type->tag = ast_type_union;
+	int64_t tag_value = 0;
+	do {
+		next_token(p, NULL);
+		struct token *name = EXPECT(next_token(p, NULL), tt_ident);
+		if (ACCEPT(peek_token(p), tt_lparen)) {
+			next_token(p, NULL);
+			struct expression *exp = parse_expression(p, &sc);
+			assert(exp->tag == ast_exp_literal);
+			assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
+			tag_value = exp->as.lit.as.i;
+			EXPECT(next_token(p, NULL), tt_rparen);
+		}
+		struct type *mem_type;
+		if (ACCEPT(peek_token(p), tt_colon)) {
+			next_token(p, NULL);
+			mem_type = parse_type(p, &sc, false);
+		} else {
+			mem_type = &AST_TYPE_VOID;
+		}
+		symtbl_add_valcons(&scope->symtbl, name, tag_value, mem_type, type_def);
+		da_append(&type->as.union_t, (struct union_member) {
+				.name = name,
+				.type = mem_type,
+				.tag_value = tag_value++,
+			});
+	} while (ACCEPT(peek_token(p), tt_pipe));
+	type_def->type = type;
 }
 
 static void parse_definition(Parser *p, struct definition *def, struct scope *scope)
@@ -431,7 +496,7 @@ static void parse_definition(Parser *p, struct definition *def, struct scope *sc
 				EXPECT(next_token(p, NULL), tt_colon);
 				arg->id = tok;
 				arg->type = parse_type(p, &proc->as.proc.scope, true);
-				da_append(&proc->as.proc.scope.symtbl, arg);
+				symtbl_add(&proc->as.proc.scope.symtbl, arg);
 				if (ACCEPT(peek_token(p), tt_rparen)) break;
 				EXPECT(next_token(p, NULL), tt_comma);
 			}
@@ -459,7 +524,6 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 {
 	struct token *tok;
 	struct expression *exp = NULL;
-	struct type *type = NULL;
 	switch ((int)next_token(p, &tok)->tt) {
 	case tt_let:
 		exp = POOL_ALLOC(&p->data, struct expression);
@@ -469,21 +533,13 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 		symtbl_add(&scope->symtbl, &exp->as.def);
 		break;
 	case tt_type: {
-		struct scope sc = {.parent = scope};
-		type = parse_type_def(p, &sc, true);
-		typetbl_add(&scope->typetbl, type->as.cons.name, type);
+		parse_type_def(p, scope, false);
 	} break;
 	case tt_newtype: {
-		struct scope sc = {.parent = scope};
-		type = parse_type_def(p, &sc, false);
-		typetbl_add(&scope->typetbl, type->as.cons.name, type);
+		parse_type_def(p, scope, true);
 	} break;
 	case tt_eof: break;
-	default: {
-		char str[0x1000] = {0};
-		printf("last = %s\n", show_token(str, sizeof(str), tok));
-		FAILWITH("TODO: parse_expression.");
-	} break;
+	default: UNEXPECTED_TOKEN(tok); break;
 	}
 	return exp;
 }
@@ -910,6 +966,52 @@ parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope 
 #undef PARSE_DONE
 }
 
+static struct expression *
+parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
+{
+	struct token *tok = NULL;
+	if (ACCEPT(peek_token(p), tt_ident) && ACCEPT(peek_token2(p), tt_equal)) {
+		exp->tag = ast_exp_named_initializer;
+		struct expression_stack exps = {0};
+		struct token_ptrs ids = {0};
+		for (;;) {
+			EXPECT(next_token(p, &tok), tt_ident);
+			da_append(&ids, tok);
+			EXPECT(next_token(p, NULL), tt_equal);
+			da_append(&exps, parse_expression(p, scope));
+			if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
+			EXPECT(tok, tt_comma);
+			/* allow trailing comma */
+			if (ACCEPT(peek_token(p), tt_rbrace)) {
+				next_token(p, NULL);
+				break;
+			}
+		}
+		exp->as.named_init.ids = ids;
+		exp->as.named_init.exps = exps;
+	} else if (ACCEPT(peek_token(p), tt_rbrace)) {
+		next_token(p, &exp->tok);
+		exp->tag = ast_exp_zero_initializer;
+	} else {
+		exp->tag = ast_exp_initializer;
+		struct expression_stack exps = {0};
+		if (peek_token(p)->tt != tt_rbrace) {
+			for (;;) {
+				da_append(&exps, parse_expression(p, scope));
+				if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
+				EXPECT(tok, tt_comma);
+				/* allow trailing comma */
+				if (ACCEPT(peek_token(p), tt_rbrace)) {
+					next_token(p, NULL);
+					break;
+				}
+			}
+		}
+		exp->as.init = exps;
+	}
+	return exp;
+}
+
 static struct expression *parse_expression(Parser *p, struct scope *scope)
 {
 	struct expression_stack out = {0};
@@ -960,28 +1062,51 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			exp->tag = ast_exp_case;
 			struct exp_case *c = &exp->as.ccase;
 			c->cexp = parse_expression(p, scope);
+			EXPECT(next_token(p, NULL), tt_of);
 			/* parse branches */
-			for (;;) {
-				if (ACCEPT(next_token(p, &tok), tt_of)) {
-					struct case_branch branch = {0};
-					for (;;) { // parse matches
-						da_append(&branch.matches, parse_expression(p, scope));
-						if (ACCEPT(next_token(p, &tok), tt_do)) break;
-						EXPECT(tok, tt_comma);
-					}
-					branch.exp = parse_expression(p, scope);
-					da_append(&c->branches, branch);
-					if (ACCEPT(peek_token(p), tt_end)) {
+			do {
+				struct case_branch *branch = da_allot(&c->branches);
+				EXPECT(next_token(p, NULL), tt_dollar);
+				EXPECT(next_token(p, &branch->cons), tt_ident);
+				branch->scope.parent = scope;
+				/* parse binding */
+				if (ACCEPT(peek_token(p), tt_lparen)) {
+					next_token(p, NULL);
+					branch->binds_value = true;
+					if (ACCEPT(peek_token(p), tt_mut)) {
 						next_token(p, NULL);
+						branch->binding.is_mut = true;
+					}
+					if (ACCEPT(peek_token(p), tt_and)) {
+						next_token(p, NULL);
+						branch->binding_is_ref = true;
+					}
+					EXPECT(next_token(p, &branch->binding.id), tt_ident);
+					EXPECT(next_token(p, NULL), tt_rparen);
+					symtbl_add(&branch->scope.symtbl, &branch->binding);
+				}
+				/* parse guard */
+				if (ACCEPT(peek_token(p), tt_if)) {
+					next_token(p, NULL);
+					branch->guard = parse_expression(p, &branch->scope);
+				}
+				/* parse body exp */
+				EXPECT(next_token(p, NULL), tt_minus_more);
+				branch->body = parse_expression(p, &branch->scope);
+				if (ACCEPT(peek_token(p), tt_comma)) {
+					next_token(p, NULL);
+					if (ACCEPT(peek_token(p), tt_else)) {
+						next_token(p, NULL);
+						c->else_exp = parse_expression(p, scope);
+						EXPECT(peek_token(p), tt_end);
 						break;
 					}
 				} else {
-					EXPECT(tok, tt_else);
-					c->else_exp = parse_expression(p, scope);
-					EXPECT(next_token(p, NULL), tt_end);
+					EXPECT(peek_token(p), tt_end);
 					break;
 				}
-			}
+			} while (!ACCEPT(peek_token(p), tt_end));
+			next_token(p, NULL);
 			assert(c->branches.len > 0);
 			da_append(&out, exp);
 		} break;
@@ -990,7 +1115,6 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 		case tt_tick: FAILWITH("TODO: tt_tick"); break;
 		case tt_at: FAILWITH("TODO: tt_at"); break;
 		case tt_hash: FAILWITH("TODO: tt_hash"); break;
-		case tt_dollar: FAILWITH("TODO: tt_dollar"); break;
 		case tt_backslash: FAILWITH("TODO: tt_backslash"); break;
 		case tt_colon: FAILWITH("TODO: tt_colon"); break;
 		case tt_quote: FAILWITH("TODO: tt_quote"); break;
@@ -1032,11 +1156,9 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_extern:
-			/* TODO: check that string is a valid symbol.
-			 */
 			assert(op_prev == true);
 			op_prev = false;
-			exp->tok = next_token(p, NULL);
+			next_token(p, NULL);
 			EXPECT(next_token(p, NULL), tt_lparen);
 			EXPECT(next_token(p, &exp->tok), tt_ident);
 			EXPECT(next_token(p, NULL), tt_rparen);
@@ -1064,17 +1186,37 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_ident:
-			assert(op_prev == true);
+			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
 			op_prev = false;
+			next_token(p, &tok);
 			exp->tag = ast_exp_ident;
-			exp->tok = next_token(p, &exp->as.id);
+			exp->tok = tok;
+			da_append(&out, exp);
+			break;
+		case tt_dollar:
+			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
+			op_prev = false;
+			next_token(p, NULL);
+			EXPECT(next_token(p, &tok), tt_ident);
+			exp->tag = ast_exp_value_cons;
+			exp->tok = tok;
+			exp->as.valcons.cons = tok;
+			if (ACCEPT(peek_token(p), tt_lbrace)) {
+				next_token(p, NULL);
+				struct expression *init = POOL_ALLOC(&p->data, struct expression);
+				exp->as.valcons.exp = parse_initializer_list(p, scope, init);
+			} else if (ACCEPT(peek_token(p), tt_lparen)) {
+				next_token(p, NULL);
+				exp->as.valcons.exp = parse_expression(p, scope);
+				EXPECT(next_token(p, NULL), tt_rparen);
+			}
 			da_append(&out, exp);
 			break;
 		case tt_string:
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tag = ast_exp_string;
-			exp->as.str = exp->tok = next_token(p, &exp->as.id);
+			exp->as.str = next_token(p, &exp->tok);
 			da_append(&out, exp);
 			break;
 		case tt_true:
@@ -1101,7 +1243,7 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->as.lit.token = tok;
-			assert(sv_to_int(tok->sv, &exp->as.lit.as.i));
+			assert(sv_to_int(token_to_strview(tok), &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
 		case tt_hexlit:
@@ -1110,7 +1252,7 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, &tok);
 			exp->as.lit.token = tok;
-			assert(sv_to_int(tok->sv, &exp->as.lit.as.i));
+			assert(sv_to_int(token_to_strview(tok), &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
 		case tt_floatlit: FAILWITH("TODO: tt_floatlit"); break;
@@ -1128,45 +1270,7 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			next_token(p, &exp->tok);
 			assert(op_prev == true);
 			op_prev = false;
-			if (ACCEPT(peek_token(p), tt_ident) && ACCEPT(peek_token2(p), tt_equal)) {
-				exp->tag = ast_exp_named_initializer;
-				struct expression_stack exps = {0};
-				struct token_ptrs ids = {0};
-				for (;;) {
-					EXPECT(next_token(p, &tok), tt_ident);
-					da_append(&ids, tok);
-					EXPECT(next_token(p, NULL), tt_equal);
-					da_append(&exps, parse_expression(p, scope));
-					if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
-					EXPECT(tok, tt_comma);
-					/* allow trailing comma */
-					if (ACCEPT(peek_token(p), tt_rbrace)) {
-						next_token(p, NULL);
-						break;
-					}
-				}
-				exp->as.named_init.ids = ids;
-				exp->as.named_init.exps = exps;
-			} else if (ACCEPT(peek_token(p), tt_rbrace)) {
-				next_token(p, &exp->tok);
-				exp->tag = ast_exp_zero_initializer;
-			} else {
-				exp->tag = ast_exp_initializer;
-				struct expression_stack exps = {0};
-				if (peek_token(p)->tt != tt_rbrace) {
-					for (;;) {
-						da_append(&exps, parse_expression(p, scope));
-						if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
-						EXPECT(tok, tt_comma);
-						/* allow trailing comma */
-						if (ACCEPT(peek_token(p), tt_rbrace)) {
-							next_token(p, NULL);
-							break;
-						}
-					}
-				}
-				exp->as.init = exps;
-			}
+			parse_initializer_list(p, scope, exp);
 			da_append(&out, exp);
 			break;
 		case tt_lbracket: {
@@ -1411,22 +1515,10 @@ void ast_type_fprint(struct type *t, FILE *file)
 	case ast_type_f64:		fputs("f64", file); break;
 	case ast_type_var:
 		if (t->as.var.name) {
-			fprintf(file, SV_FMT, SV_ARGS(&t->as.var.name->sv));
+			fprintf(file, SV_FMT, SV_ARGS(token_to_strview(t->as.var.name)));
 		} else {
 			fprintf(file, "'%p", t);
 		}
-		break;
-	case ast_type_cons:
-		if (t->as.cons.args.len) {
-			fputc('(', file);
-			ast_type_fprint(t->as.cons.args.elems[0], file);
-			for (size_t i = 1; i < t->as.cons.args.len; ++i) {
-				fputs(", ", file);
-				ast_type_fprint(t->as.cons.args.elems[i], file);
-			}
-			fputs(") ", file);
-		}
-		fprintf(file, SV_FMT, SV_ARGS(&t->as.cons.name));
 		break;
 	case ast_type_app:
 		if (t->as.app.args.len) {
@@ -1438,8 +1530,7 @@ void ast_type_fprint(struct type *t, FILE *file)
 			}
 			fputs(") ", file);
 		}
-		assert(t->as.app.cons->tag == ast_type_cons);
-		fprintf(file, SV_FMT, SV_ARGS(&t->as.app.cons->as.cons.name));
+		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(t->as.app.cons)));
 		break;
 	case ast_type_proc:
 		fputc('(', file);
@@ -1455,14 +1546,14 @@ void ast_type_fprint(struct type *t, FILE *file)
 		break;
 	case ast_type_struct:
 		fputc('{', file);
-		if (t->as.strct.len > 0) {
-			struct struct_member *mem = &t->as.strct.elems[0];
-			if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(&mem->name->sv));
+		if (t->as.struct_t.len > 0) {
+			struct struct_member *mem = &t->as.struct_t.elems[0];
+			if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(token_to_strview(mem->name)));
 			ast_type_fprint(mem->type, file);
-			for (size_t i = 1; i < t->as.strct.len; ++i) {
-				mem = &t->as.strct.elems[i];
+			for (size_t i = 1; i < t->as.struct_t.len; ++i) {
+				mem = &t->as.struct_t.elems[i];
 				fputs(", ", file);
-				if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(&mem->name->sv));
+				if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(token_to_strview(mem->name)));
 				ast_type_fprint(mem->type, file);
 			}
 		}
@@ -1497,6 +1588,21 @@ void ast_type_fprint(struct type *t, FILE *file)
 		ast_type_fprint(t->as.slice, file);
 		fputc(']', file);
 		break;
+	case ast_type_union:
+		fputs("#U{", file);
+		if (t->as.union_t.len > 0) {
+			struct union_member *mem = &t->as.union_t.elems[0];
+			if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(token_to_strview(mem->name)));
+			ast_type_fprint(mem->type, file);
+			for (size_t i = 1; i < t->as.union_t.len; ++i) {
+				mem = &t->as.union_t.elems[i];
+				fputs(", ", file);
+				if (mem->name) fprintf(file, SV_FMT": ", SV_ARGS(token_to_strview(mem->name)));
+				ast_type_fprint(mem->type, file);
+			}
+		}
+		fputc('}', file);
+		break;
 	default:
 		FAILWITH("Unreachable condition.");
 		break;
@@ -1507,18 +1613,18 @@ void ast_def_fprint(struct definition *def, FILE *file)
 {
 	fputs("let ", file);
 	if (def->is_mut) fputs("mut ", file);
-	fprintf(file, SV_FMT, SV_ARGS(&def->id->sv));
+	fprintf(file, SV_FMT, SV_ARGS(token_to_strview(def->id)));
 	if (def->type->tag == ast_type_proc
 		&& def->exp->tag == ast_exp_procedure_literal) {
 		struct procedure *proc = &def->exp->as.proc;
 		fputc('(', file);
 		if (proc->formals.len > 0) {
 			struct definition *arg = &proc->formals.elems[0];
-			fprintf(file, SV_FMT": ", SV_ARGS(&arg->id->sv));
+			fprintf(file, SV_FMT": ", SV_ARGS(token_to_strview(arg->id)));
 			ast_type_fprint(arg->type, file);
 			for (size_t i = 1; i < proc->formals.len; ++i) {
 				arg = &proc->formals.elems[i];
-				fprintf(file, ", "SV_FMT": ", SV_ARGS(&arg->id->sv));
+				fprintf(file, ", "SV_FMT": ", SV_ARGS(token_to_strview(arg->id)));
 				ast_type_fprint(arg->type, file);
 			}
 		}
@@ -1546,11 +1652,30 @@ void ast_fprint(struct expression *exp, FILE *file)
 		ast_fprint(exp->as.let.body, file);
 		break;
 	case ast_exp_literal:
-		fprintf(file, SV_FMT, SV_ARGS(&exp->as.lit.token->sv));
+		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->as.lit.token)));
 		break;
-	case ast_exp_procedure_literal:
-		FAILWITH("TODO: ast_fprint ast_exp_procedure_literal");
-		break;
+	case ast_exp_procedure_literal: {
+		struct procedure *proc = &exp->as.proc;
+		struct def_array *formals = &proc->formals;
+		fputs("#proc(", file);
+		if (formals->len) {
+			fprintf(file, SV_FMT, SV_ARGS(token_to_strview(formals->elems[0].id)));
+			fputs(": ", file);
+			ast_type_fprint(formals->elems[0].type, file);
+			for (size_t i = 1; i < formals->len; ++i) {
+				fputs(", ", file);
+				fprintf(file, SV_FMT, SV_ARGS(token_to_strview(formals->elems[0].id)));
+				fputs(": ", file);
+				ast_type_fprint(formals->elems[0].type, file);
+			}
+		}
+		if (proc->ret->tag == ast_type_void) {
+			fputc(')', file);
+		} else {
+			fputs(") ", file);
+			ast_type_fprint(proc->ret, file);
+		}
+	} break;
 	case ast_exp_undefined:
 		fputs("undefined", file);
 		break;
@@ -1573,11 +1698,11 @@ void ast_fprint(struct expression *exp, FILE *file)
 		struct expression_stack *exps = &exp->as.named_init.exps;
 		fputc('{', file);
 		if (ids->len > 0) {
-			fprintf(file, SV_FMT" = ", SV_ARGS(&ids->elems[0]->sv));
+			fprintf(file, SV_FMT" = ", SV_ARGS(token_to_strview(ids->elems[0])));
 			ast_fprint(exps->elems[0], file);
 			for (size_t i = 1; i < ids->len; ++i) {
 				fputs(", ", file);
-				fprintf(file, SV_FMT" = ", SV_ARGS(&ids->elems[i]->sv));
+				fprintf(file, SV_FMT" = ", SV_ARGS(token_to_strview(ids->elems[i])));
 				ast_fprint(exps->elems[i], file);
 			}
 		}
@@ -1585,7 +1710,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 	} break;
 	case ast_exp_string:
 	case ast_exp_ident:
-		fprintf(file, SV_FMT, SV_ARGS(&exp->as.id->sv));
+		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->tok)));
 		break;
 	case ast_exp_get_ptr:
 		fputs("#ptr(", file);
@@ -1598,7 +1723,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 		fputc(')', file);
 		break;
 	case ast_exp_extern_symbol:
-		fprintf(file, "#extern("SV_FMT")", SV_ARGS(&exp->tok->sv));
+		fprintf(file, "#extern("SV_FMT")", SV_ARGS(token_to_strview(exp->tok)));
 		break;
 	case ast_exp_binary:
 		fputc('(', file);
@@ -1644,6 +1769,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 		ast_fprint(exp->as.bin.right, file);
 		fputc(')', file);
 		break;
+	case ast_exp_value_cons: FAILWITH("TODO: ast_exp_value_cons"); break;
 	case ast_exp_unary:
 		if (exp->as.op == op_call) {
 			fputc('(', file);
@@ -1709,23 +1835,31 @@ void ast_fprint(struct expression *exp, FILE *file)
 		fputs("case ", file);
 		struct exp_case *c = &exp->as.ccase;
 		ast_fprint(c->cexp, file);
+		fputs("of ", file);
 		fputc('\n', file);
 		for (size_t i = 0; i < c->branches.len; ++i) {
 			struct case_branch *cb = &c->branches.elems[i];
-			fputs("of ", file);
-			for (size_t i = 0; i < cb->matches.len - 1; ++i) {
-				ast_fprint(cb->matches.elems[i], file);
-				fputs(", ", file);
+			fputc('$', file);
+			fprintf(file, SV_FMT, SV_ARGS(token_to_strview(cb->cons)));
+			if (cb->binds_value) {
+				fputc('(', file);
+				if (cb->binding.is_mut) fputs("mut ", file);
+				if (cb->binding_is_ref) fputc('&', file);
+				fprintf(file, SV_FMT")", SV_ARGS(token_to_strview(cb->binding.id)));
+
 			}
-			ast_fprint(cb->matches.elems[cb->matches.len - 1], file);
-			fputs(" do ", file);
-			ast_fprint(cb->exp, file);
-			fputc('\n', file);
+			if (cb->guard) {
+				fputs(" if ", file);
+				ast_fprint(cb->guard, file);
+			}
+			fputs(" -> ", file);
+			ast_fprint(cb->body, file);
+			fputs(",\n", file);
 		}
 		if (c->else_exp) {
 			fputs("else ", file);
 			ast_fprint(c->else_exp, file);
-			fputc('\n', file);
+			fputs(",\n", file);
 		}
 		fputs("end", file);
 	} break;

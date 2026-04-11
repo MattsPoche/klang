@@ -1,6 +1,6 @@
 newtype 'a Option =
-  | none
-  | some: 'a
+  | None
+  | Some: 'a
 
 /*
 newtype ('a, 'e) Result =
@@ -12,16 +12,25 @@ newtype FILE = void*
 
 type str = &[i8]
 
+/* let nullptr: void* = 0 as void* */
 let stdout: FILE = #extern(stdout)
 let stdin:  FILE = #extern(stdin)
 let stderr: FILE = #extern(stderr)
 
 let libc_fopen: ([i8]*, [i8]*) -> FILE = #extern(fopen)
 let libc_fwrite: (void*, u64, u64, FILE) -> u64 = #extern(fwrite)
+let fclose: (FILE) -> i32 = #extern(fclose)
 
-let fopen(path: str, mode: str) FILE Option =
-  let f: FILE = libc_fopen(#ptr(path), #ptr(mode)) in
-  if f = 0 as FILE then $none else $some(f) end
+let foo(flag: bool) [i64, 4] =
+  if flag then
+    {1, 2, 3, 4}
+  else
+    {5, 6, 7, 8}
+  end
+
+let fopen(path: [i8]*, mode: [i8]*) FILE Option =
+  let f: FILE = libc_fopen(path, mode) in
+  if f = 0 as FILE then $None else $Some(f) end
 
 let print_char(c: i8) =
   libc_fwrite(&c, 1, 1, stdout)
@@ -61,7 +70,32 @@ let print_slice(slice: &['a]) =
     i += 1
   done
 
-let main() i32 =
-  let xs: &[i32] = {32, 33, 34, 35, 36, 37, 38} in
-  print_slice(xs); print_newline();
+let str_of_cstr(cstr: [i8]*) str =
+  let mut length: u64 = 0 in
+  while cstr[length] != 0 do
+    length += 1
+  done;
+  cstr[..length]
+
+let main(argc: i32, argv: [[i8]*]*) i32 =
+  print_string("argc = ");
+  print_int(argc);
+  print_newline();
+  let filename: str = str_of_cstr(argv[0]) in
+  print_string("file = ");
+  print_string(filename);
+  print_newline();
+  case fopen(#ptr(filename), #ptr("r\0")) of
+    $Some(file) ->
+	  print_string("Opened file: ");
+	  print_string(filename);
+	  print_newline();
+	  fclose(file),
+    $None ->
+	  print_string("Unable to open file: ");
+	  print_string(filename);
+	  print_newline();
+	  0
+  end;
   0
+

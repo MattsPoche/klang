@@ -127,11 +127,9 @@ void *mem_arena_zero_alloc(struct mem_arena *arena, size_t sz)
 
 void mem_arena_free(struct mem_arena *arena)
 {
-	size_t total = 0;
 	struct mem_region *r = arena->begin;
 	while (r != NULL) {
 		struct mem_region *tmp = r;
-		total += mem_region_allocated(r);
 		r = r->link;
 		free(tmp);
 	}

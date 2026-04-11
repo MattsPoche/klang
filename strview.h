@@ -26,7 +26,7 @@ bool sv_to_int_base10(struct strview sv, int64_t *out);
 bool sv_to_int_base16(struct strview sv, int64_t *out);
 
 #define SV_FMT "%.*s"
-#define SV_ARGS(sv_ptr) (int)(sv_ptr)->len, (sv_ptr)->ptr
+#define SV_ARGS(sv) ((int)(sv).len), ((sv).ptr)
 
 #endif /* STRVIEW_H_ */
 
@@ -93,14 +93,15 @@ int escape_char(int c)
 	case 'r':  return '\r';
 	case 't':  return '\t';
 	case 'v':  return '\v';
+	case '0':  return '\0';
 	case '\\': return '\\';
 	case '\'': return '\'';
 	case '\"': return '\"';
 	case 'x': FAILWITH("TODO: escape hex");     break;
 	case 'u': FAILWITH("TODO: escape unicode"); break;
 	case 'U': FAILWITH("TODO: escape unicode"); break;
-	default: FAILWITH("TODO: invalid escape sequence."); break;
 	}
+	return c;
 }
 
 size_t sv_unescape_string(struct strview sv, char **ret)

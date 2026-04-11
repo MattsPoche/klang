@@ -114,15 +114,14 @@ enum token_type {
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
 CHECK_EXAUSTIVE_KEYWORDS(67);
 
-struct srcloc {
-	int32_t line;
-	int32_t column;
-};
-
 struct token {
 	enum token_type tt;
-	struct strview sv;
-	struct srcloc loc;
+	char *text;
+	uint32_t text_len;
+	uint32_t tok_len;
+	uint32_t offset;
+	uint32_t line;
+	uint32_t column;
 };
 
 struct token_buffer {
@@ -138,11 +137,14 @@ struct token_ptrs {
 
 struct lexer {
 	const char *filename;
-	struct strview contents;
-	struct strview sv;
-	struct srcloc loc;
+	char *text;
+	uint32_t length;
+	uint32_t offset;
+	uint32_t line;
+	uint32_t column;
 };
 
 char *token_type_to_str(enum token_type tt);
 void tokenize(struct lexer *lex, struct token_buffer *tokens);
+struct strview token_to_strview(struct token *tok);
 char *show_token(char *str, size_t len, struct token *tok);
