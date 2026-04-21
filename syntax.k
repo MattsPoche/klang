@@ -1,16 +1,19 @@
 newtype 'a Option =
-  | none
-  | some: 'a
+  | None
+  | Some: 'a
 
-/*
 newtype ('a, 'e) Result =
-  | Ok(1):  'a
-  | Err(0): 'e
-*/
+  | Ok:    'a
+  | Error: 'e
 
 newtype FILE = void*
 
 type str = &[i8]
+
+/* let nullptr: void* = 0 as void* */
+
+let libc_errno_location: () -> i32* = #extern(__errno_location)
+let libc_strerror: (i32) -> [i8]* = #extern(strerror)
 
 let stdout: FILE = #extern(stdout)
 let stdin:  FILE = #extern(stdin)
@@ -18,10 +21,20 @@ let stderr: FILE = #extern(stderr)
 
 let libc_fopen: ([i8]*, [i8]*) -> FILE = #extern(fopen)
 let libc_fwrite: (void*, u64, u64, FILE) -> u64 = #extern(fwrite)
+let fclose: (FILE) -> i32 = #extern(fclose)
 
-let fopen(path: str, mode: str) FILE Option =
-  let f: FILE = libc_fopen(#ptr(path), #ptr(mode)) in
-  if f = 0 as FILE then $none else $some(f) end
+let get_errno() i32 = *libc_errno_location()
+  
+let get_error_str(errno: i32) str = str_of_cstr(libc_strerror(errno))
+
+let open_read_file(path: [i8]*) (FILE, {errno: i32, msg: str}) Result =
+  let f: FILE = libc_fopen(path, #ptr("r\0")) in
+  if f = 0 as FILE then
+    let e: i32 = get_errno() in
+    Error {errno = e, msg = get_error_str(e)}
+  else
+    Ok(f)
+  end
 
 let print_char(c: i8) =
   libc_fwrite(&c, 1, 1, stdout)
@@ -61,7 +74,47 @@ let print_slice(slice: &['a]) =
     i += 1
   done
 
-let main() i32 =
-  let xs: &[i32] = {32, 33, 34, 35, 36, 37, 38} in
-  print_slice(xs); print_newline();
-  0
+let str_of_cstr(cstr: [i8]*) str =
+  let mut length: u64 = 0 in
+  while cstr[length] != 0 do
+    length += 1
+  done;
+  cstr[..length]
+
+let main(argc: i32, argv: [[i8]*]*) i32 =
+  print_string("argc = ");
+  print_int(argc);
+  print_newline();
+  let filename: str = str_of_cstr(argv[0]) in
+  print_string("file = ");
+  print_string(filename);
+  print_newline();
+  case open_read_file(#ptr(filename)) of
+    Ok(file) ->
+	  print_string("Opened file: ");
+	  print_string(filename);
+	  print_newline();
+	  fclose(file),
+    Error(&e) ->	
+	  print_string("Error code: ");
+	  print_int(e.errno);
+	  print_newline();
+	  print_string(e.msg);
+	  print_newline();
+	  0,
+  end;
+  case open_read_file(#ptr("foo_bar\0")) of
+    Ok(file) ->
+	  print_string("Opened file: ");
+	  print_string(filename);
+	  print_newline();
+	  fclose(file);
+	  0,
+    Error(&e) ->
+	  print_string("Error code: ");
+	  print_int(e.errno);
+	  print_newline();
+	  print_string(e.msg);
+	  print_newline();
+	  0,
+  end

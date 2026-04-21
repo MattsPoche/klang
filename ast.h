@@ -135,11 +135,14 @@ struct symtbl_entry {
 	} tag;
 	union {
 		struct valcons_entry {
-			struct type *type;
 			int64_t tag_val;
+			struct type *type;
 			struct type_definition *td;
 		} valcons;
-		struct definition *var;
+		struct variable_entry {
+			struct definition *def;
+			struct expression *tl_exp;
+		} variable;
 	} as;
 };
 
@@ -210,13 +213,17 @@ enum type_class {
 	type_class_struct,
 	type_class_union,
 	type_class_procedure,
-	type_class_defered,
+	type_class_pointer,
+};
+
+struct typing_context {
+	struct scope *scope;
+	struct type  *ret;
 };
 
 struct type_var {
 	enum type_class class;
 	struct token *name;
-	struct expression_stack defered;
 };
 
 struct type {
@@ -261,6 +268,7 @@ struct definition {
 	bool is_mut;
 	bool is_global;
 	bool is_polymorphic;
+	bool is_typechecked;
 };
 
 struct type_definition {
@@ -361,9 +369,10 @@ enum ast_exp_tag {
 	ast_exp_let,
 	ast_exp_literal,
 	ast_exp_string,
-	ast_exp_initializer,
-	ast_exp_named_initializer,
-	ast_exp_zero_initializer,
+	ast_exp_array_initializer,
+	ast_exp_struct_initializer,
+	ast_exp_named_struct_initializer,
+	ast_exp_zero_struct_initializer,
 	ast_exp_value_cons,
 	ast_exp_procedure_literal,
 	ast_exp_undefined,

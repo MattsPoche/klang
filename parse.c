@@ -85,17 +85,20 @@ struct symtbl_entry *symtbl_find(struct symtbl *symtbl, struct strview name)
 	return NULL;
 }
 
-void symtbl_add(struct symtbl *symtbl, struct definition *def)
+struct symtbl_entry *
+symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_exp)
 {
+	struct symtbl_entry *entry = NULL;
 	if (symtbl_find(symtbl, token_to_strview(def->id)) == NULL) {
-		da_append(symtbl, (struct symtbl_entry) {
-				.name   = def->id,
-				.tag    = SYMTBL_VAR,
-				.as.var = def,
-			});
+		entry = da_allot(symtbl);
+		entry->name = def->id;
+		entry->tag  = SYMTBL_VAR;
+		entry->as.variable.def = def;
+		entry->as.variable.tl_exp = tl_exp;
 	} else {
 		FAILWITH("TODO: Symbol already defined.");
 	}
+	return entry;
 }
 
 void symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
@@ -301,6 +304,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		} else {
 			type = parse_struct_type(p, scope, introduce_type_var_p);
 		}
+		assert(type->tag == ast_type_struct);
 	} break;
 	case tt_lbracket: {
 		next_token(p, NULL);
@@ -458,7 +462,8 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 	type_def->type = type;
 }
 
-static void parse_definition(Parser *p, struct definition *def, struct scope *scope)
+static void
+parse_definition(Parser *p, struct definition *def, struct scope *scope)
 {
 	/* We enter with `let` token already consumed */
 	struct token *tok;
@@ -496,7 +501,7 @@ static void parse_definition(Parser *p, struct definition *def, struct scope *sc
 				EXPECT(next_token(p, NULL), tt_colon);
 				arg->id = tok;
 				arg->type = parse_type(p, &proc->as.proc.scope, true);
-				symtbl_add(&proc->as.proc.scope.symtbl, arg);
+				symtbl_add(&proc->as.proc.scope.symtbl, arg, NULL);
 				if (ACCEPT(peek_token(p), tt_rparen)) break;
 				EXPECT(next_token(p, NULL), tt_comma);
 			}
@@ -530,7 +535,7 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 		exp->tok = tok;
 		exp->tag = ast_exp_definition;
 		parse_definition(p, &exp->as.def, scope);
-		symtbl_add(&scope->symtbl, &exp->as.def);
+		symtbl_add(&scope->symtbl, &exp->as.def, exp);
 		break;
 	case tt_type: {
 		parse_type_def(p, scope, false);
@@ -967,11 +972,33 @@ parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope 
 }
 
 static struct expression *
+parse_array_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
+{
+	exp->tag = ast_exp_array_initializer;
+	struct expression_stack exps = {0};
+	struct token *tok = NULL;
+	if (peek_token(p)->tt != tt_rbracket) {
+		for (;;) {
+			da_append(&exps, parse_expression(p, scope));
+			if (ACCEPT(next_token(p, &tok), tt_rbracket)) break;
+			EXPECT(tok, tt_comma);
+			/* allow trailing comma */
+			if (ACCEPT(peek_token(p), tt_rbracket)) {
+				next_token(p, NULL);
+				break;
+			}
+		}
+	}
+	exp->as.init = exps;
+	return exp;
+}
+
+static struct expression *
 parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 {
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_ident) && ACCEPT(peek_token2(p), tt_equal)) {
-		exp->tag = ast_exp_named_initializer;
+		exp->tag = ast_exp_named_struct_initializer;
 		struct expression_stack exps = {0};
 		struct token_ptrs ids = {0};
 		for (;;) {
@@ -991,9 +1018,9 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 		exp->as.named_init.exps = exps;
 	} else if (ACCEPT(peek_token(p), tt_rbrace)) {
 		next_token(p, &exp->tok);
-		exp->tag = ast_exp_zero_initializer;
+		exp->tag = ast_exp_zero_struct_initializer;
 	} else {
-		exp->tag = ast_exp_initializer;
+		exp->tag = ast_exp_struct_initializer;
 		struct expression_stack exps = {0};
 		if (peek_token(p)->tt != tt_rbrace) {
 			for (;;) {
@@ -1034,7 +1061,7 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			parse_definition(p, &exp->as.let.def, scope);
 			EXPECT(next_token(p, NULL), tt_in);
 			exp->as.let.scope.parent = scope;
-			symtbl_add(&exp->as.let.scope.symtbl, &exp->as.let.def);
+			symtbl_add(&exp->as.let.scope.symtbl, &exp->as.let.def, NULL);
 			exp->as.let.body = parse_expression(p, &exp->as.let.scope);
 			da_append(&out, exp);
 			break;
@@ -1066,24 +1093,27 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			/* parse branches */
 			do {
 				struct case_branch *branch = da_allot(&c->branches);
-				EXPECT(next_token(p, NULL), tt_dollar);
 				EXPECT(next_token(p, &branch->cons), tt_ident);
 				branch->scope.parent = scope;
 				/* parse binding */
 				if (ACCEPT(peek_token(p), tt_lparen)) {
 					next_token(p, NULL);
-					branch->binds_value = true;
-					if (ACCEPT(peek_token(p), tt_mut)) {
+					if (ACCEPT(peek_token(p), tt_underscore)) {
 						next_token(p, NULL);
-						branch->binding.is_mut = true;
+					} else {
+						branch->binds_value = true;
+						if (ACCEPT(peek_token(p), tt_mut)) {
+							next_token(p, NULL);
+							branch->binding.is_mut = true;
+						}
+						if (ACCEPT(peek_token(p), tt_and)) {
+							next_token(p, NULL);
+							branch->binding_is_ref = true;
+						}
+						EXPECT(next_token(p, &branch->binding.id), tt_ident);
+						symtbl_add(&branch->scope.symtbl, &branch->binding, NULL);
 					}
-					if (ACCEPT(peek_token(p), tt_and)) {
-						next_token(p, NULL);
-						branch->binding_is_ref = true;
-					}
-					EXPECT(next_token(p, &branch->binding.id), tt_ident);
 					EXPECT(next_token(p, NULL), tt_rparen);
-					symtbl_add(&branch->scope.symtbl, &branch->binding);
 				}
 				/* parse guard */
 				if (ACCEPT(peek_token(p), tt_if)) {
@@ -1188,30 +1218,20 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 		case tt_ident:
 			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
 			op_prev = false;
-			next_token(p, &tok);
-			exp->tag = ast_exp_ident;
-			exp->tok = tok;
-			da_append(&out, exp);
-			break;
-		case tt_dollar:
-			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
-			op_prev = false;
-			next_token(p, NULL);
-			EXPECT(next_token(p, &tok), tt_ident);
-			exp->tag = ast_exp_value_cons;
-			exp->tok = tok;
-			exp->as.valcons.cons = tok;
+			next_token(p, &exp->tok);
 			if (ACCEPT(peek_token(p), tt_lbrace)) {
-				next_token(p, NULL);
-				struct expression *init = POOL_ALLOC(&p->data, struct expression);
-				exp->as.valcons.exp = parse_initializer_list(p, scope, init);
-			} else if (ACCEPT(peek_token(p), tt_lparen)) {
-				next_token(p, NULL);
-				exp->as.valcons.exp = parse_expression(p, scope);
-				EXPECT(next_token(p, NULL), tt_rparen);
+				struct expression *arg = POOL_ALLOC(&p->data, struct expression);
+				next_token(p, &arg->tok);
+				arg = parse_initializer_list(p, scope, arg);
+				exp->tag = ast_exp_value_cons;
+				exp->as.valcons.cons = exp->tok;
+				exp->as.valcons.exp = arg;
+			} else {
+				exp->tag = ast_exp_ident;
 			}
 			da_append(&out, exp);
 			break;
+		case tt_dollar: FAILWITH("TODO: tt_dollar"); break;
 		case tt_string:
 			assert(op_prev == true);
 			op_prev = false;
@@ -1275,8 +1295,13 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			break;
 		case tt_lbracket: {
 			next_token(p, &exp->tok);
-			assert(op_prev == false);
-			shunt(parse_square_bracket_expression(p, exp, scope), &out, &ops);
+			if (op_prev == false) {
+				shunt(parse_square_bracket_expression(p, exp, scope), &out, &ops);
+			} else {
+				op_prev = false;
+				parse_array_initializer_list(p, scope, exp);
+				da_append(&out, exp);
+			}
 		} break;
 			/* operators */
 		case tt_lparen: {
@@ -1679,10 +1704,10 @@ void ast_fprint(struct expression *exp, FILE *file)
 	case ast_exp_undefined:
 		fputs("undefined", file);
 		break;
-	case ast_exp_zero_initializer:
+	case ast_exp_zero_struct_initializer:
 		fputs("{}", file);
 		break;
-	case ast_exp_initializer:
+	case ast_exp_struct_initializer:
 		fputc('{', file);
 		if (exp->as.init.len > 0) {
 			ast_fprint(exp->as.init.elems[0], file);
@@ -1693,7 +1718,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 		}
 		fputc('}', file);
 		break;
-	case ast_exp_named_initializer: {
+	case ast_exp_named_struct_initializer: {
 		struct token_ptrs *ids = &exp->as.named_init.ids;
 		struct expression_stack *exps = &exp->as.named_init.exps;
 		fputc('{', file);
@@ -1708,6 +1733,7 @@ void ast_fprint(struct expression *exp, FILE *file)
 		}
 		fputc('}', file);
 	} break;
+	case ast_exp_array_initializer: FAILWITH("TODO: ast_exp_array_initializer"); break;
 	case ast_exp_string:
 	case ast_exp_ident:
 		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->tok)));

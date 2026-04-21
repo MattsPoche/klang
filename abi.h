@@ -100,7 +100,9 @@ struct asm_context {
 	size_t varc;
 	struct asm_address *vars;
 	int assigned[ASM_REG_COUNT];
+	int rv_addr;
 	uint32_t clobbered;
+	bool has_large_retval;
 	bool setup_frame;
 	bool is_leaf;
 };
