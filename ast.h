@@ -118,6 +118,7 @@ enum ast_type_tag {
 	ast_type_array,
 	ast_type_struct,
 	ast_type_union,
+	ast_type_istruct,
 	ast_type_vector,
 	ast_type_proc,
 };
@@ -130,14 +131,17 @@ struct expression_stack {
 struct symtbl_entry {
 	struct token *name;
 	enum symtbl_entry_tag {
-		SYMTBL_VAR,
+		SYMTBL_VARIABL,
 		SYMTBL_VALCONS,
 	} tag;
 	union {
-		struct valcons_entry {
-			int64_t tag_val;
-			struct type *type;
-			struct type_definition *td;
+		struct {
+			uint32_t len, cap;
+			struct valcons_entry {
+				int64_t tag_val;
+				struct type *type;
+				struct type_definition *td;
+			} *elems;
 		} valcons;
 		struct variable_entry {
 			struct definition *def;
@@ -213,17 +217,30 @@ enum type_class {
 	type_class_struct,
 	type_class_union,
 	type_class_procedure,
-	type_class_pointer,
+};
+
+typedef struct type_scheme {
+	struct type_ptrs args;
+	struct type *type;
+} Forall;
+
+struct type_env {
+	struct strview name;
+	Forall scheme;
+	struct type_env *next;
 };
 
 struct typing_context {
-	struct scope *scope;
-	struct type  *ret;
+	struct scope    *scope;
+	struct type     *ret;
+	struct type_env *env;
 };
 
 struct type_var {
 	enum type_class class;
 	struct token *name;
+	struct type *forward;
+	struct type *contains;
 };
 
 struct type {
@@ -263,11 +280,17 @@ struct definition {
 	struct token *id;
 	struct type *type;
 	struct expression *exp;
-	struct def_array specs;
+	struct spec_array {
+		uint32_t len, cap;
+		struct type_spec {
+			struct type *type;
+			struct expression *exp;
+			size_t ir_symbol;
+		} *elems;
+	} specs;
 	size_t ir_symbol;
 	bool is_mut;
 	bool is_global;
-	bool is_polymorphic;
 	bool is_typechecked;
 };
 

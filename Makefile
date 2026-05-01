@@ -10,7 +10,7 @@ DEBUG=1
 .PHONEY: test
 
 $(TARGET): $(DEPS)
-	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -O$(OPT) -o $(TARGET) main.c
+	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -O$(OPT) -o $@ main.c
 
 test: $(TARGET)
 	./run_tests.py

@@ -2,8 +2,6 @@
 #include <unistd.h>
 #include "common.h"
 #include "da.h"
-#define MEM_H_IMPLEMENTATION
-#include "mem.h"
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
 #include "ast.h"
@@ -32,12 +30,22 @@ static uintptr_t align_adjust(uintptr_t x, uintptr_t alignment);
 
 /* --- TYPE-CHECKER --- */
 
+void type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps);
 struct type *infer_type(Parser *p, struct typing_context ctx, struct expression *exp);
-struct type *check_type(Parser *p, struct typing_context ctx, struct expression *exp, struct type *type);
+static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct type *u);
 static bool type_equiv(Parser *p, struct type *t, struct type *u, struct scope *scope);
-static struct type *type_var_subst(Parser *p, struct type *type, struct type_var_bindings *bindings);
-static struct type *copy_type(Parser *p, struct type *type);
+static struct type *type_var_subst(struct type *type, struct type_var_bindings *bindings);
+static struct type *copy_type(struct type *type);
 struct type *resolve_alias(Parser *p, struct type *t, struct scope *scope);
+struct expression *ast_desugar(Parser *p, struct expression *exp, struct scope *scope);
+static inline struct type *fresh_type_var(enum type_class c);
+static void add_type_var_binding(struct type_var_bindings *bindings, struct type *var, struct type *type);
+static struct type *find_type_var_binding(struct type_var_bindings *bindings, struct type *var);
+static struct type *instantiate_type_scheme(struct type_scheme *scm);
+static inline void type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm);
+static struct type_env *lookup_type_env(struct typing_context *ctx, struct token *var);
+static struct type_scheme generalize_type(struct typing_context *ctx, struct type *type);
+static struct type *type_recursive_find(struct type *type);
 
 static struct type *
 type_application(Parser *p, struct type_app *app, struct scope *scope)
@@ -49,15 +57,12 @@ type_application(Parser *p, struct type_app *app, struct scope *scope)
 	struct type_ptrs *formals = &def->args;
 	struct type_ptrs *actuals = &app->args;
 	assert(formals->len == actuals->len);
-	if (actuals->len == 0) return copy_type(p, cons);
+	if (actuals->len == 0) return copy_type(cons);
 	for (size_t i = 0; i < formals->len; ++i) {
 		assert(formals->elems[i]->tag == ast_type_var);
-		da_append(&bindings, (struct type_pair) {
-				.var  = formals->elems[i],
-				.type = actuals->elems[i],
-			});
+		add_type_var_binding(&bindings, formals->elems[i], actuals->elems[i]);
 	}
-	struct type *newtype = type_var_subst(p, cons, &bindings);
+	struct type *newtype = type_var_subst(cons, &bindings);
 	da_free(&bindings);
 	return newtype;
 }
@@ -65,6 +70,7 @@ type_application(Parser *p, struct type_app *app, struct scope *scope)
 static struct type *
 type_get_underlying(struct scope *scope, struct type *type, struct type **out_type)
 {
+	type = type_find(type);
 	if (type->tag == ast_type_app) {
 		struct type_definition *def = lookup_type(scope, token_to_strview(type->as.app.cons));
 		if (def == NULL) {
@@ -113,6 +119,7 @@ void type_mismatch_error(Parser *p, struct typing_context ctx, struct type *t, s
 
 struct type *resolve_type(Parser *p, struct type *type, struct scope *scope)
 {
+	type = type_find(type);
 	switch (type->tag) {
 	case ast_type_void:
 	case ast_type_noreturn:
@@ -147,6 +154,7 @@ struct type *resolve_type(Parser *p, struct type *type, struct scope *scope)
 		}
 		type->as.proc.ret = resolve_type(p, type->as.proc.ret, scope);
 		return type;
+	case ast_type_istruct:
 	case ast_type_struct:
 		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
 			type->as.struct_t.elems[i].type = resolve_type(p, type->as.struct_t.elems[i].type, scope);
@@ -171,15 +179,15 @@ struct type *resolve_type(Parser *p, struct type *type, struct scope *scope)
 		case type_class_float:
 			type->tag = ast_type_f64;
 			return type;
-		case type_class_any:	   FAILWITH("Unreachable type_class_any");       break;
-		case type_class_scalar:	   FAILWITH("Unreachable type_class_scalar");    break;
-		case type_class_numeric:   FAILWITH("Unreachable type_class_numeric");   break;
-		case type_class_length:	   FAILWITH("Unreachable type_class_length");    break;
-		case type_class_indexable: FAILWITH("Unreachable type_class_indexable"); break;
-		case type_class_struct:	   FAILWITH("Unreachable type_class_struct");    break;
-		case type_class_union:	   FAILWITH("Unreachable type_class_union");     break;
-		case type_class_procedure: FAILWITH("Unreachable type_class_procedure"); break;
-		case type_class_pointer:   FAILWITH("Unreachable type_class_pointer");   break;
+		case type_class_any:
+		case type_class_scalar:
+		case type_class_numeric:
+		case type_class_length:
+		case type_class_indexable:
+		case type_class_struct:
+		case type_class_union:
+		case type_class_procedure:
+			break;
 		default: FAILWITH("Unreachable"); break;
 		}
 		break;
@@ -190,11 +198,13 @@ struct type *resolve_type(Parser *p, struct type *type, struct scope *scope)
 
 bool type_is_var(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_var;
 }
 
 bool type_is_integer(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_i8:
 	case ast_type_i16:
@@ -215,6 +225,7 @@ bool type_is_integer(struct type *t)
 	case ast_type_slice:
 	case ast_type_mut_slice:
 	case ast_type_array:
+	case ast_type_istruct:
 	case ast_type_struct:
 	case ast_type_union:
 	case ast_type_vector:
@@ -231,6 +242,7 @@ bool type_is_integer(struct type *t)
 
 bool type_is_signed_integer(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_i8:
 	case ast_type_i16:
@@ -251,6 +263,7 @@ bool type_is_signed_integer(struct type *t)
 	case ast_type_slice:
 	case ast_type_mut_slice:
 	case ast_type_array:
+	case ast_type_istruct:
 	case ast_type_struct:
 	case ast_type_union:
 	case ast_type_vector:
@@ -268,6 +281,7 @@ bool type_is_signed_integer(struct type *t)
 
 bool type_is_unsigned_integer(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_u8:
 	case ast_type_u16:
@@ -288,6 +302,7 @@ bool type_is_unsigned_integer(struct type *t)
 	case ast_type_slice:
 	case ast_type_mut_slice:
 	case ast_type_array:
+	case ast_type_istruct:
 	case ast_type_struct:
 	case ast_type_union:
 	case ast_type_vector:
@@ -305,6 +320,7 @@ bool type_is_unsigned_integer(struct type *t)
 
 bool type_is_floating_point(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_i8:
 	case ast_type_i16:
@@ -322,6 +338,7 @@ bool type_is_floating_point(struct type *t)
 	case ast_type_slice:
 	case ast_type_mut_slice:
 	case ast_type_array:
+	case ast_type_istruct:
 	case ast_type_struct:
 	case ast_type_union:
 	case ast_type_vector:
@@ -342,6 +359,7 @@ bool type_is_floating_point(struct type *t)
 
 bool type_is_numeric_scalar(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_i8:
 	case ast_type_i16:
@@ -362,6 +380,7 @@ bool type_is_numeric_scalar(struct type *t)
 	case ast_type_slice:
 	case ast_type_mut_slice:
 	case ast_type_array:
+	case ast_type_istruct:
 	case ast_type_struct:
 	case ast_type_union:
 	case ast_type_vector:
@@ -379,33 +398,38 @@ bool type_is_numeric_scalar(struct type *t)
 
 bool type_is_signed_scalar(struct type *t)
 {
+	t = type_find(t);
 	return type_is_signed_integer(t) || type_is_floating_point(t);
 }
 
 bool type_is_bool(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_bool;
 }
 
 bool type_is_void(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_void;
 }
 
 bool type_is_procedure(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_proc;
 }
 
 bool type_is_pointer(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_ptr
-		|| t->tag == ast_type_mut_ptr
-		|| t->tag == ast_type_proc;
+		|| t->tag == ast_type_mut_ptr;
 }
 
 bool type_is_struct(struct type *t, struct scope *scope)
 {
+	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_struct(type_get_underlying(scope, t, NULL), scope);
 	return t->tag == ast_type_struct;
@@ -413,6 +437,7 @@ bool type_is_struct(struct type *t, struct scope *scope)
 
 bool type_is_struct_ptr(struct type *t, struct scope *scope)
 {
+	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_struct_ptr(type_get_underlying(scope, t, NULL), scope);
 	return type_is_pointer(t) && type_is_struct(t->as.ptr, scope);
@@ -420,6 +445,7 @@ bool type_is_struct_ptr(struct type *t, struct scope *scope)
 
 bool type_is_union(struct type *t, struct scope *scope)
 {
+	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_union(type_get_underlying(scope, t, NULL), scope);
 	return t->tag == ast_type_union;
@@ -427,6 +453,7 @@ bool type_is_union(struct type *t, struct scope *scope)
 
 bool type_is_union_ptr(struct type *t, struct scope *scope)
 {
+	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_union_ptr(type_get_underlying(scope, t, NULL), scope);
 	return type_is_pointer(t) && type_is_union(t->as.ptr, scope);
@@ -434,38 +461,43 @@ bool type_is_union_ptr(struct type *t, struct scope *scope)
 
 bool type_is_array(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_array;
 }
 
 bool type_is_array_ptr(struct type *t)
 {
+	t = type_find(t);
 	return type_is_pointer(t)
 		&& type_is_array(t->as.ptr);
 }
 
 bool type_is_slice(struct type *t)
 {
+	t = type_find(t);
 	return t->tag == ast_type_slice
 		|| t->tag == ast_type_mut_slice;
 }
 
 bool type_is_slice_ptr(struct type *t)
 {
+	t = type_find(t);
 	return type_is_pointer(t)
 		&& type_is_slice(t->as.ptr);
 }
 
 bool type_is_indexable(struct type *t)
 {
+	t = type_find(t);
 	return type_is_array(t) || type_is_array_ptr(t) || type_is_slice(t);
 }
 
 static struct type *
-get_slice_pointer(Parser *p, struct type *t)
+get_slice_pointer(struct type *t)
 {
-	struct type *arr = POOL_ALLOC(&p->data, struct type);
+	struct type *arr = MEM_ALLOC(struct type);
 	arr->tag = ast_type_array;
-	struct type *ptr = POOL_ALLOC(&p->data, struct type);
+	struct type *ptr = MEM_ALLOC(struct type);
 	switch ((int)t->tag) {
 	case ast_type_slice:
 		ptr->tag = ast_type_ptr;
@@ -476,8 +508,6 @@ get_slice_pointer(Parser *p, struct type *t)
 		arr->as.array.base = t->as.mut_slice;
 		break;
 	default:
-		ast_type_fprint(t, stdout);
-		printf("\n");
 		FAILWITH("Type is not a slice");
 		break;
 	}
@@ -488,6 +518,7 @@ get_slice_pointer(Parser *p, struct type *t)
 static struct type *
 get_indexable_base_type(struct type *t)
 {
+	t = type_find(t);
 	assert(type_is_indexable(t));
 	if (type_is_array(t))     return t->as.array.base;
 	if (type_is_array_ptr(t)) return t->as.ptr->as.array.base;
@@ -497,6 +528,7 @@ get_indexable_base_type(struct type *t)
 
 bool type_has_length(struct type *t, struct scope *scope)
 {
+	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_has_length(type_get_underlying(scope, t, NULL), scope);
 	if (type_is_array_ptr(t)) return type_has_length(t->as.ptr, scope);
@@ -506,11 +538,13 @@ bool type_has_length(struct type *t, struct scope *scope)
 
 bool type_is_scalar(struct type *t)
 {
+	t = type_find(t);
 	return type_is_numeric_scalar(t) || type_is_pointer(t) || type_is_bool(t);
 }
 
 static bool type_contains_var(struct type *t)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_void:
 	case ast_type_noreturn:
@@ -539,18 +573,22 @@ static bool type_contains_var(struct type *t)
 		return type_contains_var(t->as.slice);
 	case ast_type_array:
 		return type_contains_var(t->as.array.base);
+	case ast_type_istruct:
 	case ast_type_struct:
 		for (size_t i = 0; i < t->as.struct_t.len; ++i) {
 			if (type_contains_var(t->as.struct_t.elems[i].type)) return true;
 		}
 		return false;
-	case ast_type_union: FAILWITH("TODO: ast_type_union"); break;
+	case ast_type_union:
+		for (size_t i = 0; i < t->as.union_t.len; ++i) {
+			if (type_contains_var(t->as.union_t.elems[i].type)) return true;
+		}
+		return false;
 	case ast_type_proc:
 		for (size_t i = 0; i < t->as.proc.args.len; ++i) {
 			if (type_contains_var(t->as.proc.args.elems[i])) return true;
 		}
-		if (type_contains_var(t->as.proc.ret)) return true;
-		return false;
+		return type_contains_var(t->as.proc.ret);
 	case ast_type_var:
 		return true;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
@@ -561,6 +599,7 @@ static bool type_contains_var(struct type *t)
 
 bool type_is_polymorphic(struct type *t)
 {
+	t = type_find(t);
 	return type_is_procedure(t) && type_contains_var(t);
 }
 
@@ -579,10 +618,10 @@ struct_type_members(Parser *p, struct type *type, struct scope *scope)
 	return NULL;
 }
 
-struct type *type_slice_to_array_ptr(struct mem_arena *pool, struct type *t)
+struct type *type_slice_to_array_ptr(struct type *t)
 {
-	struct type *ptr = POOL_ALLOC(pool, struct type);
-	struct type *array = POOL_ALLOC(pool, struct type);
+	struct type *ptr = MEM_ALLOC(struct type);
+	struct type *array = MEM_ALLOC(struct type);
 	array->tag = ast_type_array;
 	array->as.array.is_sized = false;
 	array->as.array.base = t->as.slice;
@@ -596,16 +635,16 @@ struct type *type_slice_to_array_ptr(struct mem_arena *pool, struct type *t)
 	return ptr;
 }
 
-struct type *type_array_to_slice(struct mem_arena *pool, struct type *t, bool mutable_p)
+struct type *type_array_to_slice(struct type *t, bool mutable_p)
 {
-	struct type *slice = POOL_ALLOC(pool, struct type);
+	struct type *slice = MEM_ALLOC(struct type);
 	slice->tag = mutable_p ? ast_type_mut_slice : ast_type_slice;
 	slice->as.slice = t->as.array.base;
 	return slice;
 }
 
 static struct type *
-copy_type(Parser *p, struct type *type)
+copy_type(struct type *type)
 {
 	struct type *newtype = NULL;
 	switch (type->tag) {
@@ -623,62 +662,63 @@ copy_type(Parser *p, struct type *type)
 	case ast_type_f32:  return &AST_TYPE_F32;
 	case ast_type_f64:  return &AST_TYPE_F64;
 	case ast_type_app:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		newtype->as.app.cons = type->as.app.cons;
 		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			da_append(&newtype->as.app.args, copy_type(p, type->as.app.args.elems[i]));
+			da_append(&newtype->as.app.args, copy_type(type->as.app.args.elems[i]));
 		}
 		return newtype;
 	case ast_type_var:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		*newtype = *type;
 		return newtype;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
-		newtype->as.ptr = copy_type(p, type->as.ptr);
+		newtype->as.ptr = copy_type(type->as.ptr);
 		return newtype;
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
-		newtype->as.slice = copy_type(p, type->as.slice);
+		newtype->as.slice = copy_type(type->as.slice);
 		return newtype;
 	case ast_type_array:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		*newtype = *type;
-		newtype->as.array.base = copy_type(p, type->as.array.base);
+		newtype->as.array.base = copy_type(type->as.array.base);
 		return newtype;
+	case ast_type_istruct:
 	case ast_type_struct:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
 			da_append(&newtype->as.struct_t, (struct struct_member) {
 					.name = type->as.struct_t.elems[i].name,
-					.type = copy_type(p, type->as.struct_t.elems[i].type),
+					.type = copy_type(type->as.struct_t.elems[i].type),
 				});
 		}
 		return newtype;
 	case ast_type_union:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
 			da_append(&newtype->as.union_t, (struct union_member) {
 					.name      = type->as.union_t.elems[i].name,
 					.tag_value = type->as.union_t.elems[i].tag_value,
-					.type      = copy_type(p, type->as.union_t.elems[i].type),
+					.type      = copy_type(type->as.union_t.elems[i].type),
 				});
 		}
 		return newtype;
 	case ast_type_proc:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			da_append(&newtype->as.proc.args, copy_type(p, type->as.proc.args.elems[i]));
+			da_append(&newtype->as.proc.args, copy_type(type->as.proc.args.elems[i]));
 		}
-		newtype->as.proc.ret = copy_type(p, type->as.proc.ret);
+		newtype->as.proc.ret = copy_type(type->as.proc.ret);
 		return newtype;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	default: FAILWITH("TODO: Unreachable"); break;
@@ -686,12 +726,13 @@ copy_type(Parser *p, struct type *type)
 	return NULL;
 }
 
-struct definition *
-lookup_poly_proc_instance(Parser *p, struct definition *def, struct type *t, struct scope *scope)
+struct type_spec *
+lookup_poly_proc_spec(Parser *p, struct definition *def, struct type *t, struct scope *scope)
 {
-	assert(def->is_polymorphic);
+	assert(def->type->tag == ast_type_proc);
 	for (size_t i = 0; i < def->specs.len; ++i) {
-		if (type_equiv(p, def->specs.elems[i].type, t, scope)) return &def->specs.elems[i];
+		if (type_equiv(p, def->specs.elems[i].type, t, scope))
+			return &def->specs.elems[i];
 	}
 	return NULL;
 }
@@ -710,11 +751,11 @@ resolve_alias(Parser *p, struct type *t, struct scope *scope)
 static bool type_equiv(Parser *p, struct type *t, struct type *u, struct scope *scope)
 {
 	if (t == u) return true;
-	t = resolve_alias(p, t, scope);
-	u = resolve_alias(p, u, scope);
+	t = resolve_alias(p, type_find(t), scope);
+	u = resolve_alias(p, type_find(u), scope);
 	switch (t->tag) {
 	case ast_type_noreturn: FAILWITH("TODO: ast_type_noreturn"); break;
-	case ast_type_var: return t->tag == u->tag;
+	case ast_type_var: return t == u;
 	case ast_type_app:
 		if (t->tag != u->tag)
 			return false;
@@ -749,6 +790,7 @@ static bool type_equiv(Parser *p, struct type *t, struct type *u, struct scope *
 			&& t->as.array.is_sized == u->as.array.is_sized
 			&& t->as.array.size == u->as.array.size
 			&& type_equiv(p, t->as.array.base, t->as.array.base, scope);
+	case ast_type_istruct:
 	case ast_type_struct:
 		if (t->tag != u->tag) return false;
 		if (t->as.struct_t.len != u->as.struct_t.len) return false;
@@ -776,15 +818,6 @@ static bool type_equiv(Parser *p, struct type *t, struct type *u, struct scope *
 	return false;
 }
 
-#define TYPE_MISMATCH(t, u) type_mismatch_error(p, ctx, t, u, exp->tok, __FILE__, __LINE__)
-#define UNIFY_TYPES(t, u)												\
-	do {																\
-		struct type *_T = (t);											\
-		struct type *_U = (u);											\
-		if (!unify(p, ctx, _T, _U))										\
-			TYPE_MISMATCH(_T, _U);										\
-	} while (0)
-
 static void
 add_type_var_binding(struct type_var_bindings *bindings, struct type *var, struct type *type)
 {
@@ -794,8 +827,12 @@ add_type_var_binding(struct type_var_bindings *bindings, struct type *var, struc
 static struct type *
 find_type_var_binding(struct type_var_bindings *bindings, struct type *var)
 {
+	var = type_find(var);
 	for (size_t i = 0; i < bindings->len; ++i) {
-		if (bindings->elems[i].var == var) return bindings->elems[i].type;
+		struct type *key = type_find(bindings->elems[i].var);
+		if (key == var) {
+			return bindings->elems[i].type;
+		}
 	}
 	return NULL;
 }
@@ -818,12 +855,12 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 	case ast_type_u64:
 	case ast_type_f32:
 	case ast_type_f64:
-		assert(poly->tag == mono->tag);
+		if (poly->tag != mono->tag)
+			FAILWITH("%s != %s\n", ast_type_to_str(poly), ast_type_to_str(mono));
 		return;
 	case ast_type_app:
 		assert(mono->tag == ast_type_app);
 		assert(poly->as.app.args.len == mono->as.app.args.len);
-		//assert(type_equiv(poly->as.app.cons, mono->as.app.cons));
 		for (size_t i = 0; i < poly->as.app.args.len; ++i) {
 			bind_polymorphic_type_vars(p, scope, bindings,
 									   poly->as.app.args.elems[i],
@@ -844,6 +881,7 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 		assert(type_is_array(mono));
 		bind_polymorphic_type_vars(p, scope, bindings, poly->as.array.base, mono->as.array.base);
 		return;
+	case ast_type_istruct:
 	case ast_type_struct:
 		assert(type_is_struct(mono, scope));
 		assert(poly->as.struct_t.len == mono->as.struct_t.len);
@@ -878,7 +916,7 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 }
 
 static struct type *
-type_var_subst(Parser *p, struct type *type, struct type_var_bindings *bindings)
+type_var_subst(struct type *type, struct type_var_bindings *bindings)
 {
 	if (type == NULL) return NULL;
 	struct type *newtype = NULL;
@@ -897,65 +935,65 @@ type_var_subst(Parser *p, struct type *type, struct type_var_bindings *bindings)
 	case ast_type_f32:  return &AST_TYPE_F32;
 	case ast_type_f64:  return &AST_TYPE_F64;
 	case ast_type_app:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = ast_type_app;
 		newtype->as.app.cons = type->as.app.cons;
 		for (size_t i = 0; i < type->as.app.args.len; ++i) {
 			da_append(&newtype->as.app.args,
-					  type_var_subst(p, type->as.app.args.elems[i], bindings));
+					  type_var_subst(type->as.app.args.elems[i], bindings));
 		}
 		return newtype;
-	case ast_type_var:
-		if ((newtype = find_type_var_binding(bindings, type)) == NULL) {
-			newtype = POOL_ALLOC(&p->data, struct type);
-			*newtype = *type;
-		}
-		return newtype;
+	case ast_type_var: {
+		newtype = find_type_var_binding(bindings, type);
+		if (newtype) return newtype;
+		return type;
+	} break;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
-		newtype->as.ptr = type_var_subst(p, type->as.ptr, bindings);
+		newtype->as.ptr = type_var_subst(type->as.ptr, bindings);
 		return newtype;
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
-		newtype->as.slice = type_var_subst(p, type->as.slice, bindings);
+		newtype->as.slice = type_var_subst(type->as.slice, bindings);
 		return newtype;
 	case ast_type_array:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
-		newtype->as.array.base = type_var_subst(p, type->as.array.base, bindings);
+		newtype->as.array.base = type_var_subst(type->as.array.base, bindings);
 		return newtype;
+	case ast_type_istruct:
 	case ast_type_struct:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
 			da_append(&newtype->as.struct_t, (struct struct_member) {
 					.name = type->as.struct_t.elems[i].name,
-					.type = type_var_subst(p, type->as.struct_t.elems[i].type, bindings),
+					.type = type_var_subst(type->as.struct_t.elems[i].type, bindings),
 				});
 		}
 		return newtype;
 	case ast_type_union:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.union_t.len; ++i) {
 			da_append(&newtype->as.union_t, (struct union_member) {
 					.name      = type->as.union_t.elems[i].name,
 					.tag_value = type->as.union_t.elems[i].tag_value,
-					.type      = type_var_subst(p, type->as.union_t.elems[i].type, bindings),
+					.type      = type_var_subst(type->as.union_t.elems[i].type, bindings),
 				});
 		}
 		return newtype;
 	case ast_type_proc:
-		newtype = POOL_ALLOC(&p->data, struct type);
+		newtype = MEM_ALLOC(struct type);
 		newtype->tag = type->tag;
 		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			da_append(&newtype->as.proc.args, type_var_subst(p, type->as.proc.args.elems[i], bindings));
+			da_append(&newtype->as.proc.args, type_var_subst(type->as.proc.args.elems[i], bindings));
 		}
-		newtype->as.proc.ret = type_var_subst(p, type->as.proc.ret, bindings);
+		newtype->as.proc.ret = type_var_subst(type->as.proc.ret, bindings);
 		return newtype;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	default: FAILWITH("TODO: Unreachable"); break;
@@ -963,40 +1001,74 @@ type_var_subst(Parser *p, struct type *type, struct type_var_bindings *bindings)
 	return NULL;
 }
 
-void instantiate_generic_procedure(Parser *p, struct scope *scope, struct definition *def, struct type *mono);
+#define UNIFY(ctx, t, u, exp)											\
+	do {																\
+		struct type * _T = (t);											\
+		struct type * _U = (u);											\
+		if (!unify(p, ctx, _T, _U))										\
+			type_mismatch_error(p, ctx, _T, _U, (exp)->tok, __FILE__, __LINE__); \
+	} while (0)
+
+#define UNIFY_EXP(ctx, exp, u)  \
+	do {											\
+		struct expression *_E = (exp);				\
+		UNIFY(ctx, infer_type(p, ctx, _E), u, _E);	\
+	} while (0)
+
+static void
+specialize_generic_procedure(Parser *p,
+							 struct typing_context ctx,
+							 struct definition *def,
+							 struct type_spec *spec_def);
 static struct definition
-instantiate_definition(Parser *p, struct definition *def, struct scope *scope, struct type_var_bindings *bindings);
+specialize_definition(Parser *p,
+					  struct typing_context ctx,
+					  struct definition *def,
+					  struct type_var_bindings *bindings);
 static struct expression *
-instantiate_expression(Parser *p, struct expression *exp, struct scope *scope, struct type_var_bindings *bindings);
+specialize_expression(Parser *p,
+					  struct typing_context ctx,
+					  struct expression *exp,
+					  struct type_var_bindings *bindings);
 
 static struct definition
-instantiate_definition(Parser *p, struct definition *def, struct scope *scope, struct type_var_bindings *bindings)
+specialize_definition(Parser *p,
+					  struct typing_context ctx,
+					  struct definition *def,
+					  struct type_var_bindings *bindings)
 {
 	return (struct definition) {
 		.id			= def->id,
-		.type		= type_var_subst(p, def->type, bindings),
-		.exp		= def->exp ? instantiate_expression(p, def->exp, scope, bindings) : NULL,
+		.type		= type_var_subst(def->type, bindings),
+		.exp		= def->exp ? specialize_expression(p, ctx, def->exp, bindings) : NULL,
 		.is_mut		= def->is_mut,
 		.is_global	= def->is_global,
 	};
 }
 
 static struct expression *
-instantiate_expression(Parser *p, struct expression *exp, struct scope *scope, struct type_var_bindings *bindings)
+specialize_expression(Parser *p,
+					  struct typing_context ctx,
+					  struct expression *exp,
+					  struct type_var_bindings *bindings)
 {
-	struct expression *newexp = POOL_ALLOC(&p->data, struct expression);
+	struct expression *newexp = MEM_ALLOC(struct expression);
 	newexp->tag = exp->tag;
 	newexp->tok = exp->tok;
 	newexp->is_lvalue = exp->is_lvalue;
 	newexp->is_mutable = exp->is_mutable;
-	newexp->type = type_var_subst(p, exp->type, bindings);
+	if (exp->tag != ast_exp_ident)
+		newexp->type = type_var_subst(exp->type, bindings);
 	switch (exp->tag) {
 	case ast_exp_definition: FAILWITH("TODO: ast_exp_definition"); break;
 	case ast_exp_let:
-		newexp->as.let.def = instantiate_definition(p, &exp->as.let.def, scope, bindings);
-		newexp->as.let.scope.parent = scope;
+		newexp->as.let.def = specialize_definition(p, ctx, &exp->as.let.def, bindings);
+		newexp->as.let.scope.parent = ctx.scope;
 		symtbl_add(&newexp->as.let.scope.symtbl, &newexp->as.let.def, NULL);
-		newexp->as.let.body = instantiate_expression(p, exp->as.let.body, &newexp->as.let.scope, bindings);
+		ctx.scope = &newexp->as.let.scope;
+		type_env_add(&ctx, newexp->as.let.def.id,
+					 generalize_type(&ctx, type_recursive_find(newexp->as.let.def.type)));
+		newexp->as.let.body = specialize_expression(p, ctx, exp->as.let.body, bindings);
 		break;
 	case ast_exp_literal: newexp->as.lit = exp->as.lit; break;
 	case ast_exp_string: /* do nothing */ break;
@@ -1004,13 +1076,18 @@ instantiate_expression(Parser *p, struct expression *exp, struct scope *scope, s
 	case ast_exp_struct_initializer: FAILWITH("TODO: ast_exp_struct_initializer"); break;
 	case ast_exp_named_struct_initializer: FAILWITH("TODO: ast_exp_named_struct_initializer"); break;
 	case ast_exp_zero_struct_initializer: FAILWITH("TODO: ast_exp_zero_struct_initializer"); break;
-	case ast_exp_procedure_literal: FAILWITH("TODO: ast_exp_procedure_literal"); break;
+	case ast_exp_procedure_literal: break;
 	case ast_exp_undefined: FAILWITH("TODO: ast_exp_undefined"); break;
-	case ast_exp_ident: break;
+	case ast_exp_ident: {
+		struct type_env *env = lookup_type_env(&ctx, newexp->tok);
+		if (env == NULL)
+			FAILWITH("Undefined variable: `"SV_FMT"`.", SV_ARGS(token_to_strview(newexp->tok)));
+		newexp->type = instantiate_type_scheme(&env->scheme);
+	} break;
 	case ast_exp_binary:
 		newexp->as.bin.op = exp->as.bin.op;
-		newexp->as.bin.left = instantiate_expression(p, exp->as.bin.left, scope, bindings);
-		newexp->as.bin.right = instantiate_expression(p, exp->as.bin.right, scope, bindings);
+		newexp->as.bin.left = specialize_expression(p, ctx, exp->as.bin.left, bindings);
+		newexp->as.bin.right = specialize_expression(p, ctx, exp->as.bin.right, bindings);
 		break;
 	case ast_exp_value_cons: FAILWITH("TODO: ast_exp_value_cons"); break;
 	case ast_exp_unary:
@@ -1022,73 +1099,73 @@ instantiate_expression(Parser *p, struct expression *exp, struct scope *scope, s
 		case unaop_pos:
 		case unaop_address_of:
 		case unaop_dereference:
-			newexp->as.una.exp = instantiate_expression(p, exp->as.una.exp, scope, bindings);
+			newexp->as.una.exp = specialize_expression(p, ctx, exp->as.una.exp, bindings);
 			break;
 		case unaop_index:
-			newexp->as.idx.exp = instantiate_expression(p, exp->as.idx.exp, scope, bindings);
-			newexp->as.idx.idx = instantiate_expression(p, exp->as.idx.idx, scope, bindings);
+			newexp->as.idx.exp = specialize_expression(p, ctx, exp->as.idx.exp, bindings);
+			newexp->as.idx.idx = specialize_expression(p, ctx, exp->as.idx.idx, bindings);
 			break;
 		case unaop_call: {
-			newexp->as.call.proc = instantiate_expression(p, exp->as.call.proc, scope, bindings);
-			if (type_is_polymorphic(exp->as.call.proc->type)) {
-				newexp->as.call.proc = instantiate_expression(p, exp->as.call.proc, scope, bindings);
+			newexp->as.call.proc = specialize_expression(p, ctx, exp->as.call.proc, bindings);
+			if (type_is_polymorphic(newexp->as.call.proc->type)) {
 				struct call *call = &newexp->as.call;
 				if (call->proc->tag != ast_exp_ident) {
 					FAILWITH("TODO: polymorphic procedure must be let-bound.");
 				}
 				struct definition *generic = NULL;
-				struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(call->proc->tok));
-				assert(entry != NULL);
+				struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
 				if (entry == NULL) ERROR_UNDEFINED_IDENT(call->proc->tok);
-				if (entry->tag == SYMTBL_VAR) {
+				if (entry->tag == SYMTBL_VARIABL) {
 					generic = entry->as.variable.def;
 				} else {
 					FAILWITH("TODO: expected procedure.");
 				}
-				assert(generic->is_polymorphic);
-				struct type *inf_type = POOL_ALLOC(&p->data, struct type);
+				assert(generic->type->tag == ast_type_proc);
+				struct type *inf_type = MEM_ALLOC(struct type);
 				inf_type->tag = ast_type_proc;
 				struct type *ret_type = newexp->type;
 				inf_type->as.proc.ret = ret_type;
 				for (size_t i = 0; i < exp->as.call.args.len; ++i) {
 					struct expression *arg_exp = exp->as.call.args.elems[i];
-					arg_exp = instantiate_expression(p, arg_exp, scope, bindings);
+					arg_exp = specialize_expression(p, ctx, arg_exp, bindings);
 					assert(arg_exp->type);
 					da_append(&newexp->as.call.args, arg_exp);
 					da_append(&inf_type->as.proc.args, arg_exp->type);
 				}
-				if (!type_is_polymorphic(inf_type)) {
-					instantiate_generic_procedure(p, scope, generic, inf_type);
+				UNIFY(ctx, call->proc->type, inf_type, newexp);
+				if (lookup_poly_proc_spec(p, generic, inf_type, ctx.scope) == NULL) {
+					da_append(&generic->specs, (struct type_spec) {
+							.type = inf_type,
+						});
 				}
-				call->proc->type = inf_type;
 			} else {
 				for (size_t i = 0; i < exp->as.call.args.len; ++i) {
 					struct expression *arg_exp = exp->as.call.args.elems[i];
-					da_append(&newexp->as.call.args, instantiate_expression(p, arg_exp, scope, bindings));
+					da_append(&newexp->as.call.args, specialize_expression(p, ctx, arg_exp, bindings));
 				}
 			}
 		} break;
 		case unaop_cast:
-			newexp->as.cast.type = type_var_subst(p, exp->as.cast.type, bindings);
-			newexp->as.cast.exp = instantiate_expression(p, exp->as.cast.exp, scope, bindings);
+			newexp->as.cast.type = type_var_subst(exp->as.cast.type, bindings);
+			newexp->as.cast.exp = specialize_expression(p, ctx, exp->as.cast.exp, bindings);
 			break;
 		case unaop_slice:
-			newexp->as.slice.exp = instantiate_expression(p, exp->as.slice.exp, scope, bindings);
-			newexp->as.slice.idx = instantiate_expression(p, exp->as.slice.idx, scope, bindings);
-			newexp->as.slice.len = instantiate_expression(p, exp->as.slice.len, scope, bindings);
+			newexp->as.slice.exp = specialize_expression(p, ctx, exp->as.slice.exp, bindings);
+			newexp->as.slice.idx = specialize_expression(p, ctx, exp->as.slice.idx, bindings);
+			newexp->as.slice.len = specialize_expression(p, ctx, exp->as.slice.len, bindings);
 			break;
 		default: FAILWITH("Unreachable"); break;
 		}
 		break;
 	case ast_exp_while:
-		newexp->as.wloop.cond = instantiate_expression(p, exp->as.wloop.cond, scope, bindings);
-		newexp->as.wloop.body = instantiate_expression(p, exp->as.wloop.body, scope, bindings);
+		newexp->as.wloop.cond = specialize_expression(p, ctx, exp->as.wloop.cond, bindings);
+		newexp->as.wloop.body = specialize_expression(p, ctx, exp->as.wloop.body, bindings);
 		break;
 	case ast_exp_if:
-		newexp->as.iff.cond = instantiate_expression(p, exp->as.iff.cond, scope, bindings);
-		newexp->as.iff.tb   = instantiate_expression(p, exp->as.iff.tb, scope, bindings);
+		newexp->as.iff.cond = specialize_expression(p, ctx, exp->as.iff.cond, bindings);
+		newexp->as.iff.tb   = specialize_expression(p, ctx, exp->as.iff.tb, bindings);
 		if (exp->as.iff.fb)
-			newexp->as.iff.fb = instantiate_expression(p, exp->as.iff.fb, scope, bindings);
+			newexp->as.iff.fb = specialize_expression(p, ctx, exp->as.iff.fb, bindings);
 		break;
 	case ast_exp_case: FAILWITH("TODO: ast_exp_case"); break;
 	case ast_exp_return: FAILWITH("TODO: ast_exp_return"); break;
@@ -1096,42 +1173,82 @@ instantiate_expression(Parser *p, struct expression *exp, struct scope *scope, s
 	case ast_exp_continue: FAILWITH("TODO: ast_exp_continue"); break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_get_ptr:
-		newexp->as.get_ptr = instantiate_expression(p, exp->as.get_ptr, scope, bindings);
+		newexp->as.get_ptr = specialize_expression(p, ctx, exp->as.get_ptr, bindings);
 		break;
 	case ast_exp_get_len:
-		newexp->as.get_len = instantiate_expression(p, exp->as.get_len, scope, bindings);
+		newexp->as.get_len = specialize_expression(p, ctx, exp->as.get_len, bindings);
 		break;
 	default: FAILWITH("Unreachable"); break;
 	}
 	return newexp;
 }
 
-void instantiate_generic_procedure(Parser *p, struct scope *scope, struct definition *def, struct type *mono)
+void specialize_generic_procedure(Parser *p,
+								  struct typing_context ctx,
+								  struct definition *def,
+								  struct type_spec *spec_def)
 {
+	printf("[Debug] Instantiating procedure `"SV_FMT"` for type: `", SV_ARGS(token_to_strview(def->id)));
+	ast_type_fprint(spec_def->type, stdout);
+	printf("`\n");
+	assert(def->exp->tag == ast_exp_procedure_literal);
+	assert(def->type->tag == ast_type_proc);
+	struct type *generic_type = type_recursive_find(def->type);
+	struct type *spec_type = type_recursive_find(spec_def->type);
+	spec_def->type = spec_type;
+	spec_def->exp = MEM_ALLOC(struct expression);
+	spec_def->exp->tag = ast_exp_procedure_literal;
+	spec_def->exp->type = spec_type;
+	spec_def->exp->is_lvalue = def->exp->is_lvalue;
+	spec_def->exp->is_mutable = def->exp->is_mutable;
+	spec_def->exp->tok = def->exp->tok;
+	struct type_var_bindings bindings = {0};
+	struct procedure *newproc = &spec_def->exp->as.proc;
+	struct procedure *proc = &def->exp->as.proc;
+	{
+		bind_polymorphic_type_vars(p, ctx.scope, &bindings, generic_type, spec_type);
+		type_env_add(&ctx, def->id, generalize_type(&ctx, spec_type));
+		for (size_t i = 0; i < proc->formals.len; ++i) {
+			struct definition *arg_def = da_allot(&newproc->formals);
+			*arg_def = proc->formals.elems[i];
+			arg_def->type = type_var_subst(proc->formals.elems[i].type, &bindings);
+			symtbl_add(&newproc->scope.symtbl, arg_def, NULL);
+			type_env_add(&ctx, proc->formals.elems[i].id, (Forall){.type=arg_def->type});
+		}
+	}
+	newproc->ret = type_var_subst(proc->ret, &bindings);
+	newproc->scope.parent = ctx.scope;
+	ctx.scope = &newproc->scope;
+	newproc->body = specialize_expression(p, ctx, proc->body, &bindings);
+	da_free(&bindings);
+
+#if 0
 	struct expression *proc = def->exp;
+	struct type *mono = spec_def->type;
 	assert(proc->tag == ast_exp_procedure_literal);
-	assert(def->is_polymorphic);
-	assert(!type_is_polymorphic(mono));
-	struct definition *spec_def = lookup_poly_proc_instance(p, def, mono, scope);
-	if (spec_def != NULL) return;
-	struct expression *newproc = POOL_ALLOC(&p->data, struct expression);
+	assert(def->type->tag == ast_type_proc);
+	assert(mono->tag == ast_type_proc);
+	struct expression *newproc = MEM_ALLOC(struct expression);
 	newproc->tag = proc->tag;
 	newproc->tok = proc->tok;
 	newproc->is_lvalue = proc->is_lvalue;
 	newproc->is_mutable = proc->is_mutable;
 	newproc->type = mono;
 	struct type_var_bindings bindings = {0};
-	bind_polymorphic_type_vars(p, scope, &bindings, def->type, mono);
+	bind_polymorphic_type_vars(p, ctx.scope, &bindings, def->type, mono);
 	struct def_array formals = {0};
 	newproc->as.proc.scope.parent = proc->as.proc.scope.parent;
+	type_env_add(&ctx, def->id, generalize_type(&ctx, type_recursive_find(mono)));
 	for (size_t i = 0; i < proc->as.proc.formals.len; ++i) {
 		struct definition *def = da_allot(&formals);
 		*def = proc->as.proc.formals.elems[i];
-		def->type = mono->as.proc.args.elems[i];
+		def->type = type_var_subst(proc->as.proc.formals.elems[i].type, &bindings);
 		symtbl_add(&newproc->as.proc.scope.symtbl, def, NULL);
+		type_env_add(&ctx, proc->as.proc.formals.elems[i].id, generalize_type(&ctx, def->type));
 	}
+#if 0
 	/* Order here is important. The new definition must be added before calling
-	 * `instantiate_expression`. Otherwise infinite recursion may occur.
+	 * `specialize_expression`. Otherwise infinite recursion may occur.
 	 */
 	da_append(&def->specs, (struct definition) {
 			.exp			= newproc,
@@ -1141,92 +1258,331 @@ void instantiate_generic_procedure(Parser *p, struct scope *scope, struct defini
 			.type			= newproc->type,
 			.is_polymorphic = false,
 		});
+#endif
+	spec_def->exp			 = newproc;
 	newproc->as.proc.formals = formals;
-	newproc->as.proc.ret     = type_var_subst(p, proc->as.proc.ret, &bindings);
-	newproc->as.proc.body    = instantiate_expression(p, proc->as.proc.body, &newproc->as.proc.scope, &bindings);
+	newproc->as.proc.ret     = type_var_subst(proc->as.proc.ret, &bindings);
+	ctx.scope                = &newproc->as.proc.scope;
+	newproc->as.proc.body    = specialize_expression(p, ctx, proc->as.proc.body, &bindings);
 	da_free(&bindings);
+#endif
 }
 
-static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct type *u)
+UNUSED static struct type *
+find_union_member_type(struct union_type *ut, struct token *cons_name)
 {
-	t = resolve_alias(p, t, ctx.scope);
-	u = resolve_alias(p, u, ctx.scope);
-	switch (t->tag) {
-	case ast_type_void: {
-		if (type_is_var(u)) *u = *t;
-		return true;
-	} break;
-	case ast_type_noreturn: FAILWITH("TODO: ast_type_noreturn"); break;
-	case ast_type_bool: {
-		if (t->tag == u->tag) return true;
-		if (type_is_var(u) && u->as.var.class == type_class_any) {
-			*u = *t;
-			return true;
-		}
-		return false;
-	} break;
+	struct strview name = token_to_strview(cons_name);
+	for (size_t i = 0; i < ut->len; ++i) {
+		if (sv_is_equal(name, token_to_strview(ut->elems[i].name)))
+			return ut->elems[i].type;
+	}
+	return NULL;
+}
+
+static struct type_env *
+lookup_type_env(struct typing_context *ctx, struct token *var)
+{
+	struct strview var_name = token_to_strview(var);
+	struct type_env *env;
+	for (env = ctx->env; env != NULL; env = env->next) {
+		if (sv_is_equal(var_name, env->name)) break;
+	}
+	return env;
+}
+
+UNUSED static bool
+var_is_in_type(struct type *var, struct type *type)
+{
+	var = type_find(var);
+	type = type_find(type);
+	switch (type->tag) {
+	case ast_type_void:
+	case ast_type_noreturn:
+	case ast_type_bool:
 	case ast_type_i8:
 	case ast_type_i16:
 	case ast_type_i32:
-	case ast_type_i64: {
-		if (t->tag == u->tag) return true;
-		if (type_is_var(u)) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_scalar:
-			case type_class_numeric:
-			case type_class_signed_integer:
-			case type_class_integer:
-				*u = *t;
-				return true;
-			case type_class_unsigned_integer:
-			case type_class_float:
-			case type_class_length:
-			case type_class_indexable:
-			case type_class_struct:
-			case type_class_union:
-			case type_class_procedure:
-			case type_class_pointer:
-				return false;
-			default: FAILWITH("Unreachable");
-			}
-		}
-		return false;
-	} break;
+	case ast_type_i64:
 	case ast_type_u8:
 	case ast_type_u16:
 	case ast_type_u32:
-	case ast_type_u64: {
-		if (t->tag == u->tag) return true;
-		if (type_is_var(u)) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_scalar:
-			case type_class_numeric:
-			case type_class_unsigned_integer:
-			case type_class_integer:
-				*u = *t;
+	case ast_type_u64:
+	case ast_type_f32:
+	case ast_type_f64: return false;
+	case ast_type_app:
+		for (size_t i = 0; i < type->as.app.args.len; ++i) {
+			if (var_is_in_type(var, type->as.app.args.elems[i]))
 				return true;
-			case type_class_signed_integer:
-			case type_class_float:
-			case type_class_length:
-			case type_class_indexable:
-			case type_class_struct:
-			case type_class_union:
-			case type_class_procedure:
-			case type_class_pointer:
-				return false;
-			default: FAILWITH("Unreachable");
-			}
 		}
 		return false;
-	} break;
-	case ast_type_f32: FAILWITH("TODO: ast_type_f32"); break;
-	case ast_type_f64: FAILWITH("TODO: ast_type_f64"); break;
+	case ast_type_ptr:
+	case ast_type_mut_ptr:
+		return var_is_in_type(var, type->as.ptr);
+	case ast_type_slice:
+	case ast_type_mut_slice:
+		return var_is_in_type(var, type->as.slice);
+	case ast_type_array:
+		return var_is_in_type(var, type->as.array.base);
+	case ast_type_istruct:
+	case ast_type_struct:
+		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
+			if (var_is_in_type(var, type->as.struct_t.elems[i].type))
+				return true;
+		}
+		return false;
+	case ast_type_union:
+		for (size_t i = 0; i < type->as.union_t.len; ++i) {
+			if (var_is_in_type(var, type->as.union_t.elems[i].type))
+				return true;
+		}
+		return false;
+	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
+	case ast_type_proc:
+		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
+			if (var_is_in_type(var, type->as.proc.args.elems[i]))
+				return true;
+		}
+		return var_is_in_type(var, type->as.proc.ret);
+	case ast_type_var:
+		return type == var;
+	default: FAILWITH("Unreachable");
+	}
+}
+
+static bool
+type_var_is_free(struct typing_context *ctx, struct type *var)
+{
+	assert(var->tag == ast_type_var);
+	var = type_find(var);
+	struct type_env *env;
+	for (env = ctx->env; env != NULL; env = env->next) {
+		for (size_t i = 0; i < env->scheme.args.len; ++i) {
+			if (var == type_find(env->scheme.args.elems[i])) return false;
+		}
+	}
+	return true;
+}
+
+static void
+build_type_scheme(struct typing_context *ctx, struct type *type, struct type_scheme *scm)
+{
+	switch (type->tag) {
+	case ast_type_void:
+	case ast_type_noreturn:
+	case ast_type_bool:
+	case ast_type_i8:
+	case ast_type_i16:
+	case ast_type_i32:
+	case ast_type_i64:
+	case ast_type_u8:
+	case ast_type_u16:
+	case ast_type_u32:
+	case ast_type_u64:
+	case ast_type_f32:
+	case ast_type_f64: return;
+	case ast_type_app:
+		for (size_t i = 0; i < type->as.app.args.len; ++i) {
+			build_type_scheme(ctx, type->as.app.args.elems[i], scm);
+		}
+		return;
+	case ast_type_ptr:
+	case ast_type_mut_ptr:
+		return build_type_scheme(ctx, type->as.ptr, scm);
+	case ast_type_slice:
+	case ast_type_mut_slice:
+		return build_type_scheme(ctx, type->as.slice, scm);
+	case ast_type_array:
+		return build_type_scheme(ctx, type->as.array.base, scm);
+	case ast_type_istruct:
+	case ast_type_struct:
+		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
+			build_type_scheme(ctx, type->as.struct_t.elems[i].type, scm);
+		}
+		return;
+	case ast_type_union:
+		for (size_t i = 0; i < type->as.union_t.len; ++i) {
+			build_type_scheme(ctx, type->as.union_t.elems[i].type, scm);
+		}
+		return;
+	case ast_type_vector:	 FAILWITH("TODO: ast_type_vector");	   break;
+	case ast_type_proc:
+		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
+			build_type_scheme(ctx, type->as.proc.args.elems[i], scm);
+		}
+		return build_type_scheme(ctx, type->as.proc.ret, scm);
+	case ast_type_var:
+		if (type_var_is_free(ctx, type))
+			da_append(&scm->args, type);
+		return;
+	default: FAILWITH("Unreachable");
+	}
+}
+
+static struct type_scheme
+generalize_type(struct typing_context *ctx, struct type *type)
+{
+	struct type_scheme scm = {.type = type};
+	build_type_scheme(ctx, type, &scm);
+	return scm;
+}
+
+static inline struct type *
+fresh_type_var(enum type_class c)
+{
+	struct type *t = MEM_ALLOC(struct type);
+	t->tag = ast_type_var;
+	t->as.var.class = c;
+	return t;
+}
+
+static inline struct type *
+fresh_type_var_from(struct type *type)
+{
+	assert(type->tag == ast_type_var);
+	struct type *t = fresh_type_var(type->as.var.class);
+	return t;
+}
+
+
+static struct type *
+instantiate_type_scheme(struct type_scheme *scm)
+{
+	if (scm->args.len == 0) return scm->type;
+	struct type_var_bindings bindings = {0};
+	for (size_t i = 0; i < scm->args.len; ++i) {
+		da_append(&bindings, (struct type_pair){
+				.var  = scm->args.elems[i],
+				.type = fresh_type_var_from(scm->args.elems[i]),
+			});
+	}
+	struct type *type = type_var_subst(scm->type, &bindings);
+	da_free(&bindings);
+	return type;
+}
+
+static inline struct type *
+type_find(struct type *type)
+{
+	for (; type->tag == ast_type_var; type = type->as.var.forward) {
+		if (type->as.var.forward == NULL)
+			return type;
+	}
+	return type;
+}
+
+static struct type *
+type_recursive_find(struct type *type)
+{
+	struct type *newtype = NULL;
+	type = type_find(type);
+	switch (type->tag) {
+	case ast_type_void:
+	case ast_type_noreturn:
+	case ast_type_bool:
+	case ast_type_i8:
+	case ast_type_i16:
+	case ast_type_i32:
+	case ast_type_i64:
+	case ast_type_u8:
+	case ast_type_u16:
+	case ast_type_u32:
+	case ast_type_u64:
+	case ast_type_f32:
+	case ast_type_f64:
+	case ast_type_var:
+		return type;
+	case ast_type_ptr:
+	case ast_type_mut_ptr:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		newtype->as.ptr = type_recursive_find(type->as.ptr);
+		return newtype;
+	case ast_type_slice:
+	case ast_type_mut_slice:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		newtype->as.slice = type_recursive_find(type->as.slice);
+		return newtype;
+	case ast_type_array:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		newtype->as.array.is_sized = type->as.array.is_sized;
+		newtype->as.array.size = type->as.array.size;
+		newtype->as.array.base = type_recursive_find(type->as.array.base);
+		return newtype;
+	case ast_type_app:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		newtype->as.app.cons = type->as.app.cons;
+		for (size_t i = 0; i < type->as.app.args.len; ++i) {
+			da_append(&newtype->as.app.args, type_recursive_find(type->as.app.args.elems[i]));
+		}
+		return newtype;
+	case ast_type_struct:
+	case ast_type_istruct:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
+			da_append(&newtype->as.struct_t, (struct struct_member) {
+					.name = type->as.struct_t.elems[i].name,
+					.type = type_recursive_find(type->as.struct_t.elems[i].type),
+				});
+		}
+		return newtype;
+	case ast_type_union: FAILWITH("TODO"); break;
+	case ast_type_vector: FAILWITH("TODO"); break;
+	case ast_type_proc:
+		newtype = MEM_ALLOC(struct type);
+		newtype->tag = type->tag;
+		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
+			da_append(&newtype->as.proc.args, type_recursive_find(type->as.proc.args.elems[i]));
+		}
+		newtype->as.proc.ret = type_recursive_find(type->as.proc.ret);
+		return newtype;
+	default: FAILWITH("Unreachable");
+	}
+}
+
+static void
+type_var_set_equal_to(struct type *t, struct type *u)
+{
+	t = type_find(t);
+	assert(t->tag == ast_type_var);
+	t->as.var.forward = u;
+}
+
+static bool
+unify(Parser *p, struct typing_context ctx, struct type *t, struct type *u)
+{
+	t = resolve_alias(p, type_find(t), ctx.scope);
+	u = resolve_alias(p, type_find(u), ctx.scope);
+	if (!type_is_var(t) && type_is_var(u))
+		return unify(p, ctx, u, t);
+	if (type_is_void(u)) {
+		if (type_is_var(t))
+			type_var_set_equal_to(t, u);
+		return true;
+	}
+	switch (t->tag) {
+	case ast_type_void:
+		return true;
+	case ast_type_noreturn: FAILWITH("TODO: ast_type_noreturn"); break;
+	case ast_type_bool:
+	case ast_type_i8:
+	case ast_type_i16:
+	case ast_type_i32:
+	case ast_type_i64:
+	case ast_type_u8:
+	case ast_type_u16:
+	case ast_type_u32:
+	case ast_type_u64:
+	case ast_type_f32:
+	case ast_type_f64:
+		if (t->tag == u->tag) return true;
+		return false;
 	case ast_type_app: {
-		if ((u->tag == ast_type_var
-			 || u->tag == ast_type_union
-			 || u->tag == ast_type_struct
+		if ((u->tag == ast_type_union
+			 || u->tag == ast_type_istruct
 			 || u->tag == ast_type_array)
 			&& unify(p, ctx, type_application(p, &t->as.app, ctx.scope), u)) {
 			return true;
@@ -1245,27 +1601,6 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		return true;
 	} break;
 	case ast_type_ptr: {
-		if (type_is_var(u)) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_scalar:
-			case type_class_pointer:
-				*u = *t;
-				return true;
-			case type_class_numeric:
-			case type_class_unsigned_integer:
-			case type_class_integer:
-			case type_class_signed_integer:
-			case type_class_float:
-			case type_class_length:
-			case type_class_indexable:
-			case type_class_struct:
-			case type_class_union:
-			case type_class_procedure:
-				return false;
-			default: FAILWITH("Unreachable");
-			}
-		}
 		if (type_is_pointer(u)) return unify(p, ctx, t->as.ptr, u->as.ptr);
 		return false;
 	} break;
@@ -1273,60 +1608,22 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 	case ast_type_slice: {
 		if (type_is_slice(u))
 			return unify(p, ctx, t->as.slice, u->as.slice);
-		if (type_is_array(u) && u->as.array.is_sized)
-			return unify(p, ctx, t->as.slice, u->as.array.base);
-		if (type_is_var(u)) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_indexable:
-			case type_class_length:
-				*u = *t;
-				return true;
-			case type_class_scalar:
-			case type_class_numeric:
-			case type_class_unsigned_integer:
-			case type_class_integer:
-			case type_class_signed_integer:
-			case type_class_float:
-			case type_class_struct:
-			case type_class_union:
-			case type_class_procedure:
-			case type_class_pointer:
-				return false;
-			default: FAILWITH("Unreachable");
-			}
-		}
 		return false;
 	} break;
 	case ast_type_mut_slice: FAILWITH("TODO: ast_type_mut_slice"); break;
 	case ast_type_array: {
-		if (type_is_array(u))
-			return unify(p, ctx, t->as.array.base, u->as.array.base);
-		if (type_is_var(u)) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_indexable:
-				*u = *t;
+		if (type_is_array(u)) {
+			if (!unify(p, ctx, t->as.array.base, u->as.array.base)) return false;
+			if (t->as.array.is_sized && u->as.array.is_sized)
+				return t->as.array.size == u->as.array.size;
+			if (t->as.array.is_sized) {
+				u->as.array.is_sized = true;
+				u->as.array.size = t->as.array.size;
 				return true;
-			case type_class_length:
-				if (t->as.array.is_sized) {
-					*u = *t;
-					return true;
-				}
-				return false;
-			case type_class_scalar:
-			case type_class_numeric:
-			case type_class_unsigned_integer:
-			case type_class_integer:
-			case type_class_signed_integer:
-			case type_class_float:
-			case type_class_struct:
-			case type_class_union:
-			case type_class_procedure:
-			case type_class_pointer:
-				return false;
-			default: FAILWITH("Unreachable");
 			}
+			t->as.array.is_sized = true;
+			t->as.array.size = u->as.array.size;
+			return true;
 		}
 		return false;
 	} break;
@@ -1356,6 +1653,26 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 			FAILWITH("TODO");
 		}
 	} break;
+	case ast_type_istruct: {
+		if (u->tag == ast_type_app)
+			u = type_application(p, &u->as.app, ctx.scope);
+		if (u->tag == ast_type_struct) {
+			if (t->as.struct_t.len != u->as.struct_t.len) return false;
+			for (size_t i = 0; i < t->as.struct_t.len; ++i) {
+				if (t->as.struct_t.elems[i].name) {
+					if (u->as.struct_t.elems[i].name
+						&& !sv_is_equal(token_to_strview(t->as.struct_t.elems[i].name),
+										token_to_strview(u->as.struct_t.elems[i].name)))
+						return false;
+				}
+				if (!unify(p, ctx, t->as.struct_t.elems[i].type, u->as.struct_t.elems[i].type))
+					return false;
+			}
+			t->tag = ast_type_struct;
+			return true;
+		}
+		return false;
+	} break;
 	case ast_type_struct: {
 		if (u->tag == ast_type_struct) {
 			if (t->as.struct_t.len != u->as.struct_t.len) return false;
@@ -1369,28 +1686,7 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 			}
 			return true;
 		}
-		if (u->tag == ast_type_var) {
-			switch (u->as.var.class) {
-			case type_class_any:
-			case type_class_struct:
-				*u = *t;
-				return true;
-			case type_class_scalar:
-			case type_class_pointer:
-			case type_class_numeric:
-			case type_class_integer:
-			case type_class_signed_integer:
-			case type_class_unsigned_integer:
-			case type_class_float:
-			case type_class_union:
-			case type_class_procedure:
-			case type_class_length:
-			case type_class_indexable:
-				return false;
-			default: FAILWITH("Unreachable");
-			}
-		}
-		FAILWITH("TODO: ast_type_struct");
+		return false;
 	} break;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc: {
@@ -1406,35 +1702,43 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		if (t == u) return true;
 		switch (t->as.var.class) {
 		case type_class_any:
-			*t = *u;
+			type_var_set_equal_to(t, u);
 			return true;
 		case type_class_unsigned_integer:
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_unsigned_integer(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
 		case type_class_signed_integer:
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_signed_integer(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
 		case type_class_integer:
+//			printf("t = %s\n", ast_type_to_str(t));
+//			printf("u = %s\n", ast_type_to_str(u));
+			if (type_is_integer(u)) {
+				type_var_set_equal_to(t, u);
+				return true;
+			}
 			if (type_is_var(u)) {
 				switch (u->as.var.class) {
 				case type_class_any:
 				case type_class_scalar:
 				case type_class_numeric:
-					*u = *t;
+					u->as.var.class = t->as.var.class;
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_signed_integer:
 				case type_class_unsigned_integer:
-					*t = *u;
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_integer:
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_float:
 				case type_class_length:
@@ -1442,20 +1746,15 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 				case type_class_struct:
 				case type_class_union:
 				case type_class_procedure:
-				case type_class_pointer:
 					return false;
 				default: FAILWITH("Unreachable");
 				}
-			}
-			if (type_is_integer(u)) {
-				*t = *u;
-				return true;
 			}
 			return false;
 		case type_class_float:
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_floating_point(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
@@ -1463,28 +1762,27 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 			if (type_is_var(u)) {
 				switch (u->as.var.class) {
 				case type_class_any:
-					*u = *t;
+					u->as.var.class = t->as.var.class;
+					type_var_set_equal_to(t, u);
 					return true;
+				case type_class_numeric:
 				case type_class_scalar:
 				case type_class_signed_integer:
 				case type_class_unsigned_integer:
 				case type_class_integer:
 				case type_class_float:
-					*t = *u;
-					return true;
-				case type_class_numeric:
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_length:
 				case type_class_indexable:
 				case type_class_struct:
 				case type_class_union:
 				case type_class_procedure:
-				case type_class_pointer:
 					return false;
 				default: FAILWITH("Unreachable");
 				}
 			} else if (type_is_numeric_scalar(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
@@ -1493,15 +1791,15 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 			if (type_is_var(u)) {
 				switch (u->as.var.class) {
 				case type_class_any:
-					*u = *t;
+					u->as.var.class = t->as.var.class;
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_numeric:
 				case type_class_signed_integer:
 				case type_class_unsigned_integer:
 				case type_class_integer:
 				case type_class_float:
-				case type_class_pointer:
-					*t = *u;
+					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_scalar:
 					return true;
@@ -1514,12 +1812,12 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 				default: FAILWITH("Unreachable");
 				}
 			} else if (type_is_scalar(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			} else if (u->tag == ast_type_app
 					   && type_get_underlying(ctx.scope, u, &v)
 					   && type_is_scalar(v)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
@@ -1527,15 +1825,36 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		case type_class_length:
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_has_length(u, ctx.scope)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			}
 			return false;
 		case type_class_indexable: {
-			if (type_is_var(u)) FAILWITH("TODO");
+			if (type_is_var(u)) {
+				switch (u->as.var.class) {
+				case type_class_any:
+				case type_class_indexable:
+					u->as.var.class = t->as.var.class;
+					type_var_set_equal_to(t, u);
+					return true;
+				case type_class_length:
+					return true;
+				case type_class_numeric:
+				case type_class_signed_integer:
+				case type_class_unsigned_integer:
+				case type_class_integer:
+				case type_class_float:
+				case type_class_scalar:
+				case type_class_struct:
+				case type_class_union:
+				case type_class_procedure:
+					return false;
+				default: FAILWITH("Unreachable");
+				}
+			}
 			if (type_is_indexable(u)) {
-				*t = *u;
-				return true;
+				type_var_set_equal_to(t, u);
+				return unify(p, ctx, t->as.var.contains, get_indexable_base_type(u));
 			} else {
 				FAILWITH("TODO");
 			}
@@ -1543,7 +1862,7 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		case type_class_struct: {
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_struct(u, ctx.scope) || type_is_struct_ptr(u, ctx.scope)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			} else {
 				FAILWITH("TODO");
@@ -1552,7 +1871,7 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		case type_class_union: {
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_union(u, ctx.scope) || type_is_union_ptr(u, ctx.scope)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			} else {
 				FAILWITH("TODO");
@@ -1561,42 +1880,11 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 		case type_class_procedure: {
 			if (type_is_var(u)) FAILWITH("TODO");
 			if (type_is_procedure(u)) {
-				*t = *u;
+				type_var_set_equal_to(t, u);
 				return true;
 			} else {
 				FAILWITH("TODO");
 			}
-		} break;
-		case type_class_pointer: {
-			if (type_is_var(u)) {
-				switch (u->as.var.class) {
-				case type_class_any:
-				case type_class_scalar:
-					*u = *t;
-					return true;
-				case type_class_pointer:
-					return true;
-				case type_class_numeric:
-				case type_class_integer:
-				case type_class_signed_integer:
-				case type_class_unsigned_integer:
-				case type_class_float:
-				case type_class_length:
-				case type_class_indexable:
-				case type_class_struct:
-				case type_class_union:
-				case type_class_procedure:
-					return false;
-				default: FAILWITH("Unreachable");
-				}
-			}
-			if (type_is_pointer(u)) {
-				*t = *u;
-				return true;
-			}
-			ast_type_fprint(u, stdout);
-			printf("\n");
-			FAILWITH("Unreachable");
 		} break;
 		default: FAILWITH("Unreachable"); break;
 		}
@@ -1606,15 +1894,50 @@ static bool unify(Parser *p, struct typing_context ctx, struct type *t, struct t
 	return false;
 }
 
-static struct type *
-find_union_member_type(struct union_type *ut, struct token *cons_name)
+static bool
+unify_cast(Parser *p, struct typing_context ctx, struct type *t, struct type *u)
 {
-	struct strview name = token_to_strview(cons_name);
-	for (size_t i = 0; i < ut->len; ++i) {
-		if (sv_is_equal(name, token_to_strview(ut->elems[i].name)))
-			return ut->elems[i].type;
+	t = resolve_alias(p, type_find(t), ctx.scope);
+	u = resolve_alias(p, type_find(u), ctx.scope);
+	if (type_is_void(u)) {
+		return true;
+	} else if (type_is_var(t) || type_is_var(u)) {
+		return true;
+	} else if (type_is_scalar(t) && type_is_scalar(u)) {
+		return true;
+	} else {
+		return false;
 	}
-	return NULL;
+}
+
+static inline void
+type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm)
+{
+	struct type_env *env = MEM_ALLOC(struct type_env);
+	env->name   = token_to_strview(name);
+	env->scheme = scm;
+	env->next   = ctx->env;
+	ctx->env    = env;
+}
+
+static struct type *
+get_valcons_entry_type(struct valcons_entry *e)
+{
+	struct type *u = MEM_ALLOC(struct type);
+	u->tag = ast_type_app;
+	u->as.app.cons = e->td->name;
+	u->as.app.args = e->td->args;
+	return u;
+}
+
+static struct type *
+get_fresh_valcons_entry_type(struct typing_context *ctx, struct valcons_entry *e)
+{
+	struct type *t = get_valcons_entry_type(e);
+	Forall s = generalize_type(ctx, t);
+	struct type *u = instantiate_type_scheme(&s);
+	free(t);
+	return u;
 }
 
 struct type *
@@ -1623,120 +1946,122 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	switch (exp->tag) {
 	case ast_exp_definition: {
 		assert(exp->as.def.type != NULL);
-		exp->type = &AST_TYPE_VOID;
-		exp->as.def.is_polymorphic = type_is_polymorphic(exp->as.def.type);
-		struct type *type = exp->as.def.exp->tag == ast_exp_extern_symbol
-			? exp->as.def.exp->type = exp->as.def.type
-			: check_type(p, ctx, exp->as.def.exp, exp->as.def.type);
+		if (exp->as.def.exp->tag == ast_exp_extern_symbol) {
+			exp->as.def.exp->type = exp->as.def.type;
+		} else {
+			UNIFY_EXP(ctx, exp->as.def.exp, exp->as.def.type);
+		}
 		exp->as.def.is_typechecked = true;
-		return type;
+		return exp->type = &AST_TYPE_VOID;
 	} break;
 	case ast_exp_let: {
 		struct definition *def = &exp->as.let.def;
-		check_type(p, ctx, def->exp, def->type);
-		def->exp->type = def->type;
+		UNIFY_EXP(ctx, def->exp, exp->as.def.type);
 		ctx.scope = &exp->as.let.scope;
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_var;
-		type->as.var.class = type_class_any;
-		type = check_type(p, ctx, exp->as.let.body, type);
+		struct type *type = fresh_type_var(type_class_any);
+		type_env_add(&ctx, exp->as.let.def.id, generalize_type(&ctx, type_recursive_find(exp->as.let.def.type)));
+		UNIFY_EXP(ctx, exp->as.let.body, type);
 		exp->as.let.def.is_typechecked = true;
-		return type;
+		return exp->type = type;
 	} break;
 	case ast_exp_literal: {
 		struct literal *lit = &exp->as.lit;
-		struct type *type = NULL;
+		struct type *type;
 		if (lit->token->tt == tt_intlit || lit->token->tt == tt_hexlit) {
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_integer;
+			type = fresh_type_var(type_class_integer);
 		} else if (lit->token->tt == tt_floatlit) {
-			type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_float;
+			type = fresh_type_var(type_class_float);
 		} else if (lit->token->tt == tt_true || lit->token->tt == tt_false) {
 			type = &AST_TYPE_BOOL;
 		} else {
 			FAILWITH("TODO: ast_exp_literal");
 		}
-		return type;
+		return exp->type = type;
 	} break;
 	case ast_exp_string: {
-		return &AST_TYPE_STRING;
+		return exp->type = &AST_TYPE_STRING;
 	} break;
 	case ast_exp_array_initializer: {
-		struct type *base = POOL_ALLOC(&p->data, struct type);
-		base->tag = ast_type_var;
-		base->as.var.class = type_class_any;
-		struct type *type = POOL_ALLOC(&p->data, struct type);
+		struct type *base = fresh_type_var(type_class_any);
+		struct type *type = MEM_ALLOC(struct type);
 		type->tag = ast_type_array;
 		for (size_t i = 0; i < exp->as.init.len; ++i) {
-			base = check_type(p, ctx, exp->as.init.elems[i], base);
+			UNIFY_EXP(ctx, exp->as.init.elems[i], base);
 		}
 		type->as.array.base = base;
 		type->as.array.is_sized = true;
 		type->as.array.size = exp->as.init.len;
-		exp->type = type;
-		return type;
+		return exp->type = type;
 	} break;
 	case ast_exp_struct_initializer: {
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_struct;
+		struct type *type = MEM_ALLOC(struct type);
+		type->tag = ast_type_istruct;
 		for (size_t i = 0; i < exp->as.init.len; ++i) {
-			struct type *tv = POOL_ALLOC(&p->data, struct type);
-			tv->tag = ast_type_var;
-			tv->as.var.class = type_class_any;
+			struct type *tv = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.init.elems[i], tv);
 			da_append(&type->as.struct_t, (struct struct_member) {
-					.type = check_type(p, ctx, exp->as.init.elems[i], tv),
+					.type = tv,
 				});
 		}
-		exp->type = type;
-		return type;
+		return exp->type = type;
 	} break;
 	case ast_exp_named_struct_initializer: {
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_struct;
+		struct type *type = MEM_ALLOC(struct type);
+		type->tag = ast_type_istruct;
 		for (size_t i = 0; i < exp->as.named_init.ids.len; ++i) {
-			struct type *tv = POOL_ALLOC(&p->data, struct type);
-			tv->tag = ast_type_var;
-			tv->as.var.class = type_class_any;
+			struct type *tv = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.named_init.exps.elems[i], tv);
 			da_append(&type->as.struct_t, (struct struct_member) {
 					.name = exp->as.named_init.ids.elems[i],
-					.type = check_type(p, ctx, exp->as.named_init.exps.elems[i], tv),
+					.type = tv,
 				});
 		}
-		exp->type = type;
-		return type;
+		return exp->type = type;
 	} break;
 	case ast_exp_zero_struct_initializer: FAILWITH("TODO: infer_type (ast_exp_zero_struct_initializer)"); break;
 	case ast_exp_procedure_literal: {
 		struct procedure *proc = &exp->as.proc;
-		struct type *type = POOL_ALLOC(&p->data, struct type);
+		struct type *type = MEM_ALLOC(struct type);
 		type->tag = ast_type_proc;
 		type->as.proc = procedure_type(proc);
-		check_type(p, (struct typing_context){.scope = &proc->scope, .ret = type->as.proc.ret},
-				   proc->body, type->as.proc.ret);
-		return type;
+		ctx.scope = &proc->scope;
+		for (size_t i = 0; i < proc->formals.len; ++i) {
+			type_env_add(&ctx, proc->formals.elems[i].id, generalize_type(&ctx, proc->formals.elems[i].type));
+		}
+		UNIFY_EXP(ctx, proc->body, type->as.proc.ret);
+		return exp->type = type;
 	} break;
 	case ast_exp_undefined: FAILWITH("TODO: infer_type (ast_exp_undefined)"); break;
 	case ast_exp_ident: {
 		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(exp->tok));
 		if (entry == NULL) ERROR_UNDEFINED_IDENT(exp->tok);
 		switch (entry->tag) {
-		case SYMTBL_VAR: {
+		case SYMTBL_VARIABL: {
 			struct definition *def = entry->as.variable.def;
+			struct type_env *env = lookup_type_env(&ctx, exp->tok);
+			assert(env != NULL);
 			exp->is_mutable = def->is_mut;
 			exp->is_lvalue = true;
-			return exp->type = def->type;
+			return exp->type = instantiate_type_scheme(&env->scheme);
 		} break;
 		case SYMTBL_VALCONS: {
+			FAILWITH("Unreachable");
+#if 0
 			/* A valcons expression with no argumnet list */
-			struct token *cons = exp->tok;
-			exp->tag = ast_exp_value_cons;
-			exp->as.valcons.cons = cons;
-			exp->as.valcons.exp = NULL;
-			exp->as.valcons.tag_val = entry->as.valcons.tag_val;
-			return infer_type(p, ctx, exp);
+			for (size_t i = 0; i < entry->as.valcons.len; ++i) {
+				/* TODO: for now, we just return on the first compatible definition */
+				struct valcons_entry *e = &entry->as.valcons.elems[i];
+				if (type_is_void(e->type)) {
+					struct token *cons = exp->tok;
+					exp->tag = ast_exp_value_cons;
+					exp->as.valcons.cons = cons;
+					exp->as.valcons.exp = NULL;
+					exp->as.valcons.tag_val = e->tag_val;
+					return exp->type = e->td->type;
+				}
+			}
+			FAILWITH("TODO: type error.");
+#endif
 		} break;
 		default: FAILWITH("Unreachable");
 		}
@@ -1744,28 +2069,19 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	case ast_exp_binary: {
 		switch ((enum binop)exp->as.bin.op) {
 		case binop_sequence: {
-			struct type *left = POOL_ALLOC(&p->data, struct type);
-			left->tag = ast_type_var;
-			left->as.var.class = type_class_any;
-			check_type(p, ctx, exp->as.bin.left, left);
-			struct type *type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_any;
-			return check_type(p, ctx, exp->as.bin.right, type);
+			UNIFY_EXP(ctx, exp->as.bin.left, &AST_TYPE_VOID);
+			struct type *type = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			return exp->type = type;
 		} break;
 		case binop_add:
 		case binop_sub:
 		case binop_mul:
 		case binop_div: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_numeric;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			struct type *rhs = check_type(p, ctx, exp->as.bin.right, con);
-			UNIFY_TYPES(lhs, rhs);
-			exp->as.bin.left->type = lhs;
-			exp->as.bin.right->type = lhs;
-			return lhs;
+			struct type *type = fresh_type_var(type_class_numeric);
+			UNIFY_EXP(ctx, exp->as.bin.left, type);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			return exp->type = type;
 		} break;
 		case binop_mod:
 		case binop_xor:
@@ -1773,15 +2089,10 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_lor:
 		case binop_shift_left:
 		case binop_shift_right: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_integer;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			struct type *rhs = check_type(p, ctx, exp->as.bin.right, con);
-			UNIFY_TYPES(lhs, rhs);
-			exp->as.bin.left->type = lhs;
-			exp->as.bin.right->type = lhs;
-			return lhs;
+			struct type *type = fresh_type_var(type_class_integer);
+			UNIFY_EXP(ctx, exp->as.bin.left, type);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			return exp->type = type;
 		} break;
 		case binop_equal:
 		case binop_less_than:
@@ -1789,92 +2100,80 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_not_equal:
 		case binop_less_equal:
 		case binop_more_equal: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_scalar;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			struct type *rhs = check_type(p, ctx, exp->as.bin.right, con);
-			UNIFY_TYPES(lhs, rhs);
-			exp->as.bin.left->type = lhs;
-			exp->as.bin.right->type = lhs;
-			return &AST_TYPE_BOOL;
+			struct type *type = fresh_type_var(type_class_scalar);
+			UNIFY_EXP(ctx, exp->as.bin.left, type);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case binop_or:
 		case binop_and: {
-			check_type(p, ctx, exp->as.bin.left, &AST_TYPE_BOOL);
-			check_type(p, ctx, exp->as.bin.right, &AST_TYPE_BOOL);
-			return &AST_TYPE_BOOL;
+			UNIFY_EXP(ctx, exp->as.bin.left, &AST_TYPE_BOOL);
+			UNIFY_EXP(ctx, exp->as.bin.right, &AST_TYPE_BOOL);
+			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case binop_assign: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_any;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			struct type *rhs = check_type(p, ctx, exp->as.bin.right, con);
-			UNIFY_TYPES(lhs, rhs);
-			assert(exp->as.bin.left->is_lvalue);
-			assert(exp->as.bin.left->is_mutable);
-			exp->as.bin.left->type = lhs;
-			exp->as.bin.right->type = lhs;
-			return lhs;
-		} break;
-		case binop_add_assign:
-		case binop_sub_assign:
-		case binop_mul_assign:
-		case binop_div_assign: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_numeric;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			struct type *rhs = check_type(p, ctx, exp->as.bin.right, con);
-			UNIFY_TYPES(lhs, rhs);
+			struct type *type = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.bin.left, type);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
 			if (!exp->as.bin.left->is_lvalue)
 				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
 								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
 			if (!exp->as.bin.left->is_mutable)
 				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
 								  "Left hand side of assignment is immutable.");
-			exp->as.bin.left->type = lhs;
-			exp->as.bin.right->type = lhs;
-			return lhs;
+			return exp->type = type;
+		} break;
+		case binop_add_assign:
+		case binop_sub_assign:
+		case binop_mul_assign:
+		case binop_div_assign: {
+			struct type *type = fresh_type_var(type_class_numeric);
+			UNIFY_EXP(ctx, exp->as.bin.left, type);
+			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			if (!exp->as.bin.left->is_lvalue)
+				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
+			if (!exp->as.bin.left->is_mutable)
+				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+								  "Left hand side of assignment is immutable.");
+			return exp->type = type;
 		} break;
 		case binop_member: {
-			struct type *con = POOL_ALLOC(&p->data, struct type);
-			con->tag = ast_type_var;
-			con->as.var.class = type_class_struct;
-			struct type *lhs = check_type(p, ctx, exp->as.bin.left, con);
-			exp->is_lvalue = exp->as.bin.left->is_lvalue;
-			exp->is_mutable = exp->as.bin.left->is_mutable;
-			if (type_is_struct_ptr(lhs, ctx.scope)) lhs = lhs->as.ptr;
-			if (type_is_struct(lhs, ctx.scope)) {
-				struct struct_type *mems = struct_type_members(p, lhs, ctx.scope);
-				if (exp->as.bin.right->tag == ast_exp_ident) {
-					struct strview name = token_to_strview(exp->as.bin.right->tok);
-					for (size_t i = 0; i < mems->len; ++i) {
-						if (sv_is_equal(token_to_strview(mems->elems[i].name), name)) {
-							exp->as.bin.right->type = mems->elems[i].type;
-							return mems->elems[i].type;
-						}
-					}
-					log_error_and_die(p->lexer.filename, exp->as.bin.right->tok,
-									  "Struct type `%s` has no member named `"SV_FMT"`",
-									  ast_type_to_str(lhs),
-									  SV_ARGS(name));
-				} else if (exp->as.bin.right->tag == ast_exp_literal
-						   && exp->as.bin.right->as.lit.token->tt == tt_intlit) {
-					exp->as.bin.right->type = &AST_TYPE_I64;
-					int64_t i = exp->as.bin.right->as.lit.as.i;
-					if (i < 0 || i >= mems->len) {
-						FAILWITH("TODO: `%ld` is not a member of struct type.", i);
-					}
-					return mems->elems[i].type;
-				} else {
-					FAILWITH("Unreachable");
-				}
+			struct type *type, *infered = infer_type(p, ctx, exp->as.bin.left);
+			if (infered->tag == ast_type_app) {
+				type = type_application(p, &infered->as.app, ctx.scope);
 			} else {
-				FAILWITH("TODO: unable to infer type of expression.");
+				type = infered;
 			}
-			FAILWITH("TODO: binop_member");
+			if (type_is_struct_ptr(type, ctx.scope))
+				type = type->as.ptr;
+			if (!type_is_struct(type, ctx.scope)) {
+				log_error_and_die(p->lexer.filename, exp->tok,
+								  "Type error. `%s` is not a structure.",
+								  ast_type_to_str(infered));
+			}
+			if (exp->as.bin.right->tag == ast_exp_ident) {
+				struct strview sv_mem = token_to_strview(exp->as.bin.right->tok);
+				for (size_t i = 0; i < type->as.struct_t.len; ++i) {
+					if (type->as.struct_t.elems[i].name != NULL
+						&& sv_is_equal(token_to_strview(type->as.struct_t.elems[i].name), sv_mem)) {
+						return exp->type = type->as.struct_t.elems[i].type;
+					}
+				}
+				log_error_and_die(p->lexer.filename, exp->tok,
+								  "Type error. `%s` has no member `"SV_FMT"`.",
+								  ast_type_to_str(infered),
+								  SV_ARGS(sv_mem));
+			}
+			if (exp_is_integer_literal(exp->as.bin.right)) {
+				int64_t i = exp->as.bin.right->as.lit.as.i;
+				if (i < 0 || i >= type->as.struct_t.len) {
+					FAILWITH("TODO: Invalid struct member accessor `%ld` for type %s.",
+							 i, ast_type_to_str(infered));
+				}
+				return exp->type = type->as.struct_t.elems[i].type;
+			}
+			FAILWITH("Unreachable");
 		} break;
 		case binop_and_assign: FAILWITH("TODO: binop_and_assign"); break;
 		case binop_lor_assign: FAILWITH("TODO: binop_lor_assign"); break;
@@ -1887,242 +2186,184 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		FAILWITH("TODO: infer_type (ast_exp_binary)");
 	} break;
 	case ast_exp_value_cons: {
-		struct type *type = NULL;
 		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(exp->as.valcons.cons));
 		if (entry == NULL) ERROR_UNDEFINED_IDENT(exp->as.valcons.cons);
 		assert(entry->tag == SYMTBL_VALCONS);
-		exp->as.valcons.tag_val = entry->as.valcons.tag_val;
+		int64_t tag_val = entry->as.valcons.elems[0].tag_val;
+		exp->as.valcons.tag_val = tag_val;
+		struct type *U = get_fresh_valcons_entry_type(&ctx, &entry->as.valcons.elems[0]);
+		struct type *I = type_application(p, &U->as.app, ctx.scope);
+		struct type *T = I->as.union_t.elems[tag_val].type;
 		if (exp->as.valcons.exp == NULL) {
-			assert(type_is_void(entry->as.valcons.type));
-			type = copy_type(p, entry->as.valcons.td->type);
+			if (!type_is_void(T))
+				FAILWITH("TODO: union cons type mismatch.");
 		} else {
-			struct type_var_bindings bindings = {0};
-			struct type_ptrs actuals = {0};
-			struct type_ptrs *formals = &entry->as.valcons.td->args;
-			for (size_t i = 0; i < formals->len; ++i) {
-				assert(formals->elems[i]->tag == ast_type_var);
-				struct type *tv = POOL_ALLOC(&p->data, struct type);
-				tv->tag = ast_type_var;
-				tv->as.var.class = type_class_any;
-				da_append(&actuals, tv);
-				da_append(&bindings, (struct type_pair) {
-						.var  = formals->elems[i],
-						.type = actuals.elems[i],
-					});
-			}
-			type = type_var_subst(p, entry->as.valcons.td->type, &bindings);
-			check_type(p, ctx, exp->as.valcons.exp, type_var_subst(p, entry->as.valcons.type, &bindings));
-			da_free(&bindings);
-			da_free(&actuals);
+			UNIFY_EXP(ctx, exp->as.valcons.exp, T);
 		}
-		return type;
+		free(I);
+		return exp->type = U;
 	} break;
 	case ast_exp_unary: {
 		switch ((enum unaop)exp->as.una.op) {
 		case unaop_not: {
-			return check_type(p, ctx, exp->as.una.exp, &AST_TYPE_BOOL);
+			UNIFY_EXP(ctx, exp->as.una.exp, &AST_TYPE_BOOL);
+			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case unaop_lnot: FAILWITH("TODO: ast_exp_unary"); break;
 		case unaop_neg:
 		case unaop_pos: {
-			struct type *type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_numeric;
-			return check_type(p, ctx, exp->as.una.exp, type);
+			struct type *type = fresh_type_var(type_class_numeric);
+			UNIFY_EXP(ctx, exp->as.una.exp, type);
+			return exp->type = type;
 		} break;
 		case unaop_address_of: {
-			struct type *type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_any;
-			check_type(p, ctx, exp->as.una.exp, type);
-			struct type *ptr = POOL_ALLOC(&p->data, struct type);
-			assert(exp->as.una.exp->is_lvalue);
+			struct type *type = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.una.exp, type);
+			if (!exp->as.una.exp->is_lvalue)
+				log_error_and_die(p->lexer.filename, exp->tok, "Error. Expression is not an lvalue.");
+			struct type *ptr = MEM_ALLOC(struct type);
 			ptr->tag = exp->as.una.exp->is_mutable ? ast_type_mut_ptr : ast_type_ptr;
 			ptr->as.ptr = type;
-			return ptr;
+			return exp->type = ptr;
 		} break;
 		case unaop_dereference: {
-			struct type *ptr_type = POOL_ALLOC(&p->data, struct type);
-			ptr_type->tag = ast_type_var;
-			ptr_type->as.var.class = type_class_pointer;
-			ptr_type = check_type(p, ctx, exp->as.una.exp, ptr_type);
+			struct type *type = MEM_ALLOC(struct type);
+			type->tag = ast_type_ptr;
+			type->as.ptr = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.una.exp, type);
 			exp->is_lvalue = true;
-			if (ptr_type->tag == ast_type_ptr) {
-				exp->is_mutable = false;
-				return ptr_type->as.ptr;
-			}
-			if (ptr_type->tag == ast_type_mut_ptr) {
-				exp->is_mutable = true;
-				return ptr_type->as.mut_ptr;
-			}
-			FAILWITH("TODO: type error?");
+			return exp->type = type->as.ptr;
 		} break;
 		case unaop_index: {
-			struct type *arr_type = POOL_ALLOC(&p->data, struct type);
-			arr_type->tag = ast_type_var;
-			arr_type->as.var.class = type_class_indexable;
-			struct type *idx_type = POOL_ALLOC(&p->data, struct type);
-			idx_type->tag = ast_type_var;
-			idx_type->as.var.class = type_class_integer;
-			check_type(p, ctx, exp->as.idx.exp, arr_type);
-			check_type(p, ctx, exp->as.idx.idx, idx_type);
+			struct type *arr_type = fresh_type_var(type_class_indexable);
+			struct type *idx_type = fresh_type_var(type_class_integer);
+			struct type *type = fresh_type_var(type_class_any);
+			arr_type->as.var.contains = type;
+			UNIFY_EXP(ctx, exp->as.idx.exp, arr_type);
+			UNIFY_EXP(ctx, exp->as.idx.idx, idx_type);
 			exp->is_lvalue = exp->as.idx.exp->is_lvalue;
-			if (exp->as.idx.exp->is_mutable
-				|| exp->as.idx.exp->type->tag == ast_type_mut_ptr
-				|| exp->as.idx.exp->type->tag == ast_type_mut_slice) {
-				exp->is_mutable = true;
-			}
-			return get_indexable_base_type(arr_type);
+			return exp->type = type;
 		} break;
 		case unaop_slice: {
-			struct type *arr_type = POOL_ALLOC(&p->data, struct type);
-			arr_type->tag = ast_type_var;
-			arr_type->as.var.class = type_class_indexable;
-			struct type *idx_type = POOL_ALLOC(&p->data, struct type);
-			idx_type->tag = ast_type_var;
-			idx_type->as.var.class = type_class_integer;
-			struct type *len_type = POOL_ALLOC(&p->data, struct type);
-			len_type->tag = ast_type_var;
-			len_type->as.var.class = type_class_integer;
-			check_type(p, ctx, exp->as.slice.exp, arr_type);
-			check_type(p, ctx, exp->as.slice.idx, idx_type);
-			check_type(p, ctx, exp->as.slice.len, len_type);
+			struct type *arr_type = fresh_type_var(type_class_indexable);
+			struct type *idx_type = fresh_type_var(type_class_integer);
+			struct type *len_type = fresh_type_var(type_class_integer);
+			struct type *base_type = fresh_type_var(type_class_any);
+			arr_type->as.var.contains = base_type;
+			UNIFY_EXP(ctx, exp->as.slice.exp, arr_type);
+			UNIFY_EXP(ctx, exp->as.slice.idx, idx_type);
+			UNIFY_EXP(ctx, exp->as.slice.len, len_type);
+			if (!exp->as.slice.exp->is_lvalue) {
+				log_error_and_die(p->lexer.filename, exp->as.slice.exp->tok,
+								  "Error. Expression is not an lvalue.");
+			}
 			exp->is_lvalue = exp->as.slice.exp->is_lvalue;
 			assert(exp->is_lvalue);
-			struct type *res_type = POOL_ALLOC(&p->data, struct type);
-			if (exp->as.slice.exp->is_mutable
-				|| exp->as.slice.exp->type->tag == ast_type_mut_ptr
-				|| exp->as.slice.exp->type->tag == ast_type_mut_slice) {
-				exp->is_mutable = true;
-				res_type->tag = ast_type_mut_slice;
-			} else {
-				res_type->tag = ast_type_slice;
-			}
-			res_type->as.slice = get_indexable_base_type(arr_type);
-			return res_type;
+			struct type *res_type = MEM_ALLOC(struct type);
+			res_type->tag = ast_type_slice;
+			res_type->as.slice = base_type;
+			return exp->type = res_type;
 		} break;
 		case unaop_call: {
 			struct call *call = &exp->as.call;
-			struct type *proc_type = POOL_ALLOC(&p->data, struct type);
-			proc_type->tag = ast_type_var;
-			proc_type->as.var.class = type_class_procedure;
-			/* A value constructor expression may have been parsed as a function call */
+			struct type *proc_type = infer_type(p, ctx, call->proc);
+			struct type *ret_type = fresh_type_var(type_class_any);
+			struct type *infered = MEM_ALLOC(struct type);
+			infered->tag = ast_type_proc;
+			for (size_t i = 0; i < call->args.len; ++i) {
+				struct type *arg = fresh_type_var(type_class_any);
+				UNIFY_EXP(ctx, call->args.elems[i], arg);
+				da_append(&infered->as.proc.args, arg);
+			}
+			infered->as.proc.ret = ret_type;
+			UNIFY(ctx, proc_type, infered, exp);
 			if (call->proc->tag == ast_exp_ident) {
-				struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
-				if (entry == NULL) ERROR_UNDEFINED_IDENT(call->proc->tok);
-				switch (entry->tag) {
-				case SYMTBL_VAR: /* continue as procedure call */ break;
-				case SYMTBL_VALCONS: {
-					/* call was actually a value constructor */
-					switch (call->args.len) {
-					case 0: {
-						struct token *cons = call->proc->tok;
-						exp->tag = ast_exp_value_cons;
-						exp->as.valcons.cons = cons;
-						exp->as.valcons.exp = NULL;
-						exp->as.valcons.tag_val = entry->as.valcons.tag_val;
-						return infer_type(p, ctx, exp);
-					} break;
-					case 1: {
-						struct token *cons = call->proc->tok;
-						struct expression *arg = call->args.elems[0];
-						da_free(&call->args);
-						exp->tag = ast_exp_value_cons;
-						exp->as.valcons.cons = cons;
-						exp->as.valcons.exp = arg;
-						exp->as.valcons.tag_val = entry->as.valcons.tag_val;
-						return infer_type(p, ctx, exp);
-					} break;
-					default:
-						FAILWITH("TODO: Invalid number of arguments provided to constructor");
-						break;
+				struct type_env *env = lookup_type_env(&ctx, call->proc->tok);
+				assert(env != NULL);
+				if (env->scheme.args.len > 0) {
+					struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
+					assert(entry != NULL);
+					assert(entry->tag == SYMTBL_VARIABL);
+					struct definition *def = entry->as.variable.def;
+					if (lookup_poly_proc_spec(p, def, proc_type, ctx.scope) == NULL) {
+						da_append(&def->specs, (struct type_spec) {
+								.type = proc_type,
+							});
 					}
-				} break;
-				default: FAILWITH("Unreachable");
 				}
 			}
-			check_type(p, ctx, call->proc, proc_type);
-			assert(type_is_procedure(proc_type));
-			assert(call->args.len == proc_type->as.proc.args.len);
-			if (type_is_polymorphic(proc_type)) {
-				if (call->proc->tag != ast_exp_ident) {
-					FAILWITH("TODO: polymorphic procedure must be let-bound.");
-				}
-				struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
-				if (entry == NULL) ERROR_UNDEFINED_IDENT(call->proc->tok);
-				if (entry->tag != SYMTBL_VAR) FAILWITH("TODO: unexpected cons");
-				struct definition *generic = entry->as.variable.def;
-				if (!generic->is_polymorphic) {
-					if (generic->is_typechecked)
-						FAILWITH("TODO: Procedure `"SV_FMT"` is not polymorphic.",
-								 SV_ARGS(token_to_strview(call->proc->tok)));
-					if (entry->as.variable.tl_exp == NULL)
-						FAILWITH("TODO: Procedure `"SV_FMT"` is not polymorphic.",
-								 SV_ARGS(token_to_strview(call->proc->tok)));
-					infer_type(p, ctx, entry->as.variable.tl_exp);
-					if (!generic->is_polymorphic)
-						FAILWITH("TODO: Type error.");
-				}
-				assert(generic->is_polymorphic);
-				struct type *inf_type = POOL_ALLOC(&p->data, struct type);
-				inf_type->tag = ast_type_proc;
-				struct type *ret_type = POOL_ALLOC(&p->data, struct type);
-				ret_type->tag = ast_type_var;
-				ret_type->as.var.class = type_class_any;
-				inf_type->as.proc.ret = ret_type;
-				for (size_t i = 0; i < call->args.len; ++i) {
-					da_append(&inf_type->as.proc.args,
-							  check_type(p, ctx, call->args.elems[i],
-										 copy_type(p, proc_type->as.proc.args.elems[i])));
-				}
-				UNIFY_TYPES(copy_type(p, proc_type->as.proc.ret), ret_type);
-				if (!type_is_polymorphic(inf_type)) {
-					instantiate_generic_procedure(p, ctx.scope, generic, inf_type);
-				}
-				call->proc->type = inf_type;
-				return ret_type;
-			} else {
-				for (size_t i = 0; i < call->args.len; ++i) {
-					check_type(p, ctx, call->args.elems[i], proc_type->as.proc.args.elems[i]);
-				}
-				return proc_type->as.proc.ret;
-			}
+			return exp->type = ret_type;
 		} break;
 		case unaop_cast: {
-			struct type *type = POOL_ALLOC(&p->data, struct type);
-			type->tag = ast_type_var;
-			type->as.var.class = type_class_any;
-			check_type(p, ctx, exp->as.cast.exp, type);
-			struct type *v = NULL;
-			assert(type_is_var(type) || type_is_scalar(type));
-			if (!(type_is_var(type) || type_is_scalar(type)))
-				TYPE_MISMATCH(exp->as.cast.type, type);
-			if (!(type_is_void(exp->as.cast.type)
-				  || type_is_scalar(exp->as.cast.type)
-				  || (exp->as.cast.type->tag == ast_type_app
-					  && type_get_underlying(ctx.scope, exp->as.cast.type, &v)
-					  && type_is_scalar(v))))
-				TYPE_MISMATCH(exp->as.cast.type, type);
-			return exp->as.cast.type;
+			if (exp->as.cast.exp->tag == ast_exp_literal
+				&& (exp->as.cast.exp->as.lit.token->tt == tt_intlit
+					|| exp->as.cast.exp->as.lit.token->tt == tt_hexlit)
+				&& type_is_integer(exp->as.cast.type)) {
+				struct type *type = exp->as.cast.type;
+				*exp = *exp->as.cast.exp;
+				return exp->type = type;
+			}
+			struct type *type = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->as.cast.exp, type);
+			if (!unify_cast(p, ctx, type, exp->as.cast.type))
+				type_mismatch_error(p, ctx, type, exp->as.cast.type, exp->tok, __FILE__, __LINE__);
+			return exp->type = exp->as.cast.type;
 		} break;
 		}
 		FAILWITH("TODO: ast_exp_unary");
 	} break;
 	case ast_exp_while: {
-		check_type(p, ctx, exp->as.wloop.cond, &AST_TYPE_BOOL);
-		return check_type(p, ctx, exp->as.wloop.body, &AST_TYPE_VOID);
+		UNIFY_EXP(ctx, exp->as.wloop.cond, &AST_TYPE_BOOL);
+		UNIFY_EXP(ctx, exp->as.wloop.body, &AST_TYPE_VOID);
+		return exp->type = &AST_TYPE_VOID;
 	} break;
 	case ast_exp_if: {
-		check_type(p, ctx, exp->as.iff.cond, &AST_TYPE_BOOL);
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_var;
-		type->as.var.class = type_class_any;
-		check_type(p, ctx, exp->as.iff.tb, type);
-		if (exp->as.iff.fb != NULL) check_type(p, ctx, exp->as.iff.fb, exp->as.iff.tb->type);
-		return type;
+		UNIFY_EXP(ctx, exp->as.iff.cond, &AST_TYPE_BOOL);
+		struct type *type = fresh_type_var(type_class_any);
+		UNIFY_EXP(ctx, exp->as.iff.tb, type);
+		if (exp->as.iff.fb != NULL)
+			UNIFY_EXP(ctx, exp->as.iff.fb, type);
+		return exp->type = type;
 	} break;
 	case ast_exp_case: {
-		struct type *type = POOL_ALLOC(&p->data, struct type);
+		struct type *type = fresh_type_var(type_class_any);
+		struct case_branches *branches = &exp->as.ccase.branches;
+		assert(branches->len > 0);
+		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(branches->elems[0].cons));
+		if (entry == NULL) ERROR_UNDEFINED_IDENT(branches->elems[0].cons);
+		assert(entry->tag == SYMTBL_VALCONS);
+		struct type_definition *td = entry->as.valcons.elems[0].td;
+		struct type *U = get_fresh_valcons_entry_type(&ctx, &entry->as.valcons.elems[0]);
+		struct type *I = type_application(p, &U->as.app, ctx.scope);
+		UNIFY_EXP(ctx, exp->as.ccase.cexp, U);
+		for (size_t i = 0; i < branches->len; ++i) {
+			struct case_branch *br = &branches->elems[i];
+			struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(br->cons));
+			if (entry == NULL) ERROR_UNDEFINED_IDENT(br->cons);
+			assert(entry->tag == SYMTBL_VALCONS);
+			if (entry->as.valcons.elems[0].td != td)
+				FAILWITH("TODO: Type error");
+			br->tag_val = entry->as.valcons.elems[0].tag_val;
+			struct typing_context br_ctx = ctx;
+			br_ctx.scope = &br->scope;
+			if (br->binds_value) {
+				struct type *t = I->as.union_t.elems[br->tag_val].type;
+				if (br->binding_is_ref) {
+					struct type *tmp = MEM_ALLOC(struct type);
+					tmp->tag = ast_type_ptr;
+					tmp->as.ptr = t;
+					t = tmp;
+				}
+				br->binding.type = t;
+				type_env_add(&br_ctx, br->binding.id, generalize_type(&br_ctx, type_recursive_find(t)));
+			}
+			if (br->guard)
+				FAILWITH("TODO: case guard");
+			UNIFY_EXP(br_ctx, br->body, type);
+		}
+		return exp->type = type;
+#if 0
+		struct type *type = MEM_ALLOC(struct type);
 		type->tag = ast_type_var;
 		type->as.var.class = type_class_union;
 		check_type(p, ctx, exp->as.ccase.cexp, type);
@@ -2130,7 +2371,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		if (type->tag == ast_type_app) union_type = type_application(p, &type->as.app, ctx.scope);
 		assert(union_type->tag == ast_type_union);
 		struct case_branches *branches = &exp->as.ccase.branches;
-		struct type *res_type = POOL_ALLOC(&p->data, struct type);
+		struct type *res_type = MEM_ALLOC(struct type);
 		res_type->tag = ast_type_var;
 		res_type->as.var.class = type_class_any;
 		for (size_t i = 0; i < branches->len; ++i) {
@@ -2155,7 +2396,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 									  ast_type_to_str(union_type));
 				}
 				if (branch->binding_is_ref) {
-					struct type *tmp = POOL_ALLOC(&p->data, struct type);
+					struct type *tmp = MEM_ALLOC(struct type);
 					if (exp->as.ccase.cexp->is_mutable) {
 						tmp->tag = ast_type_mut_ptr;
 					} else {
@@ -2174,36 +2415,76 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		}
 		if (exp->as.ccase.else_exp != NULL)
 			check_type(p, ctx, exp->as.ccase.else_exp, res_type);
-		return res_type;
+		return exp->type = res_type;
+#endif
 	} break;
 	case ast_exp_return: FAILWITH("TODO: infer_type (ast_exp_return)"); break;
 	case ast_exp_break: FAILWITH("TODO: infer_type (ast_exp_break)"); break;
 	case ast_exp_continue: FAILWITH("TODO: infer_type (ast_exp_continue)"); break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: infer_type (ast_exp_extern_symbol)"); break;
 	case ast_exp_get_ptr: {
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_var;
-		type->as.var.class = type_class_any;
-		check_type(p, ctx, exp->as.get_ptr, type);
-		return get_slice_pointer(p, type_get_underlying(ctx.scope, exp->as.get_ptr->type, NULL));
+		struct type *type = MEM_ALLOC(struct type);
+		type->tag = ast_type_slice;
+		type->as.slice = fresh_type_var(type_class_any);
+		UNIFY_EXP(ctx, exp->as.get_ptr, type);
+		return exp->type = get_slice_pointer(type);
 	} break;
 	case ast_exp_get_len: {
-		struct type *type = POOL_ALLOC(&p->data, struct type);
-		type->tag = ast_type_var;
-		type->as.var.class = type_class_length;
-		exp->as.get_len->type = check_type(p, ctx, exp->as.get_len, type);
-		return &AST_TYPE_U64;
+		struct type *type = fresh_type_var(type_class_length);
+		UNIFY_EXP(ctx, exp->as.get_len, type);
+		return exp->type = &AST_TYPE_U64;
 	} break;
 	default: FAILWITH("Unreachable"); break;
 	}
-	return NULL;
+	return exp->type = NULL;
 }
 
-struct type *
-check_type(Parser *p, struct typing_context ctx, struct expression *exp, struct type *type)
+UNUSED static bool
+type_in_array_p(Parser *p, struct scope *scope, struct type *t, struct type_ptrs *types)
 {
-	UNIFY_TYPES(type, exp->type = infer_type(p, ctx, exp));
-	return exp->type;
+	for (size_t i = 0; i < types->len; ++i) {
+		if (type_equiv(p, t, types->elems[i], scope)) return true;
+	}
+	return false;
+}
+
+static bool
+specialize(Parser *p, struct typing_context ctx, struct definition *def)
+{
+	bool succ = false;
+	if (def->specs.len == 0) return succ;
+	for (size_t i = 0; i < def->specs.len; ++i) {
+		struct type_spec *spec = &def->specs.elems[i];
+		if (spec->exp == NULL) {
+			succ = true;
+			specialize_generic_procedure(p, ctx, def, spec);
+		}
+	}
+	return succ;
+}
+
+void
+type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
+{
+	for (size_t i = 0; i < exps->len; ++i) {
+		if (exps->elems[i]->tag == ast_exp_definition) {
+			struct definition *def = &exps->elems[i]->as.def;
+			Forall spec = generalize_type(ctx, type_recursive_find(def->type));
+			type_env_add(ctx, def->id, spec);
+		}
+	}
+	for (size_t i = 0; i < exps->len; ++i) {
+		infer_type(p, *ctx, exps->elems[i]);
+	}
+	bool loop;
+	do {
+		loop = false;
+		for (size_t i = 0; i < exps->len; ++i) {
+			if (exps->elems[i]->tag == ast_exp_definition) {
+				loop |= specialize(p, *ctx, &exps->elems[i]->as.def);
+			}
+		}
+	} while (loop);
 }
 
 struct expression *
@@ -2215,17 +2496,21 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	{
 		struct type *t = resolve_type(p, exp->type, scope);
 		if (t == NULL)
-			FAILWITH("Failed to resolve type: %s\n", ast_type_to_str(exp->type));
+			log_error_and_die(p->lexer.filename, exp->tok,
+							  "Failed to resolve type of expression `%s`.",
+							  ast_type_to_str(exp->type));
 		exp->type = t;
 	}
 	switch (exp->tag) {
 	case ast_exp_definition: {
 		struct definition *def = &exp->as.def;
-		if (def->is_polymorphic) {
+		if (type_is_polymorphic(def->type)) {
 			for (size_t i = 0; i < def->specs.len; ++i) {
-				struct definition *spec_def = &def->specs.elems[i];
-				spec_def->type = resolve_type(p, spec_def->type, scope);
-				spec_def->exp = ast_desugar(p, spec_def->exp, scope);
+				struct type_spec *spec_def = &def->specs.elems[i];
+				if (!type_is_polymorphic(type_recursive_find(spec_def->type)) && spec_def->exp != NULL) {
+					spec_def->type = resolve_type(p, spec_def->type, scope);
+					spec_def->exp = ast_desugar(p, spec_def->exp, scope);
+				}
 			}
 		} else {
 			def->type = resolve_type(p, def->type, scope);
@@ -2330,12 +2615,12 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 		exp->as.get_len = ast_desugar(p, exp->as.get_len, scope);
 		return exp;
 	case ast_exp_binary: {
-		struct expression *left = ast_desugar(p, exp->as.bin.left, scope);
-		struct expression *right = ast_desugar(p, exp->as.bin.right, scope);
 		switch ((int)exp->as.bin.op) {
 		case binop_and: {
-			struct expression *iff = POOL_ALLOC(&p->data, struct expression);
-			struct expression *fb  = POOL_ALLOC(&p->data, struct expression);
+			struct expression *left = ast_desugar(p, exp->as.bin.left, scope);
+			struct expression *right = ast_desugar(p, exp->as.bin.right, scope);
+			struct expression *iff = MEM_ALLOC(struct expression);
+			struct expression *fb  = MEM_ALLOC(struct expression);
 			iff->tag = ast_exp_if;
 			iff->tok = exp->tok;
 			iff->type = exp->type;
@@ -2352,18 +2637,16 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 			FAILWITH("TODO: binop_or");
 		} break;
 		case binop_member: {
-			if (right->tag == ast_exp_literal) {
-				exp->as.bin.left = left;
-				exp->as.bin.right = right;
+			exp->as.bin.left = ast_desugar(p, exp->as.bin.left, scope);
+			exp->as.bin.right->type = &AST_TYPE_U64;
+			if (exp->as.bin.right->tag == ast_exp_literal) {
 				return exp;
 			} else {
-				assert(right->tag == ast_exp_ident);
-				struct struct_type *mems = struct_type_members(p, left->type, scope);
+				assert(exp->as.bin.right->tag == ast_exp_ident);
+				struct struct_type *mems = struct_type_members(p, exp->as.bin.left->type, scope);
 				for (size_t i = 0; i < mems->len; ++i) {
 					if (sv_is_equal(token_to_strview(mems->elems[i].name),
-									token_to_strview(right->tok))) {
-						exp->as.bin.right = POOL_ALLOC(&p->data, struct expression);
-						*exp->as.bin.right = *right;
+									token_to_strview(exp->as.bin.right->tok))) {
 						exp->as.bin.right->tag = ast_exp_literal;
 						exp->as.bin.right->as.lit.as.i = i;
 						return exp;
@@ -2384,17 +2667,20 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 		case binop_shift_right_assign: exp->as.bin.op = op_shift_right; goto desugar_assignment;
 		desugar_assignment:
 		{
-			struct expression *assign = POOL_ALLOC(&p->data, struct expression);
+			struct expression *assign = MEM_ALLOC(struct expression);
 			*assign = *exp;
 			assign->as.bin.op = op_assign;
 			assign->as.bin.left = exp->as.bin.left;
 			assign->as.bin.right = exp;
-			return assign;
+			return ast_desugar(p, assign, scope);
 		} break;
-		default:
+		default: {
+			struct expression *left = ast_desugar(p, exp->as.bin.left, scope);
+			struct expression *right = ast_desugar(p, exp->as.bin.right, scope);
 			exp->as.bin.left = left;
 			exp->as.bin.right = right;
 			return exp;
+		}
 		}
 	} break;
 	default: FAILWITH("Unreachable");
@@ -2539,7 +2825,6 @@ struct ir_toplevel {
 	uint32_t len, cap;
 	union ir_object *elems;
 	bool is_dll;
-	struct mem_arena data;
 };
 
 size_t type_size(struct type *t);
@@ -2579,6 +2864,7 @@ size_t type_size(struct type *t)
 			FAILWITH("TODO: Error: Cannot determine size of type unsized array.");
 		}
 		break;
+	case ast_type_istruct: FAILWITH("TODO: ast_type_istruct"); break;
 	case ast_type_struct: {
 		struct struct_type *st = &t->as.struct_t;
 		size_t size = 0;
@@ -2643,6 +2929,7 @@ size_t type_alignment(struct type *t)
 		return 8;
 	case ast_type_array:
 		return type_alignment(t->as.array.base);
+	case ast_type_istruct: FAILWITH("TODO: ast_type_istruct"); break;
 	case ast_type_struct: {
 		struct struct_type *st = &t->as.struct_t;
 		size_t alignment = 1;
@@ -2738,7 +3025,7 @@ void ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 	}
 	struct def_array *formals = &proc->node->formals;
 	struct scope *scope = &proc->node->scope;
-	struct ir_blk *entry = POOL_ALLOC(&tl->data, struct ir_blk);
+	struct ir_blk *entry = MEM_ALLOC(struct ir_blk);
 	proc->entry = entry;
 	for (size_t argn = 0; argn < formals->len; ++argn) {
 		struct definition *formal = &formals->elems[argn];
@@ -2775,7 +3062,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_array_initializer || exp->tag == ast_exp_struct_initializer);
 	if (exp->type->tag == ast_type_array) {
-		struct type *base_type = POOL_ALLOC(&tl->data, struct type);
+		struct type *base_type = MEM_ALLOC(struct type);
 		base_type->tag = ast_type_ptr;
 		base_type->as.ptr = exp->type;
 		for (size_t i = 0; i < exp->as.init.len; ++i) {
@@ -2799,12 +3086,12 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 		return blk;
 	}
 	if (exp->type->tag == ast_type_slice) {
-		struct type *array_type = POOL_ALLOC(&tl->data, struct type);
+		struct type *array_type = MEM_ALLOC(struct type);
 		array_type->tag = ast_type_array;
 		array_type->as.array.base = exp->type->as.slice;
 		array_type->as.array.is_sized = true;
 		array_type->as.array.size = exp->as.init.len;
-		struct type *base_type = POOL_ALLOC(&tl->data, struct type);
+		struct type *base_type = MEM_ALLOC(struct type);
 		base_type->tag = ast_type_ptr;
 		base_type->as.ptr = array_type;
 		/* allocate space for array */
@@ -2862,7 +3149,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 	}
 	if (exp->type->tag == ast_type_struct) {
 		struct struct_type *st = &exp->type->as.struct_t;
-		struct type *base_type = POOL_ALLOC(&tl->data, struct type);
+		struct type *base_type = MEM_ALLOC(struct type);
 		base_type->tag = ast_type_ptr;
 		base_type->as.ptr = exp->type;
 		for (size_t i = 0; i < st->len; ++i) {
@@ -2910,7 +3197,7 @@ dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size
 {
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_named_struct_initializer);
-	struct type *base_type = POOL_ALLOC(&tl->data, struct type);
+	struct type *base_type = MEM_ALLOC(struct type);
 	base_type->tag = ast_type_ptr;
 	base_type->as.ptr = exp->type;
 	for (size_t i = 0; i < exp->as.named_init.ids.len; ++i) {
@@ -3057,7 +3344,6 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				break;
 			}
 		} else {
-			ast_type_fprint(exp->type, stdout);
 			FAILWITH("TODO: ast_exp_literal (%s)", ast_type_to_str(exp->type));
 		}
 		return blk;
@@ -3106,7 +3392,9 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		default: FAILWITH("Unreachable"); break;
 		}
 	} break;
-	case ast_exp_array_initializer: [[fallthrough]];
+	case ast_exp_array_initializer:
+		printf("Here!! %s\n", ast_type_to_str(exp->type));
+		[[fallthrough]];
 	case ast_exp_struct_initializer: {
 		switch (dst.tag) {
 		case DST_RET: {
@@ -3120,6 +3408,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			}
 		} [[fallthrough]];
 		case DST_VAL: {
+			printf("Here!! %s\n", ast_type_to_str(exp->type));
 			int tmp = ir_proc_new_reg(tl, proc_id);
 			da_append(&blk->code, (IR_Ins){
 					.op      = ir_op_alloca,
@@ -3261,13 +3550,15 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_ident: {
 		struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
-		assert(entry->tag == SYMTBL_VAR);
+		assert(entry->tag == SYMTBL_VARIABL);
 		struct definition *def = entry->as.variable.def;
 		assert(def != NULL);
 		size_t ir_symbol;
-		if (def->is_polymorphic) {
-			struct definition *instance = lookup_poly_proc_instance(NULL, def, exp->type, scope);
-			assert(instance != NULL);
+		if (type_is_polymorphic(def->type)) {
+			struct type_spec *instance = lookup_poly_proc_spec(NULL, def, exp->type, scope);
+			if (instance == NULL) {
+				FAILWITH(SV_FMT"; %s", SV_ARGS(token_to_strview(exp->tok)), ast_type_to_str(exp->type));
+			}
 			ir_symbol = instance->ir_symbol;
 		} else {
 			ir_symbol = def->ir_symbol;
@@ -3452,7 +3743,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				} else {
 					assert(base->type->tag == ast_type_struct);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = POOL_ALLOC(&tl->data, struct type);
+					base_type = MEM_ALLOC(struct type);
 					base_type->tag = ast_type_ptr;
 					base_type->as.ptr = base->type;
 				}
@@ -3497,7 +3788,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			case ast_exp_ident: {
 				struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(bin->left->tok));
 				assert(entry != NULL);
-				assert(entry->tag == SYMTBL_VAR);
+				assert(entry->tag == SYMTBL_VARIABL);
 				struct definition *def = entry->as.variable.def;
 				assert(type_is_numeric_scalar(def->type)
 					   || type_is_bool(def->type)
@@ -3771,13 +4062,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 								.arg.rx[0] = tmp,
 							});
 					}
-					base_type = POOL_ALLOC(&tl->data, struct type);
+					base_type = MEM_ALLOC(struct type);
 					base_type->tag = ast_type_ptr;
 					base_type->as.ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = type_slice_to_array_ptr(&tl->data, base->type);
+					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
 							.type = base_type,
@@ -3827,13 +4118,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
 				} else if (type_is_array(base->type)) {
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = POOL_ALLOC(&tl->data, struct type);
+					base_type = MEM_ALLOC(struct type);
 					base_type->tag = ast_type_ptr;
 					base_type->as.ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = type_slice_to_array_ptr(&tl->data, base->type);
+					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
 							.type = base_type,
@@ -3872,13 +4163,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
 				} else if (type_is_array(base->type)) {
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = POOL_ALLOC(&tl->data, struct type);
+					base_type = MEM_ALLOC(struct type);
 					base_type->tag = ast_type_ptr;
 					base_type->as.ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
-					base_type = type_slice_to_array_ptr(&tl->data, base->type);
+					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
 							.type = base_type,
@@ -4000,6 +4291,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			int reg = ir_proc_new_reg(tl, proc_id);
 			blk = ast_compile_expression(exp->as.cast.exp, DEST_VAL(reg), proc_id, blk, scope, tl);
 			switch (dst.tag) {
+			case DST_RET: [[fallthrough]];
 			case DST_VAL: {
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_cast,
@@ -4027,7 +4319,6 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			} break;
 			case DST_REF: FAILWITH("TODO: unaop_cast"); break;
 			case DST_NONE: FAILWITH("TODO: unaop_cast"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
 			default: FAILWITH("Unreachable"); break;
 			}
 			FAILWITH("TODO: unaop_cast");
@@ -4040,8 +4331,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		struct exp_if *iff = &exp->as.iff;
 		int cond_reg = ir_proc_new_reg(tl, proc_id);
 		blk = ast_compile_expression(iff->cond, DEST_VAL(cond_reg), proc_id, blk, scope, tl);
-		struct ir_blk *join = POOL_ALLOC(&tl->data, struct ir_blk);
-		struct ir_blk *tblk = POOL_ALLOC(&tl->data, struct ir_blk);
+		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
+		struct ir_blk *tblk = MEM_ALLOC(struct ir_blk);
 		blk->term.op = ir_op_if;
 		da_append(&blk->term.args, cond_reg);
 		struct ir_blk *tb_end;
@@ -4070,7 +4361,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		da_append(&tb_end->term.args, tdst.reg);
 		tb_end->term.b0 = join;
 		if (iff->fb) { /* if false branch exists */
-			struct ir_blk *fblk = POOL_ALLOC(&tl->data, struct ir_blk);
+			struct ir_blk *fblk = MEM_ALLOC(struct ir_blk);
 			struct ir_blk *fb_end;
 			switch (dst.tag) {
 			case DST_RET:
@@ -4111,7 +4402,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		struct exp_case *cc = &exp->as.ccase;
 		int val_reg = ir_proc_new_reg(tl, proc_id);
 		blk = ast_compile_expression(cc->cexp, DEST_REF(val_reg), proc_id, blk, scope, tl);
-		struct ir_blk *join = POOL_ALLOC(&tl->data, struct ir_blk);
+		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
 		for (size_t i = 0; i < cc->branches.len; ++i) {
 			struct case_branch *branch = &cc->branches.elems[i];
 			int tag_reg = ir_proc_new_reg(tl, proc_id);
@@ -4174,12 +4465,12 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				blk->term.op = ir_op_if;
 				da_append(&blk->term.args, res_reg);
 			}
-			struct ir_blk *tblk = POOL_ALLOC(&tl->data, struct ir_blk);
+			struct ir_blk *tblk = MEM_ALLOC(struct ir_blk);
 			struct ir_blk *fblk;
 			if (i == cc->branches.len - 1 && cc->else_exp == NULL) {
 				fblk = join;
 			} else {
-				fblk = POOL_ALLOC(&tl->data, struct ir_blk);
+				fblk = MEM_ALLOC(struct ir_blk);
 			}
 			/* create binding */
 			if (branch->binds_value) {
@@ -4251,9 +4542,9 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		return join;
 	} break;
 	case ast_exp_while: {
-		struct ir_blk *cond = POOL_ALLOC(&tl->data, struct ir_blk);
-		struct ir_blk *body = POOL_ALLOC(&tl->data, struct ir_blk);
-		struct ir_blk *join = POOL_ALLOC(&tl->data, struct ir_blk);
+		struct ir_blk *cond = MEM_ALLOC(struct ir_blk);
+		struct ir_blk *body = MEM_ALLOC(struct ir_blk);
+		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
 		/* jump to loop condition */
 		blk->term.op = ir_op_goto;
 		blk->term.b0 = cond;
@@ -4290,7 +4581,8 @@ char *generate_mangled_name(struct strview ident, struct type *type)
 	return ptr;
 }
 
-static void ast_create_proc_object(union ir_object *p, struct definition *def)
+static void
+ast_create_proc_object(union ir_object *p, struct definition *def, struct type *type, struct expression *exp)
 {
 	p->proc.tag = IRO_PROC;
 	struct strview id_name = token_to_strview(def->id);
@@ -4299,12 +4591,12 @@ static void ast_create_proc_object(union ir_object *p, struct definition *def)
 		p->proc.link = strndup(id_name.ptr, id_name.len);
 		p->proc.is_static = false;
 	} else {
-		p->proc.link = generate_mangled_name(id_name, def->type);
+		p->proc.link = generate_mangled_name(id_name, type);
 		p->proc.is_static = true;
 	}
-	p->proc.type = def->type;
+	p->proc.type = type;
 	p->proc.def  = def;
-	p->proc.node = &def->exp->as.proc;
+	p->proc.node = &exp->as.proc;
 	p->proc.regc = 0;
 }
 
@@ -4314,7 +4606,7 @@ struct ir_toplevel ast_compile(struct scope *scope)
 	struct ir_toplevel tl = {0};
 	for (size_t i = 0; i < st->len; ++i) {
 		if (st->elems[i].tag == SYMTBL_VALCONS) continue;
-		assert(st->elems[i].tag == SYMTBL_VAR);
+		assert(st->elems[i].tag == SYMTBL_VARIABL);
 		struct definition *def = st->elems[i].as.variable.def;
 		struct expression *exp = def->exp;
 		union ir_object p = {0};
@@ -4322,20 +4614,20 @@ struct ir_toplevel ast_compile(struct scope *scope)
 		def->ir_symbol = tl.len;
 		def->is_global = true;
 		if (exp->tag == ast_exp_procedure_literal) {
-			if (def->is_polymorphic) {
+			if (type_is_polymorphic(def->type)) {
 #if KC_DEBUG
 				printf("[Debug] Polymorphic Definition: "SV_FMT" spec count = %u\n",
 					   SV_ARGS(id_name), def->specs.len);
 #endif
 				for (size_t i = 0; i < def->specs.len; ++i) {
-					struct definition *spec_def = &def->specs.elems[i];
-					assert(!spec_def->is_polymorphic);
-					ast_create_proc_object(&p, spec_def);
+					struct type_spec *spec_def = &def->specs.elems[i];
+					if (type_is_polymorphic(spec_def->type)) continue;
+					ast_create_proc_object(&p, def, spec_def->type, spec_def->exp);
 					spec_def->ir_symbol = tl.len;
 					da_append(&tl, p);
 				}
 			} else {
-				ast_create_proc_object(&p, def);
+				ast_create_proc_object(&p, def, def->type, def->exp);
 				da_append(&tl, p);
 			}
 		} else if (exp->tag == ast_exp_extern_symbol) {
@@ -4449,7 +4741,7 @@ void ir_ins_fprint(IR_Ins *ins, FILE *file)
 		fprintf(file, "> %d", ins->arg.u32);
 	} break;
 	case ir_op_loadglobl: {
-		fprintf(file, "%%%d := load_gobl<", ins->dst);
+		fprintf(file, "%%%d := load_globl<", ins->dst);
 		ast_type_fprint(ins->type, file);
 		fprintf(file, "> %d", ins->arg.i32);
 	} break;
@@ -4815,7 +5107,7 @@ int asm_suffix(struct type *type)
 	return 0;
 }
 
-void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct ir_toplevel *tl)
+void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx)
 {
 	da_foreach(x, &blk->args) {
 		if (ctx->vars[*x].tag == ADDR_NONE) {
@@ -4899,7 +5191,7 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 				addr->as.stack[1] = 0;
 				size_t after = ctx->stack_size;
 				addr->extra.stack_size = after - before;
-				addr->type = POOL_ALLOC(&tl->data, struct type);
+				addr->type = MEM_ALLOC(struct type);
 				addr->type->tag = ast_type_ptr;
 				addr->type->as.ptr = ins->type;
 			}
@@ -4921,7 +5213,7 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 			addr->as.i = -ctx->stack_size;
 			size_t after = ctx->stack_size;
 			addr->extra.stack_size = after - before;
-			addr->type = POOL_ALLOC(&tl->data, struct type);
+			addr->type = MEM_ALLOC(struct type);
 			addr->type->tag = ast_type_ptr;
 			addr->type->as.ptr = ins->type;
 		} break;
@@ -5107,8 +5399,7 @@ void asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx, struct 
 }
 
 struct asm_context *
-asm_create_context(struct ir_proc *proc, struct da_pointers *blocks,
-				   struct ir_toplevel *tl, struct asm_context *ctx)
+asm_create_context(struct ir_proc *proc, struct da_pointers *blocks, struct asm_context *ctx)
 {
 	ctx->varc = proc->regc;
 	ctx->vars = calloc(proc->regc, sizeof(struct asm_address));
@@ -5143,7 +5434,7 @@ asm_create_context(struct ir_proc *proc, struct da_pointers *blocks,
 		}
 	}
 	da_foreach(blk, blocks) {
-		asm_context_first_pass(*blk, ctx, tl);
+		asm_context_first_pass(*blk, ctx);
 	}
 	assert(ctx->funargs.len == 0);
 	return ctx;
@@ -5716,6 +6007,7 @@ static void emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *
 	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
 	assert(x->tag == ADDR_REGISTER);
 	asm_unassign_register(ctx, x->as.i);
+	if (type_is_void(ins->type)) return; /* do nothing */
 	asm_reserve_register(ctx, dst->as.i, ins->dst);
 	if (type_equiv(NULL, x->type, ins->type, NULL)) {
 		append_line(&code->body, fmt_str(
@@ -6514,6 +6806,8 @@ void asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *p
 			} else if (MATCH_ADDR2(ADDR_ARGUMENT, ADDR_REGISTER)) {
 				dst->extra.defered.fun = emit_op_cast_ADDR_REGISTER__ADDR_REGISTER;
 				dst->extra.defered.ins = ins;
+			} else if (MATCH_ADDR2(ADDR_REGISTER, ADDR_REGISTER)) {
+				emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(ins, NULL, code);
 			} else {
 				FAILWITH("Unhandled case: MATCH_ADDR2(%s, %s)",
 						 asm_addr_tag_to_str(dst->tag),
@@ -7525,7 +7819,7 @@ void asm_emit_prologue_and_epilogue(struct ir_proc *proc, struct asm_procedure *
 void asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_procedure *code)
 {
 	struct da_pointers blks = ir_blk_reverse_post_order(proc->entry);
-	asm_create_context(proc, &blks, tl, &code->ctx);
+	asm_create_context(proc, &blks, &code->ctx);
 	for (size_t i = 0; i < blks.len; ++i) {
 		asm_emit_block(&blks, i, proc, tl, code);
 	}
@@ -7621,9 +7915,7 @@ struct asm_module *compile_file(const char *filename, struct asm_module *asm_mod
 	}
 	/* Type check */
 	struct typing_context ctx = {.scope = &sc};
-	for (size_t i = 0; i < tl.len; ++i) {
-		infer_type(&parser, ctx, tl.elems[i]);
-	}
+	type_check(&parser, &ctx, &tl);
 	/* Desugar */
 	for (size_t i = 0; i < tl.len; ++i) {
 		tl.elems[i] = ast_desugar(&parser, tl.elems[i], &sc);

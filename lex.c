@@ -11,7 +11,6 @@
 
 #include "log.h"
 #include "da.h"
-#include "mem.h"
 #include "lex.h"
 
 char *token_type_to_str(enum token_type tt)

@@ -10,7 +10,6 @@
 #include <stdio.h>
 
 #include "common.h"
-#include "mem.h"
 #include "strview.h"
 #include "lex.h"
 #include "ast.h"
@@ -20,6 +19,15 @@
 const char *ast_binop_to_str(enum binop op);
 void ast_def_fprint(struct definition *def, FILE *file);
 void ast_type_fprint(struct type *t, FILE *file);
+static inline struct type *type_find(struct type *type);
+
+bool exp_is_integer_literal(struct expression *exp)
+{
+	if (exp->tag != ast_exp_literal) return false;
+	if (exp->as.lit.token->tt == tt_intlit) return true;
+	if (exp->as.lit.token->tt == tt_hexlit) return true;
+	return false;
+}
 
 /* --- Parser --- */
 static struct token *peek_token2(Parser *p)
@@ -92,7 +100,7 @@ symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_
 	if (symtbl_find(symtbl, token_to_strview(def->id)) == NULL) {
 		entry = da_allot(symtbl);
 		entry->name = def->id;
-		entry->tag  = SYMTBL_VAR;
+		entry->tag  = SYMTBL_VARIABL;
 		entry->as.variable.def = def;
 		entry->as.variable.tl_exp = tl_exp;
 	} else {
@@ -104,17 +112,17 @@ symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_
 void symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
 						int64_t tag_val, struct type *type, struct type_definition *def)
 {
-	if (symtbl_find(symtbl, token_to_strview(name)) == NULL) {
-		da_append(symtbl, (struct symtbl_entry) {
-				.name				= name,
-				.tag				= SYMTBL_VALCONS,
-				.as.valcons.td		= def,
-				.as.valcons.tag_val = tag_val,
-				.as.valcons.type    = type,
-			});
-	} else {
-		FAILWITH("TODO: Symbol already defined.");
+	struct symtbl_entry *e = symtbl_find(symtbl, token_to_strview(name));
+	if (e == NULL) {
+		e = da_allot(symtbl);
+		e->name = name;
+		e->tag  = SYMTBL_VALCONS;
 	}
+	da_append(&e->as.valcons, (struct valcons_entry){
+			.tag_val = tag_val,
+			.td      = def,
+			.type    = type,
+		});
 }
 
 struct type_definition *typetbl_find(struct typetbl *typetbl, struct strview name)
@@ -197,7 +205,7 @@ parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 static struct type *
 parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
-	struct type *type = POOL_ALLOC(&p->data, struct type);
+	struct type *type = MEM_ALLOC(struct type);
 	type->tag = ast_type_struct;
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -225,7 +233,7 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 static struct type *
 parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
-	struct type *type = POOL_ALLOC(&p->data, struct type);
+	struct type *type = MEM_ALLOC(struct type);
 	type->tag = ast_type_struct;
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -257,11 +265,11 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		if (ACCEPT(next_token(p, &tok), tt_bang)) {
 			EXPECT(next_token(p, NULL), tt_lbracket);
-			type = POOL_ALLOC(&p->data, struct type);
+			type = MEM_ALLOC(struct type);
 			type->tag = ast_type_mut_slice;
 		} else {
 			EXPECT(tok, tt_lbracket);
-			type = POOL_ALLOC(&p->data, struct type);
+			type = MEM_ALLOC(struct type);
 			type->tag = ast_type_slice;
 		}
 		type->as.slice = parse_type(p, scope, introduce_type_var_p);
@@ -271,7 +279,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		/* parse formal parameter list */
 		struct type_ptrs args = parse_type_list(p, true, tt_rparen, scope, introduce_type_var_p);
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		if (ACCEPT(peek_token(p), tt_minus_more)) {
 			next_token(p, NULL);
 			type->tag = ast_type_proc;
@@ -308,7 +316,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	} break;
 	case tt_lbracket: {
 		next_token(p, NULL);
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = ast_type_array;
 		type->as.array.base = parse_type(p, scope, introduce_type_var_p);
 		if (ACCEPT(peek_token(p), tt_comma)) {
@@ -338,13 +346,13 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	case tt_f32:  tag = ast_type_f32;  goto basic_type;
 	case tt_f64:  tag = ast_type_f64;  goto basic_type;
 	basic_type:
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = tag;
 		type->as.basic = next_token(p, NULL);
 		break;
 	case tt_ident: {
 		next_token(p, &tok);
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = ast_type_app;
 		type->as.app.cons = tok;
 	} break;
@@ -353,7 +361,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		struct type_definition *def = lookup_type(scope, token_to_strview(tok));
 		if (introduce_type_var_p) {
 			if (def == NULL) {
-				type = POOL_ALLOC(&p->data, struct type);
+				type = MEM_ALLOC(struct type);
 				type->tag = ast_type_var;
 				type->as.var.name = tok;
 				typetbl_add(&scope->typetbl, .name = tok, .type = type, .is_var = true);
@@ -372,20 +380,20 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, &tok);
 		struct type_ptrs args = {0};
 		da_append(&args, type);
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = ast_type_app;
 		type->as.app.args = args;
 		type->as.app.cons = tok;
 	} else if (ACCEPT(peek_token(p), tt_star)) {
 		next_token(p, NULL);
 		struct type *tmp = type;
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = ast_type_ptr;
 		type->as.ptr = tmp;
 	} else if (ACCEPT(peek_token(p), tt_bang)) {
 		next_token(p, NULL);
 		struct type *tmp = type;
-		type = POOL_ALLOC(&p->data, struct type);
+		type = MEM_ALLOC(struct type);
 		type->tag = ast_type_mut_ptr;
 		type->as.mut_ptr = tmp;
 	}
@@ -398,21 +406,21 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 	struct type_ptrs args = {0};
 	struct scope sc = {.parent = scope};
 	if (ACCEPT(peek_token(p), tt_typevar)) {
-		struct type *var = POOL_ALLOC(&p->data, struct type);
+		struct type *var = MEM_ALLOC(struct type);
 		var->tag = ast_type_var;
 		var->as.var.name = next_token(p, NULL);
 		da_append(&args, var);
 		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 	} else if (ACCEPT(peek_token(p), tt_lparen)) {
 		next_token(p, NULL);
-		struct type *var = POOL_ALLOC(&p->data, struct type);
+		struct type *var = MEM_ALLOC(struct type);
 		var->tag = ast_type_var;
 		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
 		da_append(&args, var);
 		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 		while (ACCEPT(peek_token(p), tt_comma)) {
 			next_token(p, NULL);
-			var = POOL_ALLOC(&p->data, struct type);
+			var = MEM_ALLOC(struct type);
 			var->tag = ast_type_var;
 			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
 			da_append(&args, var);
@@ -431,7 +439,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 		type_def->type = parse_type(p, &sc, false);
 		return;
 	}
-	struct type *type = POOL_ALLOC(&p->data, struct type);
+	struct type *type = MEM_ALLOC(struct type);
 	type->tag = ast_type_union;
 	int64_t tag_value = 0;
 	do {
@@ -483,7 +491,7 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 	} else {
 		/* procedure definition */
 		EXPECT(tok, tt_lparen);
-		struct expression *proc = POOL_ALLOC(&p->data, struct expression);
+		struct expression *proc = MEM_ALLOC(struct expression);
 		proc->tok = def->id;
 		proc->tag = ast_exp_procedure_literal;
 		/* parse formal parameter list */
@@ -513,7 +521,7 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 		} else {
 			proc->as.proc.ret = parse_type(p, &proc->as.proc.scope, true);
 		}
-		struct type *type = POOL_ALLOC(&p->data, struct type);
+		struct type *type = MEM_ALLOC(struct type);
 		type->tag = ast_type_proc;
 		type->as.proc = procedure_type(&proc->as.proc);
 		//proc->type = type;
@@ -531,7 +539,7 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 	struct expression *exp = NULL;
 	switch ((int)next_token(p, &tok)->tt) {
 	case tt_let:
-		exp = POOL_ALLOC(&p->data, struct expression);
+		exp = MEM_ALLOC(struct expression);
 		exp->tok = tok;
 		exp->tag = ast_exp_definition;
 		parse_definition(p, &exp->as.def, scope);
@@ -660,17 +668,17 @@ static bool exp_is_intlit(struct expression *exp)
 }
 
 static struct token *
-copy_token(struct mem_arena *data, struct token *tok)
+copy_token(struct token *tok)
 {
-	struct token *new_tok = POOL_ALLOC(data, struct token);
+	struct token *new_tok = MEM_ALLOC(struct token);
 	*new_tok = *tok;
 	return new_tok;
 }
 
 static struct expression *
-copy_exp(struct mem_arena *data, struct expression *exp)
+copy_exp(struct expression *exp)
 {
-	struct expression *new_exp = POOL_ALLOC(data, struct expression);
+	struct expression *new_exp = MEM_ALLOC(struct expression);
 	*new_exp = *exp;
 	return new_exp;
 }
@@ -728,7 +736,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			exp->as.lit.token = copy_token(right->as.lit.token);
 			if (x == y) {
 				exp->as.lit.token->tt = tt_true;
 				exp->as.lit.as.i = 1;
@@ -739,7 +747,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_less_than:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			exp->as.lit.token = copy_token(right->as.lit.token);
 			if (x < y) {
 				exp->as.lit.token->tt = tt_true;
 				exp->as.lit.as.i = 1;
@@ -750,7 +758,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_more_than:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			exp->as.lit.token = copy_token(right->as.lit.token);
 			if (x > y) {
 				exp->as.lit.token->tt = tt_true;
 				exp->as.lit.as.i = 1;
@@ -761,7 +769,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_less_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			exp->as.lit.token = copy_token(right->as.lit.token);
 			if (x <= y) {
 				exp->as.lit.token->tt = tt_true;
 				exp->as.lit.as.i = 1;
@@ -772,7 +780,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_more_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(&p->data, right->as.lit.token);
+			exp->as.lit.token = copy_token(right->as.lit.token);
 			if (x >= y) {
 				exp->as.lit.token->tt = tt_true;
 				exp->as.lit.as.i = 1;
@@ -808,7 +816,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 }
 
 static struct expression *
-eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
+eval_unaop_exp(struct expression *exp, struct expression *operand)
 {
 	if (exp_is_intlit(operand)) {
 		switch ((enum unaop)exp->as.bin.op) {
@@ -836,25 +844,25 @@ eval_unaop_exp(Parser *p, struct expression *exp, struct expression *operand)
 		struct expression *idx = exp->as.slice.idx;
 		struct expression *len = exp->as.slice.len;
 		if (exp->as.slice.idx == NULL) {
-			idx = POOL_ALLOC(&p->data, struct expression);
+			idx = MEM_ALLOC(struct expression);
 			idx->tag = ast_exp_literal;
-			idx->as.lit.token = POOL_ALLOC(&p->data, struct token);
+			idx->as.lit.token = MEM_ALLOC(struct token);
 			idx->as.lit.token->tt = tt_intlit;
 			idx->as.lit.as.i = 0;
 			exp->as.slice.idx = idx;
 		}
 		if (exp->as.slice.len == NULL) {
-			len = POOL_ALLOC(&p->data, struct expression);
+			len = MEM_ALLOC(struct expression);
 			len->tag = ast_exp_get_len;
-			len->as.get_len = copy_exp(&p->data, operand);
+			len->as.get_len = copy_exp(operand);
 			if (exp_is_intlit(idx) && idx->as.lit.as.i == 0) {
 				exp->as.slice.len = len;
 			} else {
-				exp->as.slice.len = POOL_ALLOC(&p->data, struct expression);
+				exp->as.slice.len = MEM_ALLOC(struct expression);
 				exp->as.slice.len->tag = ast_exp_binary;
 				exp->as.slice.len->as.bin.op = op_sub;
 				exp->as.slice.len->as.bin.left = len;
-				exp->as.slice.len->as.bin.right = copy_exp(&p->data, idx);
+				exp->as.slice.len->as.bin.right = copy_exp(idx);
 			}
 		}
 		exp->as.una.exp = operand;
@@ -874,14 +882,14 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 		if (exp->tag == ast_exp_binary) {
 			if (stack.len < 2) {
 				printf("exp->as.bin.op = %s\n", ast_binop_to_str((enum binop)exp->as.bin.op));
-				assert(stack.len >= 2);
+				FAILWITH("TODO: stack.len < 2");
 			}
 			struct expression *right = da_pop(&stack);
 			struct expression *left  = da_pop(&stack);
 			eval_binop_exp(p, exp, right, left);
 		} else if (exp->tag == ast_exp_unary) {
 			assert(stack.len >= 1);
-			eval_unaop_exp(p, exp, da_pop(&stack));
+			eval_unaop_exp(exp, da_pop(&stack));
 		}
 		da_append(&stack, exp);
 	}
@@ -891,7 +899,8 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 	return exp;
 }
 
-static struct expression *parse_if(Parser *p, struct expression *exp, struct scope *scope)
+static struct expression *
+parse_if(Parser *p, struct expression *exp, struct scope *scope)
 {
 	struct token *tok = NULL;
 	exp->tag = ast_exp_if;
@@ -899,7 +908,7 @@ static struct expression *parse_if(Parser *p, struct expression *exp, struct sco
 	EXPECT(next_token(p, NULL), tt_then);
 	exp->as.iff.tb = parse_expression(p, scope);
 	if (ACCEPT(next_token(p, &tok), tt_elif)) {
-		exp->as.iff.fb = parse_if(p, POOL_ALLOC(&p->data, struct expression), scope);
+		exp->as.iff.fb = parse_if(p, MEM_ALLOC(struct expression), scope);
 	} else if (ACCEPT(tok, tt_else)) {
 		exp->as.iff.fb = parse_expression(p, scope);
 		EXPECT(next_token(p, NULL), tt_end);
@@ -1048,7 +1057,7 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 	bool op_prev = true; // decide if operator should be treated as unary
 	/* shunting yard */
 	for (;;) {
-		exp = POOL_ALLOC(&p->data, struct expression);
+		exp = MEM_ALLOC(struct expression);
 	repeat:
 		tok = NULL;
 		enum token_type tt = peek_token(p)->tt;
@@ -1219,15 +1228,30 @@ static struct expression *parse_expression(Parser *p, struct scope *scope)
 			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
 			op_prev = false;
 			next_token(p, &exp->tok);
-			if (ACCEPT(peek_token(p), tt_lbrace)) {
-				struct expression *arg = POOL_ALLOC(&p->data, struct expression);
-				next_token(p, &arg->tok);
-				arg = parse_initializer_list(p, scope, arg);
-				exp->tag = ast_exp_value_cons;
-				exp->as.valcons.cons = exp->tok;
-				exp->as.valcons.exp = arg;
-			} else {
+			struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
+			if (entry == NULL) {
 				exp->tag = ast_exp_ident;
+			} else {
+				switch (entry->tag) {
+				case SYMTBL_VARIABL:
+					exp->tag = ast_exp_ident;
+					break;
+				case SYMTBL_VALCONS:
+					exp->tag = ast_exp_value_cons;
+					exp->as.valcons.cons = exp->tok;
+					if (ACCEPT(peek_token(p), tt_lbrace)) {
+						struct expression *arg = MEM_ALLOC(struct expression);
+						next_token(p, &arg->tok);
+						arg = parse_initializer_list(p, scope, arg);
+						exp->as.valcons.exp = arg;
+					} else if (ACCEPT(peek_token(p), tt_lparen)) {
+						next_token(p, NULL);
+						exp->as.valcons.exp = parse_expression(p, scope);
+						EXPECT(next_token(p, NULL), tt_rparen);
+					}
+					break;
+				default: FAILWITH("Unreachable");
+				}
 			}
 			da_append(&out, exp);
 			break;
@@ -1524,6 +1548,7 @@ char *ast_type_to_str(struct type *t)
 
 void ast_type_fprint(struct type *t, FILE *file)
 {
+	t = type_find(t);
 	switch (t->tag) {
 	case ast_type_void:		fputs("void", file); break;
 	case ast_type_noreturn: fputs("noreturn", file); break;
@@ -1540,7 +1565,11 @@ void ast_type_fprint(struct type *t, FILE *file)
 	case ast_type_f64:		fputs("f64", file); break;
 	case ast_type_var:
 		if (t->as.var.name) {
+#if 1
 			fprintf(file, SV_FMT, SV_ARGS(token_to_strview(t->as.var.name)));
+#else
+			fprintf(file, SV_FMT"@%p", SV_ARGS(token_to_strview(t->as.var.name)), t);
+#endif
 		} else {
 			fprintf(file, "'%p", t);
 		}
@@ -1569,6 +1598,7 @@ void ast_type_fprint(struct type *t, FILE *file)
 		fputs(") -> ", file);
 		ast_type_fprint(t->as.proc.ret, file);
 		break;
+	case ast_type_istruct:
 	case ast_type_struct:
 		fputc('{', file);
 		if (t->as.struct_t.len > 0) {
@@ -1700,6 +1730,8 @@ void ast_fprint(struct expression *exp, FILE *file)
 			fputs(") ", file);
 			ast_type_fprint(proc->ret, file);
 		}
+		fputs(" =>\n", file);
+		ast_fprint(proc->body, file);
 	} break;
 	case ast_exp_undefined:
 		fputs("undefined", file);

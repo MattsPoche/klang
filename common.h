@@ -45,3 +45,6 @@
 			EXIT(1);													\
 		}																\
 	} while (0)
+
+#define MEM_ALLOC_ARRAY(type, n) calloc(n, sizeof(type))
+#define MEM_ALLOC(type) MEM_ALLOC_ARRAY(type, 1)

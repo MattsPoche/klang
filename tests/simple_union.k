@@ -4,8 +4,8 @@ newtype 'a Option =
 
 /*
 newtype ('a, 'e) Result =
-  | Ok(1):  'a
-  | Err(0): 'e
+  | Ok:  'a
+  | Err: 'e
 */
 
 newtype FILE = void*
