@@ -16,12 +16,16 @@
 #include "parse.h"
 #include "log.h"
 
-const char *ast_binop_to_str(enum binop op);
-void ast_def_fprint(struct definition *def, FILE *file);
-void ast_type_fprint(struct type *t, FILE *file);
-static inline struct type *type_find(struct type *type);
+static const char *ast_binop_to_str(enum binop op);
+static void ast_def_fprint(struct definition *def, FILE *file);
+static void ast_type_fprint(KCType *t, FILE *file);
+static inline KCType *type_find(KCType *type);
+static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
+static struct expression *parse_expression(Parser *p, struct scope *scope);
 
-bool exp_is_integer_literal(struct expression *exp)
+static bool
+exp_is_integer_literal(struct expression *exp)
 {
 	if (exp->tag != ast_exp_literal) return false;
 	if (exp->as.lit.token->tt == tt_intlit) return true;
@@ -30,19 +34,22 @@ bool exp_is_integer_literal(struct expression *exp)
 }
 
 /* --- Parser --- */
-static struct token *peek_token2(Parser *p)
+static struct token *
+peek_token2(Parser *p)
 {
 	assert(p->tokens.idx < p->tokens.len - 1);
 	return &p->tokens.elems[p->tokens.idx + 1];
 }
 
-static struct token *peek_token(Parser *p)
+static struct token *
+peek_token(Parser *p)
 {
 	assert(p->tokens.idx < p->tokens.len);
 	return &p->tokens.elems[p->tokens.idx];
 }
 
-static struct token *next_token(Parser *p, struct token **rt)
+static struct token *
+next_token(Parser *p, struct token **rt)
 {
 	assert(p->tokens.len > 0);
 	struct token *tok = &p->tokens.elems[p->tokens.idx];
@@ -59,7 +66,8 @@ error_unexpected_token(Parser *p, struct token *token, const char *debug_filenam
 	EXIT(1);
 }
 
-void error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, const int debug_line)
+static void
+error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, const int debug_line)
 {
 	log_error_impl(p->lexer.filename, id, debug_filename, debug_line,
 				   "Undefined identifier `"SV_FMT"`.", SV_ARGS(token_to_strview(id)));
@@ -78,10 +86,6 @@ expect(Parser *p, struct token *token, enum token_type tag, const char *debug_fi
 #define ACCEPT(token, tag)      ((token)->tt == (tag))
 #define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __LINE__)
 #define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __LINE__)
-
-static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
-static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
-static struct expression *parse_expression(Parser *p, struct scope *scope);
 
 struct symtbl_entry *symtbl_find(struct symtbl *symtbl, struct strview name)
 {
@@ -109,8 +113,9 @@ symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_
 	return entry;
 }
 
-void symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
-						int64_t tag_val, struct type *type, struct type_definition *def)
+static void
+symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
+				   int64_t tag_val, KCType *type, struct type_definition *def)
 {
 	struct symtbl_entry *e = symtbl_find(symtbl, token_to_strview(name));
 	if (e == NULL) {
@@ -125,7 +130,8 @@ void symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
 		});
 }
 
-struct type_definition *typetbl_find(struct typetbl *typetbl, struct strview name)
+static struct type_definition *
+typetbl_find(struct typetbl *typetbl, struct strview name)
 {
 	for (size_t i = 0; i < typetbl->len; ++i) {
 		if (sv_is_equal(name, token_to_strview(typetbl->elems[i].name))) {
@@ -135,7 +141,8 @@ struct type_definition *typetbl_find(struct typetbl *typetbl, struct strview nam
 	return NULL;
 }
 
-void typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
+static void
+typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
 {
 	assert(def.name != NULL);
 	if (typetbl_find(typetbl, token_to_strview(def.name)) != NULL)
@@ -145,7 +152,8 @@ void typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
 
 #define typetbl_add(tbl, ...) typetbl_add_impl(tbl, (struct type_definition){__VA_ARGS__})
 
-struct symtbl_entry *lookup_entry(struct scope *scope, struct strview name)
+static struct symtbl_entry *
+lookup_entry(struct scope *scope, struct strview name)
 {
 	while (scope) {
 		struct symtbl_entry *entry = symtbl_find(&scope->symtbl, name);
@@ -155,7 +163,8 @@ struct symtbl_entry *lookup_entry(struct scope *scope, struct strview name)
 	return NULL;
 }
 
-struct type_definition *lookup_type(struct scope *scope, struct strview name)
+static struct type_definition *
+lookup_type(struct scope *scope, struct strview name)
 {
 	while (scope) {
 		struct type_definition *def = typetbl_find(&scope->typetbl, name);
@@ -165,7 +174,8 @@ struct type_definition *lookup_type(struct scope *scope, struct strview name)
 	return NULL;
 }
 
-struct proc_type procedure_type(struct procedure *proc)
+static struct proc_type
+procedure_type(struct procedure *proc)
 {
 	struct proc_type pt = {0};
 	pt.ret = proc->ret;
@@ -179,7 +189,7 @@ struct proc_type procedure_type(struct procedure *proc)
 
 /* TODO: Improve error messages in parser
  */
-static struct type *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 
 static struct type_ptrs
 parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
@@ -202,10 +212,10 @@ parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 	return list;
 }
 
-static struct type *
+static KCType *
 parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
-	struct type *type = MEM_ALLOC(struct type);
+	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_struct;
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -230,10 +240,10 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 	return type;
 }
 
-static struct type *
+static KCType *
 parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
-	struct type *type = MEM_ALLOC(struct type);
+	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_struct;
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_rbrace)) {
@@ -253,10 +263,10 @@ parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	return type;
 }
 
-static struct type *
+static KCType *
 parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
-	struct type *type = NULL;
+	KCType *type = NULL;
 	struct token *tok = NULL;
 	/* Build type signature */
 	enum ast_type_tag tag;
@@ -265,11 +275,11 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		if (ACCEPT(next_token(p, &tok), tt_bang)) {
 			EXPECT(next_token(p, NULL), tt_lbracket);
-			type = MEM_ALLOC(struct type);
+			type = MEM_ALLOC(KCType);
 			type->tag = ast_type_mut_slice;
 		} else {
 			EXPECT(tok, tt_lbracket);
-			type = MEM_ALLOC(struct type);
+			type = MEM_ALLOC(KCType);
 			type->tag = ast_type_slice;
 		}
 		type->as.slice = parse_type(p, scope, introduce_type_var_p);
@@ -279,7 +289,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		/* parse formal parameter list */
 		struct type_ptrs args = parse_type_list(p, true, tt_rparen, scope, introduce_type_var_p);
-		type = MEM_ALLOC(struct type);
+		type = MEM_ALLOC(KCType);
 		if (ACCEPT(peek_token(p), tt_minus_more)) {
 			next_token(p, NULL);
 			type->tag = ast_type_proc;
@@ -316,7 +326,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	} break;
 	case tt_lbracket: {
 		next_token(p, NULL);
-		type = MEM_ALLOC(struct type);
+		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_array;
 		type->as.array.base = parse_type(p, scope, introduce_type_var_p);
 		if (ACCEPT(peek_token(p), tt_comma)) {
@@ -346,13 +356,13 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	case tt_f32:  tag = ast_type_f32;  goto basic_type;
 	case tt_f64:  tag = ast_type_f64;  goto basic_type;
 	basic_type:
-		type = MEM_ALLOC(struct type);
+		type = MEM_ALLOC(KCType);
 		type->tag = tag;
 		type->as.basic = next_token(p, NULL);
 		break;
 	case tt_ident: {
 		next_token(p, &tok);
-		type = MEM_ALLOC(struct type);
+		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_app;
 		type->as.app.cons = tok;
 	} break;
@@ -361,7 +371,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		struct type_definition *def = lookup_type(scope, token_to_strview(tok));
 		if (introduce_type_var_p) {
 			if (def == NULL) {
-				type = MEM_ALLOC(struct type);
+				type = MEM_ALLOC(KCType);
 				type->tag = ast_type_var;
 				type->as.var.name = tok;
 				typetbl_add(&scope->typetbl, .name = tok, .type = type, .is_var = true);
@@ -380,20 +390,20 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, &tok);
 		struct type_ptrs args = {0};
 		da_append(&args, type);
-		type = MEM_ALLOC(struct type);
+		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_app;
 		type->as.app.args = args;
 		type->as.app.cons = tok;
 	} else if (ACCEPT(peek_token(p), tt_star)) {
 		next_token(p, NULL);
-		struct type *tmp = type;
-		type = MEM_ALLOC(struct type);
+		KCType *tmp = type;
+		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_ptr;
 		type->as.ptr = tmp;
 	} else if (ACCEPT(peek_token(p), tt_bang)) {
 		next_token(p, NULL);
-		struct type *tmp = type;
-		type = MEM_ALLOC(struct type);
+		KCType *tmp = type;
+		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_mut_ptr;
 		type->as.mut_ptr = tmp;
 	}
@@ -406,21 +416,21 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 	struct type_ptrs args = {0};
 	struct scope sc = {.parent = scope};
 	if (ACCEPT(peek_token(p), tt_typevar)) {
-		struct type *var = MEM_ALLOC(struct type);
+		KCType *var = MEM_ALLOC(KCType);
 		var->tag = ast_type_var;
 		var->as.var.name = next_token(p, NULL);
 		da_append(&args, var);
 		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 	} else if (ACCEPT(peek_token(p), tt_lparen)) {
 		next_token(p, NULL);
-		struct type *var = MEM_ALLOC(struct type);
+		KCType *var = MEM_ALLOC(KCType);
 		var->tag = ast_type_var;
 		var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
 		da_append(&args, var);
 		typetbl_add(&sc.typetbl, .name = var->as.var.name, .type = var, .is_var = true);
 		while (ACCEPT(peek_token(p), tt_comma)) {
 			next_token(p, NULL);
-			var = MEM_ALLOC(struct type);
+			var = MEM_ALLOC(KCType);
 			var->tag = ast_type_var;
 			var->as.var.name = EXPECT(next_token(p, NULL), tt_typevar);
 			da_append(&args, var);
@@ -439,7 +449,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 		type_def->type = parse_type(p, &sc, false);
 		return;
 	}
-	struct type *type = MEM_ALLOC(struct type);
+	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_union;
 	int64_t tag_value = 0;
 	do {
@@ -453,7 +463,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 			tag_value = exp->as.lit.as.i;
 			EXPECT(next_token(p, NULL), tt_rparen);
 		}
-		struct type *mem_type;
+		KCType *mem_type;
 		if (ACCEPT(peek_token(p), tt_colon)) {
 			next_token(p, NULL);
 			mem_type = parse_type(p, &sc, false);
@@ -521,7 +531,7 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 		} else {
 			proc->as.proc.ret = parse_type(p, &proc->as.proc.scope, true);
 		}
-		struct type *type = MEM_ALLOC(struct type);
+		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_proc;
 		type->as.proc = procedure_type(&proc->as.proc);
 		//proc->type = type;
@@ -533,7 +543,8 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 	}
 }
 
-struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
+static struct expression *
+parse_toplevel_expression(Parser *p, struct scope *scope)
 {
 	struct token *tok;
 	struct expression *exp = NULL;
@@ -557,7 +568,8 @@ struct expression *parse_toplevel_expression(Parser *p, struct scope *scope)
 	return exp;
 }
 
-bool parser_is_at_end(Parser *p)
+static bool
+parser_is_at_end(Parser *p)
 {
 	return peek_token(p)->tt == tt_eof;
 }
@@ -566,7 +578,8 @@ bool parser_is_at_end(Parser *p)
 #define ASSOC_RIGHT(x)  (x)
 #define ASSOC_LEFT_P(x) ((x) < 0)
 
-static int precedence(enum operator op)
+static int
+precedence(enum operator op)
 {
 	switch (op) {
 	case op_sequence:
@@ -630,14 +643,16 @@ static int precedence(enum operator op)
 	}
 }
 
-static bool check_precedence(enum operator op1, enum operator op2)
+static bool
+check_precedence(enum operator op1, enum operator op2)
 {
 	int p1 = precedence(op1);
 	int p2 = precedence(op2);
 	return (ABS(p1) < ABS(p2) || (ABS(p1) == ABS(p2) && ASSOC_LEFT_P(p1)));
 }
 
-static bool shunt(struct expression *op1, struct expression_stack *out, struct expression_stack *ops)
+static bool
+shunt(struct expression *op1, struct expression_stack *out, struct expression_stack *ops)
 {
 	struct expression *op2;
 	/* we treat NULL as parentheses */
@@ -661,7 +676,8 @@ static bool shunt(struct expression *op1, struct expression_stack *out, struct e
 	return 1;
 }
 
-static bool exp_is_intlit(struct expression *exp)
+static bool
+exp_is_intlit(struct expression *exp)
 {
 	return exp->tag == ast_exp_literal
 		&& exp->as.lit.token->tt == tt_intlit;
@@ -1048,7 +1064,8 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 	return exp;
 }
 
-static struct expression *parse_expression(Parser *p, struct scope *scope)
+static struct expression *
+parse_expression(Parser *p, struct scope *scope)
 {
 	struct expression_stack out = {0};
 	struct expression_stack ops = {0};
@@ -1495,7 +1512,8 @@ flush:
 	return exp;
 }
 
-const char *ast_binop_to_str(enum binop op)
+static const char *
+ast_binop_to_str(enum binop op)
 {
 	switch (op) {
 	case binop_sequence:		   return "binop_sequence";
@@ -1535,7 +1553,8 @@ const char *ast_binop_to_str(enum binop op)
 
 /* --- AST Printer --- */
 
-char *ast_type_to_str(struct type *t)
+static char *
+ast_type_to_str(KCType *t)
 {
 	char *str;
 	size_t sz;
@@ -1546,7 +1565,8 @@ char *ast_type_to_str(struct type *t)
 	return str;
 }
 
-void ast_type_fprint(struct type *t, FILE *file)
+static void
+ast_type_fprint(KCType *t, FILE *file)
 {
 	t = type_find(t);
 	switch (t->tag) {
@@ -1664,7 +1684,8 @@ void ast_type_fprint(struct type *t, FILE *file)
 	}
 }
 
-void ast_def_fprint(struct definition *def, FILE *file)
+static void
+ast_def_fprint(struct definition *def, FILE *file)
 {
 	fputs("let ", file);
 	if (def->is_mut) fputs("mut ", file);
@@ -1695,7 +1716,8 @@ void ast_def_fprint(struct definition *def, FILE *file)
 	}
 }
 
-void ast_fprint(struct expression *exp, FILE *file)
+static void
+ast_fprint(struct expression *exp, FILE *file)
 {
 	switch (exp->tag) {
 	case ast_exp_definition:

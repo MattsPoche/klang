@@ -13,7 +13,8 @@
 #include "da.h"
 #include "lex.h"
 
-char *token_type_to_str(enum token_type tt)
+static char *
+token_type_to_str(enum token_type tt)
 {
 	switch (tt) {
 	case tt_true: 		        return "tt_true";
@@ -122,7 +123,8 @@ char *token_type_to_str(enum token_type tt)
 	}
 }
 
-char *show_token(char *str, size_t len, struct token *tok)
+UNUSED static char *
+show_token(char *str, size_t len, struct token *tok)
 {
 	snprintf(str, len, "%s(`%.*s`), %d, %d",
 			 token_type_to_str(tok->tt),
@@ -133,7 +135,8 @@ char *show_token(char *str, size_t len, struct token *tok)
 	return str;
 }
 
-static bool isbrace(int c)
+static bool
+isbrace(int c)
 {
 	static const char braces[] = { '(', ')', '[', ']', '{', '}' };
 	for (size_t i = 0; i < sizeof(braces); ++i) {
@@ -142,7 +145,8 @@ static bool isbrace(int c)
 	return false;
 }
 
-static int lex_lookahead(struct lexer *lex, size_t n)
+static int
+lex_lookahead(struct lexer *lex, size_t n)
 {
 	size_t offset = lex->offset + n;
 	if (offset < lex->length) {
@@ -152,12 +156,14 @@ static int lex_lookahead(struct lexer *lex, size_t n)
 	}
 }
 
-static int lex_peekc(struct lexer *lex)
+static int
+lex_peekc(struct lexer *lex)
 {
 	return lex_lookahead(lex, 0);
 }
 
-static int lex_nextc(struct lexer *lex)
+static int
+lex_nextc(struct lexer *lex)
 {
 	if (lex->offset >= lex->length) return EOF;
 	int c = lex->text[lex->offset++];
@@ -176,7 +182,8 @@ static int lex_nextc(struct lexer *lex)
 	return c;
 }
 
-static void lex_skip_line(struct lexer *lex)
+static void
+lex_skip_line(struct lexer *lex)
 {
 	for (;;) {
 		int c = lex_nextc(lex);
@@ -184,7 +191,8 @@ static void lex_skip_line(struct lexer *lex)
 	}
 }
 
-static void lex_skip_comment(struct lexer *lex)
+static void
+lex_skip_comment(struct lexer *lex)
 {
 	int c, n;
 	int nest_level = 1;
@@ -202,7 +210,8 @@ static void lex_skip_comment(struct lexer *lex)
 	}
 }
 
-static void lex_skip_ws(struct lexer *lex)
+static void
+lex_skip_ws(struct lexer *lex)
 {
 	for (;;) {
 		int c = lex_peekc(lex);
@@ -224,7 +233,8 @@ static void lex_skip_ws(struct lexer *lex)
 	}
 }
 
-static struct token make_token(struct lexer *lex)
+static struct token
+make_token(struct lexer *lex)
 {
 	return (struct token) {
 		.text	  = lex->text,
@@ -236,7 +246,8 @@ static struct token make_token(struct lexer *lex)
 	};
 }
 
-struct strview token_to_strview(struct token *tok)
+static struct strview
+token_to_strview(struct token *tok)
 {
 	return (struct strview) {
 		.ptr = tok->text + tok->offset,
@@ -244,7 +255,8 @@ struct strview token_to_strview(struct token *tok)
 	};
 }
 
-void tokenize(struct lexer *lex, struct token_buffer *tokens)
+static void
+tokenize(struct lexer *lex, struct token_buffer *tokens)
 {
 	for (;;) {
 		lex_skip_ws(lex);

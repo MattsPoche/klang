@@ -11,7 +11,8 @@
 #include "lex.h"
 #include "log.h"
 
-struct strview sv_fmtv(const char *fmt, va_list ap)
+static struct strview
+sv_fmtv(const char *fmt, va_list ap)
 {
 	struct strview sv = {0};
 	FILE *stream = open_memstream(&sv.ptr, &sv.len);
@@ -21,8 +22,8 @@ struct strview sv_fmtv(const char *fmt, va_list ap)
 	return sv;
 }
 
-__attribute__ ((format(printf, 1, 2)))
-struct strview sv_fmt(const char *fmt, ...)
+UNUSED static struct strview
+sv_fmt(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -31,8 +32,8 @@ struct strview sv_fmt(const char *fmt, ...)
 	return sv;
 }
 
-__attribute__ ((format(printf, 1, 2)))
-char *fmt_str(const char *fmt, ...)
+static char *
+fmt_str(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -41,12 +42,14 @@ char *fmt_str(const char *fmt, ...)
 	return sv.ptr;
 }
 
-void append_line(struct lines *lines, char *str)
+static void
+append_line(struct lines *lines, char *str)
 {
 	da_append(lines, str);
 }
 
-char *concat_lines(struct lines *lines, const char *delim)
+static char *
+concat_lines(struct lines *lines, const char *delim)
 {
 	assert(lines->len > 0);
 	size_t delim_len = strlen(delim);
@@ -70,7 +73,8 @@ char *concat_lines(struct lines *lines, const char *delim)
 	return str;
 }
 
-char *strjoin(const char *s1, const char *s2, const char *delim)
+static char *
+strjoin(const char *s1, const char *s2, const char *delim)
 {
 	size_t s1_len = strlen(s1);
 	size_t s2_len = strlen(s2);
@@ -88,7 +92,8 @@ char *strjoin(const char *s1, const char *s2, const char *delim)
 	return cat;
 }
 
-char *subst_file_suffix(const char *file_name, const char *prefix)
+static char *
+subst_file_suffix(const char *file_name, const char *prefix)
 {
 	const char *end_ptr = strrchr(file_name, '.');
 	size_t len = end_ptr ? (size_t)(end_ptr - file_name) : strlen(file_name);
@@ -107,7 +112,8 @@ char *subst_file_suffix(const char *file_name, const char *prefix)
 	return new_name;
 }
 
-static struct strview current_line(struct token *tloc)
+static struct strview
+current_line(struct token *tloc)
 {
 	size_t begin = tloc->offset;
 	size_t end = tloc->offset;
@@ -120,8 +126,10 @@ static struct strview current_line(struct token *tloc)
 }
 
 static const char *wiggly_line = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
-void log_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
-				const char *fmt, va_list ap)
+
+static void
+log_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
+		   const char *fmt, va_list ap)
 {
 	fprintf(stderr, "[Error] %s:%d:%d: ", filename, tloc->line, tloc->column);
 	vfprintf(stderr, fmt, ap);
@@ -138,9 +146,9 @@ void log_errorv(const char *filename, struct token *tloc, const char *debug_file
 #endif
 }
 
-__attribute__ ((format(printf, 5, 6)))
-void log_error_impl(const char *filename, struct token *tloc,
-					const char *debug_file, int debug_line, const char *fmt, ...)
+static void
+log_error_impl(const char *filename, struct token *tloc,
+			   const char *debug_file, int debug_line, const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);

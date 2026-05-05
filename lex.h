@@ -144,7 +144,7 @@ struct lexer {
 	uint32_t column;
 };
 
-char *token_type_to_str(enum token_type tt);
-void tokenize(struct lexer *lex, struct token_buffer *tokens);
-struct strview token_to_strview(struct token *tok);
-char *show_token(char *str, size_t len, struct token *tok);
+static char *token_type_to_str(enum token_type tt);
+static void tokenize(struct lexer *lex, struct token_buffer *tokens);
+static struct strview token_to_strview(struct token *tok);
+static char *show_token(char *str, size_t len, struct token *tok);

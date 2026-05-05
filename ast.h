@@ -139,7 +139,7 @@ struct symtbl_entry {
 			uint32_t len, cap;
 			struct valcons_entry {
 				int64_t tag_val;
-				struct type *type;
+				struct kc_type *type;
 				struct type_definition *td;
 			} *elems;
 		} valcons;
@@ -168,16 +168,16 @@ struct scope {
 
 struct type_ptrs {
 	uint32_t len, cap;
-	struct type **elems;
+	struct kc_type **elems;
 };
 
 struct proc_type {
-	struct type *ret;
+	struct kc_type *ret;
 	struct type_ptrs args;
 };
 
 struct array_type {
-	struct type *base;
+	struct kc_type *base;
 	size_t size;
 	bool is_sized;
 };
@@ -186,7 +186,7 @@ struct struct_type {
 	uint32_t len, cap;
 	struct struct_member {
 		struct token *name;
-		struct type *type;
+		struct kc_type *type;
 	} *elems;
 };
 
@@ -194,7 +194,7 @@ struct union_type {
 	uint32_t len, cap;
 	struct union_member {
 		struct token *name;
-		struct type *type;
+		struct kc_type *type;
 		int64_t tag_value;
 	} *elems;
 };
@@ -221,7 +221,7 @@ enum type_class {
 
 typedef struct type_scheme {
 	struct type_ptrs args;
-	struct type *type;
+	struct kc_type *type;
 } Forall;
 
 struct type_env {
@@ -232,18 +232,18 @@ struct type_env {
 
 struct typing_context {
 	struct scope    *scope;
-	struct type     *ret;
+	struct kc_type     *ret;
 	struct type_env *env;
 };
 
 struct type_var {
 	enum type_class class;
 	struct token *name;
-	struct type *forward;
-	struct type *contains;
+	struct kc_type *forward;
+	struct kc_type *contains;
 };
 
-struct type {
+struct kc_type {
 	enum ast_type_tag tag;
 	union {
 		struct proc_type proc;
@@ -251,21 +251,23 @@ struct type {
 		struct struct_type struct_t;
 		struct union_type union_t;
 		struct type_app app;
-		struct type *ptr;
-		struct type *mut_ptr;
-		struct type *slice;
-		struct type *mut_slice;
+		struct kc_type *ptr;
+		struct kc_type *mut_ptr;
+		struct kc_type *slice;
+		struct kc_type *mut_slice;
 		struct token *basic;
 		struct type_var var;
 	} as;
 };
+
+typedef struct kc_type KCType;
 
 struct procedure {
 	struct def_array {
 		uint32_t len, cap;
 		struct definition *elems;
 	} formals;
-	struct type *ret;
+	struct kc_type *ret;
 	struct scope scope;
 	struct expression *body;
 };
@@ -278,12 +280,12 @@ struct value_cons {
 
 struct definition {
 	struct token *id;
-	struct type *type;
+	struct kc_type *type;
 	struct expression *exp;
 	struct spec_array {
 		uint32_t len, cap;
 		struct type_spec {
-			struct type *type;
+			struct kc_type *type;
 			struct expression *exp;
 			size_t ir_symbol;
 		} *elems;
@@ -297,7 +299,7 @@ struct definition {
 struct type_definition {
 	struct token *name;
 	struct type_ptrs args;
-	struct type *type;
+	struct kc_type *type;
 	bool is_alias;
 	bool is_var;
 };
@@ -361,7 +363,7 @@ struct unary {
 struct cast {
 	enum operator op;
 	struct expression *exp;
-	struct type *type;
+	struct kc_type *type;
 };
 
 struct call {
@@ -418,7 +420,7 @@ struct expression {
 	struct token *tok;
 	bool is_lvalue;
 	bool is_mutable;
-	struct type *type;    // type anotation
+	struct kc_type *type;    // type anotation
 	union _exp_internal {
 		struct definition  def;
 		struct let         let;
@@ -447,18 +449,18 @@ struct expression {
 	} as;
 };
 
-struct type AST_TYPE_BOOL     = {.tag = ast_type_bool};
-struct type AST_TYPE_VOID     = {.tag = ast_type_void};
-struct type AST_TYPE_U8		  = {.tag = ast_type_u8};
-struct type AST_TYPE_U16	  = {.tag = ast_type_u16};
-struct type AST_TYPE_U32	  = {.tag = ast_type_u32};
-struct type AST_TYPE_U64      = {.tag = ast_type_u64};
-struct type AST_TYPE_I8       = {.tag = ast_type_i8};
-struct type AST_TYPE_I16      = {.tag = ast_type_i16};
-struct type AST_TYPE_I32      = {.tag = ast_type_i32};
-struct type AST_TYPE_I64      = {.tag = ast_type_i64};
-struct type AST_TYPE_F32      = {.tag = ast_type_f32};
-struct type AST_TYPE_F64      = {.tag = ast_type_f64};
-struct type AST_TYPE_STRING   = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
+KCType AST_TYPE_BOOL   = {.tag = ast_type_bool};
+KCType AST_TYPE_VOID   = {.tag = ast_type_void};
+KCType AST_TYPE_U8	   = {.tag = ast_type_u8};
+KCType AST_TYPE_U16	   = {.tag = ast_type_u16};
+KCType AST_TYPE_U32	   = {.tag = ast_type_u32};
+KCType AST_TYPE_U64    = {.tag = ast_type_u64};
+KCType AST_TYPE_I8     = {.tag = ast_type_i8};
+KCType AST_TYPE_I16    = {.tag = ast_type_i16};
+KCType AST_TYPE_I32    = {.tag = ast_type_i32};
+KCType AST_TYPE_I64    = {.tag = ast_type_i64};
+KCType AST_TYPE_F32    = {.tag = ast_type_f32};
+KCType AST_TYPE_F64    = {.tag = ast_type_f64};
+KCType AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
 
 #define AST_TYPE_UNION_TAG AST_TYPE_I64

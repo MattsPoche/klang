@@ -71,7 +71,7 @@ struct asm_procedure;
 
 struct asm_address {
 	enum asm_addr_tag tag;
-	struct type *type;
+	KCType *type;
 	union {
 		int64_t i;
 		double d;
