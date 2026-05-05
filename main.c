@@ -1,7 +1,8 @@
 /**
 TODOS:
-- [ ] License? GPL 2.0?
 - [ ] Implement stubs for basic operators
+- [ ] Floating point types
+- [ ] Vector types
 - [ ] For loops
 - [ ] Loop break
 - [ ] Loop continue
@@ -15,9 +16,9 @@ TODOS:
 - [ ] Proper recursive let semantics
 - [ ] Expanded pattern syntax: structs, arrays, nested patterns
 - [ ] Patterns in let bindings? in function definitions?
+- [ ] Type classes
 - [ ] Enum types? Some sort of auto-increment integer constants?
 - [ ] Macros?
-- [ ] Type classes
 - [ ] Closures?
 **/
 
