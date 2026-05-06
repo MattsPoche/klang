@@ -18,11 +18,10 @@
 
 static const char *ast_binop_to_str(enum binop op);
 static void ast_def_fprint(struct definition *def, FILE *file);
-static void ast_type_fprint(KCType *t, FILE *file);
-static inline KCType *type_find(KCType *type);
 static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
 static struct expression *parse_expression(Parser *p, struct scope *scope);
+static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 
 static bool
 exp_is_integer_literal(struct expression *exp)
@@ -87,93 +86,6 @@ expect(Parser *p, struct token *token, enum token_type tag, const char *debug_fi
 #define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __LINE__)
 #define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __LINE__)
 
-struct symtbl_entry *symtbl_find(struct symtbl *symtbl, struct strview name)
-{
-	for (size_t i = 0; i < symtbl->len; ++i) {
-		if (sv_is_equal(name, token_to_strview(symtbl->elems[i].name))) {
-			return &symtbl->elems[i];
-		}
-	}
-	return NULL;
-}
-
-struct symtbl_entry *
-symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_exp)
-{
-	struct symtbl_entry *entry = NULL;
-	if (symtbl_find(symtbl, token_to_strview(def->id)) == NULL) {
-		entry = da_allot(symtbl);
-		entry->name = def->id;
-		entry->tag  = SYMTBL_VARIABL;
-		entry->as.variable.def = def;
-		entry->as.variable.tl_exp = tl_exp;
-	} else {
-		FAILWITH("TODO: Symbol already defined.");
-	}
-	return entry;
-}
-
-static void
-symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
-				   int64_t tag_val, KCType *type, struct type_definition *def)
-{
-	struct symtbl_entry *e = symtbl_find(symtbl, token_to_strview(name));
-	if (e == NULL) {
-		e = da_allot(symtbl);
-		e->name = name;
-		e->tag  = SYMTBL_VALCONS;
-	}
-	da_append(&e->as.valcons, (struct valcons_entry){
-			.tag_val = tag_val,
-			.td      = def,
-			.type    = type,
-		});
-}
-
-static struct type_definition *
-typetbl_find(struct typetbl *typetbl, struct strview name)
-{
-	for (size_t i = 0; i < typetbl->len; ++i) {
-		if (sv_is_equal(name, token_to_strview(typetbl->elems[i].name))) {
-			return &typetbl->elems[i];
-		}
-	}
-	return NULL;
-}
-
-static void
-typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
-{
-	assert(def.name != NULL);
-	if (typetbl_find(typetbl, token_to_strview(def.name)) != NULL)
-		FAILWITH("TODO: Type is already defined.");
-	da_append(typetbl, def);
-}
-
-#define typetbl_add(tbl, ...) typetbl_add_impl(tbl, (struct type_definition){__VA_ARGS__})
-
-static struct symtbl_entry *
-lookup_entry(struct scope *scope, struct strview name)
-{
-	while (scope) {
-		struct symtbl_entry *entry = symtbl_find(&scope->symtbl, name);
-		if (entry) return entry;
-		scope = scope->parent;
-	}
-	return NULL;
-}
-
-static struct type_definition *
-lookup_type(struct scope *scope, struct strview name)
-{
-	while (scope) {
-		struct type_definition *def = typetbl_find(&scope->typetbl, name);
-		if (def) return def;
-		scope = scope->parent;
-	}
-	return NULL;
-}
-
 static struct proc_type
 procedure_type(struct procedure *proc)
 {
@@ -189,8 +101,6 @@ procedure_type(struct procedure *proc)
 
 /* TODO: Improve error messages in parser
  */
-static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
-
 static struct type_ptrs
 parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 				struct scope *scope, bool introduce_type_var_p)
