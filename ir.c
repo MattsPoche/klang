@@ -1,16 +1,13 @@
-#pragma once
-
 #include "common.h"
-#include "ir.h"
 
-static union ir_object *
+KC_PUBLIC union ir_object *
 get_toplevel_obj(struct ir_toplevel *tl, size_t id)
 {
 	assert(id < tl->len);
 	return &tl->elems[id];
 }
 
-static struct ir_proc *
+KC_PUBLIC struct ir_proc *
 get_toplevel_proc(struct ir_toplevel *tl, size_t id)
 {
 	union ir_object *obj = get_toplevel_obj(tl, id);
@@ -18,7 +15,7 @@ get_toplevel_proc(struct ir_toplevel *tl, size_t id)
 	return &obj->proc;
 }
 
-static int
+KC_PRIVATE int
 ir_proc_new_reg(struct ir_toplevel *tl, size_t proc_id)
 {
 	struct ir_proc *proc = get_toplevel_proc(tl, proc_id);
@@ -26,7 +23,7 @@ ir_proc_new_reg(struct ir_toplevel *tl, size_t proc_id)
 	return proc->regc++;
 }
 
-static void
+KC_PUBLIC void
 ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 {
 	struct ir_proc *proc = get_toplevel_proc(tl, proc_id);
@@ -65,7 +62,7 @@ ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 	res->term.op = ir_op_ret;
 }
 
-static struct ir_blk *
+KC_PRIVATE struct ir_blk *
 dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 					struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
 {
@@ -186,7 +183,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 	return NULL;
 }
 
-static struct ir_blk *
+KC_PRIVATE struct ir_blk *
 dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 						  struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
 {
@@ -219,7 +216,7 @@ dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size
 	return blk;
 }
 
-static struct ir_blk *
+KC_PRIVATE struct ir_blk *
 dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 				struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
 {
@@ -265,7 +262,7 @@ dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id
 	return blk;
 }
 
-static struct ir_blk *
+KC_PUBLIC struct ir_blk *
 ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 					   struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
 {
@@ -1564,7 +1561,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	return NULL;
 }
 
-static char *
+KC_PRIVATE char *
 generate_mangled_name(struct strview ident, KCType *type)
 {
 	char *ptr;
@@ -1577,7 +1574,7 @@ generate_mangled_name(struct strview ident, KCType *type)
 	return ptr;
 }
 
-static void
+KC_PRIVATE void
 ast_create_proc_object(union ir_object *p, struct definition *def, KCType *type, struct expression *exp)
 {
 	p->proc.tag = IRO_PROC;
@@ -1596,7 +1593,7 @@ ast_create_proc_object(union ir_object *p, struct definition *def, KCType *type,
 	p->proc.regc = 0;
 }
 
-static struct ir_toplevel
+KC_PUBLIC struct ir_toplevel
 ast_compile(struct scope *scope)
 {
 	struct symtbl *st = &scope->symtbl;
@@ -1671,7 +1668,7 @@ ast_compile(struct scope *scope)
 	return tl;
 }
 
-static void
+KC_PRIVATE void
 ir_ins_fprint(IR_Ins *ins, FILE *file)
 {
 	fputc('\t', file);
@@ -1785,7 +1782,7 @@ ir_ins_fprint(IR_Ins *ins, FILE *file)
 	fputc('\n', file);
 }
 
-static bool
+KC_PRIVATE bool
 da_ptr_member_p(void *p, struct da_pointers *ptrs)
 {
 	da_foreach(ptr, ptrs) {
@@ -1794,7 +1791,7 @@ da_ptr_member_p(void *p, struct da_pointers *ptrs)
 	return false;
 }
 
-static void
+KC_PRIVATE void
 dfs_walk(struct ir_blk *blk, struct da_pointers *order, struct da_pointers *visited)
 {
 	if (da_ptr_member_p(blk, visited)) return;
@@ -1816,7 +1813,7 @@ dfs_walk(struct ir_blk *blk, struct da_pointers *order, struct da_pointers *visi
 	da_append(order, blk);
 }
 
-static struct da_pointers
+KC_PRIVATE struct da_pointers
 ir_blk_post_order(struct ir_blk *root)
 {
 	struct da_pointers visited = {0};
@@ -1826,7 +1823,7 @@ ir_blk_post_order(struct ir_blk *root)
 	return order;
 }
 
-static struct da_pointers
+KC_PUBLIC struct da_pointers
 ir_blk_reverse_post_order(struct ir_blk *root)
 {
 	struct da_pointers order = ir_blk_post_order(root);
@@ -1834,7 +1831,7 @@ ir_blk_reverse_post_order(struct ir_blk *root)
 	return order;
 }
 
-static void
+KC_PRIVATE void
 ir_blk_fprint(struct ir_blk *blk, FILE *file)
 {
 	fprintf(file, "@%p(", blk);
@@ -1880,7 +1877,7 @@ ir_blk_fprint(struct ir_blk *blk, FILE *file)
 	}
 }
 
-static void
+KC_PUBLIC void
 ir_proc_fprint(struct ir_proc *proc, FILE *file)
 {
 	fputs("procedure @", file);
@@ -1902,7 +1899,7 @@ ir_proc_fprint(struct ir_proc *proc, FILE *file)
 	fputs("}\n", file);
 }
 
-static struct expression *
+KC_PUBLIC struct expression *
 ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 {
 	if (exp->type == NULL) {

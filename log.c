@@ -1,17 +1,6 @@
-#pragma once
-#include <assert.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "strview.h"
 #include "common.h"
-#include "lex.h"
-#include "log.h"
 
-static struct strview
+KC_PUBLIC struct strview
 sv_fmtv(const char *fmt, va_list ap)
 {
 	struct strview sv = {0};
@@ -22,7 +11,7 @@ sv_fmtv(const char *fmt, va_list ap)
 	return sv;
 }
 
-UNUSED static struct strview
+KC_PUBLIC struct strview
 sv_fmt(const char *fmt, ...)
 {
 	va_list ap;
@@ -32,7 +21,7 @@ sv_fmt(const char *fmt, ...)
 	return sv;
 }
 
-static char *
+KC_PUBLIC char *
 fmt_str(const char *fmt, ...)
 {
 	va_list ap;
@@ -42,13 +31,13 @@ fmt_str(const char *fmt, ...)
 	return sv.ptr;
 }
 
-static void
+KC_PUBLIC void
 append_line(struct lines *lines, char *str)
 {
 	da_append(lines, str);
 }
 
-static char *
+KC_PUBLIC char *
 concat_lines(struct lines *lines, const char *delim)
 {
 	assert(lines->len > 0);
@@ -73,7 +62,7 @@ concat_lines(struct lines *lines, const char *delim)
 	return str;
 }
 
-static char *
+KC_PUBLIC char *
 strjoin(const char *s1, const char *s2, const char *delim)
 {
 	size_t s1_len = strlen(s1);
@@ -92,7 +81,7 @@ strjoin(const char *s1, const char *s2, const char *delim)
 	return cat;
 }
 
-static char *
+KC_PUBLIC char *
 subst_file_suffix(const char *file_name, const char *prefix)
 {
 	const char *end_ptr = strrchr(file_name, '.');
@@ -112,7 +101,7 @@ subst_file_suffix(const char *file_name, const char *prefix)
 	return new_name;
 }
 
-static struct strview
+KC_PRIVATE struct strview
 current_line(struct token *tloc)
 {
 	size_t begin = tloc->offset;
@@ -125,9 +114,9 @@ current_line(struct token *tloc)
 	};
 }
 
-static const char *wiggly_line = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
+KC_PRIVATE const char *wiggly_line = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
 
-static void
+KC_PUBLIC void
 log_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
 		   const char *fmt, va_list ap)
 {
@@ -146,7 +135,7 @@ log_errorv(const char *filename, struct token *tloc, const char *debug_file, int
 #endif
 }
 
-static void
+KC_PUBLIC void
 log_error_impl(const char *filename, struct token *tloc,
 			   const char *debug_file, int debug_line, const char *fmt, ...)
 {

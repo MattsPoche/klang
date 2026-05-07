@@ -24,20 +24,13 @@ TODOS:
 
 #include <dlfcn.h>
 #include <unistd.h>
-#include "common.h"
-#include "da.h"
-#define STRVIEW_IMPLEMENTATION
-#include "strview.h"
-#include "ast.h"
-#include "log.h"
-#include "lex.h"
-#include "scope.h"
-#include "parse.h"
-#include "type.h"
-#include "ir.h"
-#include "linux_system_v_x86_64.h"
-#include "cmd_flags.h"
 
+#ifdef UNITY_BUILD
+
+#define KC_PUBLIC      static
+#define KC_PUBLIC_DATA static
+
+#include "common.h"
 #include "log.c"
 #include "lex.c"
 #include "scope.c"
@@ -47,7 +40,17 @@ TODOS:
 #include "linux_system_v_x86_64.c"
 #include "cmd_flags.c"
 
-static struct asm_module *
+#else
+
+#include "common.h"
+
+#endif
+
+#define STRVIEW_IMPLEMENTATION
+#include "strview.h"
+#include "cmd_flags.h"
+
+KC_PRIVATE struct asm_module *
 compile_file(const char *filename, struct asm_module *asm_mod, bool is_dll)
 {
 	struct strview sv = {0};
@@ -110,7 +113,7 @@ compile_file(const char *filename, struct asm_module *asm_mod, bool is_dll)
 	return asm_mod;
 }
 
-static int
+KC_PRIVATE int
 run_cmd(struct lines *args)
 {
 	char *cmd_str = concat_lines(args, " ");
@@ -122,7 +125,7 @@ run_cmd(struct lines *args)
 
 // as --gdwarf-5 --64 syntax.s -o syntax.o
 // ld -dynamic-linker /lib/ld-linux-x86-64.so.2 /usr/lib/crt1.o /usr/lib/crti.o -lc syntax.o /usr/lib/crtn.o
-static int
+KC_PRIVATE int
 assemble_module(struct asm_module *mod, char *target, bool debug)
 {
 	struct lines cmd = {0};
@@ -142,7 +145,7 @@ assemble_module(struct asm_module *mod, char *target, bool debug)
 	return c;
 }
 
-static int
+KC_PRIVATE int
 assemble_file(char *filename, char *target, bool debug)
 {
 	struct lines cmd = {0};
@@ -159,7 +162,7 @@ assemble_file(char *filename, char *target, bool debug)
 	return c;
 }
 
-static int
+KC_PRIVATE int
 link_object_files(struct lines *obj_files, char *target, bool is_dll)
 {
 	struct lines cmd = {0};
@@ -178,7 +181,7 @@ link_object_files(struct lines *obj_files, char *target, bool is_dll)
 	return c;
 }
 
-static int
+KC_PRIVATE int
 run(char *source_file, const char *dll_file)
 {
 	void *handle = dlopen(dll_file, RTLD_NOW);
@@ -197,14 +200,14 @@ run(char *source_file, const char *dll_file)
 	return c;
 }
 
-static Cmd_args
+KC_PRIVATE Cmd_args
 fh_set_bool_flag(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
 {
 	*(bool *)data = true;
 	return cmd_args_next(args);
 }
 
-static Cmd_args
+KC_PRIVATE Cmd_args
 fh_set_output_file(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
 {
 	args = cmd_args_next(args);
@@ -213,7 +216,7 @@ fh_set_output_file(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args ar
 	return cmd_args_next(args);
 }
 
-static Cmd_args
+KC_PRIVATE Cmd_args
 fh_default_handler(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
 {
 	static char input[PATH_MAX];

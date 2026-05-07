@@ -1,9 +1,6 @@
-#pragma once
-
 #include "common.h"
-#include "linux_system_v_x86_64.h"
 
-static const enum asm_register asm_reg_alloc_ord[ASM_REG_COUNT] = {
+KC_PRIVATE const enum asm_register asm_reg_alloc_ord[ASM_REG_COUNT] = {
 	asm_reg_rdi,
 	asm_reg_rsi,
 	asm_reg_rcx,
@@ -20,7 +17,7 @@ static const enum asm_register asm_reg_alloc_ord[ASM_REG_COUNT] = {
 	asm_reg_r15,
 };
 
-static const enum asm_register asm_arg_regs[ASM_ARG_REG_COUNT] = {
+KC_PRIVATE const enum asm_register asm_arg_regs[ASM_ARG_REG_COUNT] = {
 	asm_reg_rdi,
 	asm_reg_rsi,
 	asm_reg_rdx,
@@ -29,12 +26,12 @@ static const enum asm_register asm_arg_regs[ASM_ARG_REG_COUNT] = {
 	asm_reg_r9,
 };
 
-static const enum asm_register asm_ret_regs[] = {
+KC_PRIVATE const enum asm_register asm_ret_regs[] = {
 	asm_reg_rax,
 	asm_reg_rdx,
 };
 
-static const enum asm_register asm_caller_save_regs[] = {
+KC_PRIVATE const enum asm_register asm_caller_save_regs[] = {
 	asm_reg_rax,
 	asm_reg_rdi,
 	asm_reg_rsi,
@@ -46,7 +43,7 @@ static const enum asm_register asm_caller_save_regs[] = {
 	asm_reg_r11,
 };
 
-static const enum asm_register asm_callee_save_regs[] = {
+KC_PRIVATE const enum asm_register asm_callee_save_regs[] = {
 	asm_reg_rbx,
 	asm_reg_r12,
 	asm_reg_r13,
@@ -54,7 +51,7 @@ static const enum asm_register asm_callee_save_regs[] = {
 	asm_reg_r15,
 };
 
-static const char *asm_reg_b_name[ASM_REG_COUNT] = {
+KC_PRIVATE const char *asm_reg_b_name[ASM_REG_COUNT] = {
 	[asm_reg_rax] = "%al",
 	[asm_reg_rdx] = "%dl",
 	[asm_reg_rdi] = "%dil",
@@ -71,7 +68,7 @@ static const char *asm_reg_b_name[ASM_REG_COUNT] = {
 	[asm_reg_r15] = "%r15b",
 };
 
-static const char *asm_reg_w_name[ASM_REG_COUNT] = {
+KC_PRIVATE const char *asm_reg_w_name[ASM_REG_COUNT] = {
 	[asm_reg_rax] = "%ax",
 	[asm_reg_rdx] = "%dx",
 	[asm_reg_rdi] = "%di",
@@ -88,7 +85,7 @@ static const char *asm_reg_w_name[ASM_REG_COUNT] = {
 	[asm_reg_r15] = "%r15w"
 };
 
-static char *asm_reg_d_name[ASM_REG_COUNT] = {
+KC_PRIVATE char *asm_reg_d_name[ASM_REG_COUNT] = {
 	[asm_reg_rax] = "%eax",
 	[asm_reg_rdx] = "%edx",
 	[asm_reg_rdi] = "%edi",
@@ -105,7 +102,7 @@ static char *asm_reg_d_name[ASM_REG_COUNT] = {
 	[asm_reg_r15] = "%r15d",
 };
 
-static const char *asm_reg_q_name[ASM_REG_COUNT] = {
+KC_PRIVATE const char *asm_reg_q_name[ASM_REG_COUNT] = {
 	[asm_reg_rax] = "%rax",
 	[asm_reg_rdx] = "%rdx",
 	[asm_reg_rdi] = "%rdi",
@@ -122,7 +119,17 @@ static const char *asm_reg_q_name[ASM_REG_COUNT] = {
 	[asm_reg_r15] = "%r15",
 };
 
-static const char *
+KC_PRIVATE int asm_get_register_owner(struct asm_context *ctx, enum asm_register reg);
+KC_PRIVATE bool asm_register_assigned_p(struct asm_context *ctx, enum asm_register reg);
+KC_PRIVATE int asm_reserve_register(struct asm_context *ctx, enum asm_register reg, int local);
+KC_PRIVATE enum asm_register asm_assign_callee_save_register(struct asm_context *ctx, int local);
+KC_PRIVATE enum asm_register asm_emit_move_to_callee_save(struct asm_address *addr, struct asm_procedure *code);
+KC_PRIVATE enum asm_register asm_force_reserve_register(struct asm_context *ctx, struct asm_procedure *code,
+													enum asm_register reg, int local);
+KC_PRIVATE enum asm_register asm_assign_register(struct asm_context *ctx, int local);
+KC_PRIVATE void asm_unassign_register(struct asm_context *ctx, enum asm_register reg);
+
+KC_PRIVATE const char *
 asm_addr_tag_to_str(enum asm_addr_tag tag)
 {
 	switch (tag) {
@@ -147,7 +154,7 @@ asm_addr_tag_to_str(enum asm_addr_tag tag)
 	return NULL;
 }
 
-static int
+KC_PRIVATE int
 count_set_bits(uint64_t n)
 {
 	int c;
@@ -155,15 +162,7 @@ count_set_bits(uint64_t n)
 	return c;
 }
 
-static uintptr_t
-align_adjust(uintptr_t x, uintptr_t alignment)
-{ /* alignment should be a non-zero power of two */
-	if (alignment == 1) return x;
-	uintptr_t mask = alignment - 1;
-	return x & mask ? (x & ~mask) + alignment : x;
-}
-
-static void
+KC_PRIVATE void
 mem_copy_segment_count(size_t sz, uint32_t counts[4])
 {
 	counts[0] = sz / 8;	// 64 bits
@@ -175,7 +174,7 @@ mem_copy_segment_count(size_t sz, uint32_t counts[4])
 	counts[3] = sz;     // 8 bits
 }
 
-static const char *
+KC_PRIVATE const char *
 asm_reg_name(enum asm_register reg, KCType *type)
 {
 	assert(type_is_floating_point(type) == false);
@@ -195,7 +194,7 @@ asm_reg_name(enum asm_register reg, KCType *type)
 	return NULL;
 }
 
-UNUSED static bool
+UNUSED KC_PRIVATE bool
 asm_is_caller_save(enum asm_register reg)
 {
 	for (size_t i = 0; i < ARRAY_LENGTH(asm_caller_save_regs); ++i) {
@@ -204,7 +203,7 @@ asm_is_caller_save(enum asm_register reg)
 	return false;
 }
 
-static int
+KC_PRIVATE int
 asm_suffix(KCType *type)
 {
 	assert(type_is_floating_point(type) == false);
@@ -218,7 +217,7 @@ asm_suffix(KCType *type)
 	return 0;
 }
 
-static void
+KC_PRIVATE void
 asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx)
 {
 	da_foreach(x, &blk->args) {
@@ -510,7 +509,7 @@ asm_context_first_pass(struct ir_blk *blk, struct asm_context *ctx)
 	}
 }
 
-static struct asm_context *
+KC_PRIVATE struct asm_context *
 asm_create_context(struct ir_proc *proc, struct da_pointers *blocks, struct asm_context *ctx)
 {
 	ctx->varc = proc->regc;
@@ -552,29 +551,19 @@ asm_create_context(struct ir_proc *proc, struct da_pointers *blocks, struct asm_
 	return ctx;
 }
 
-static int asm_get_register_owner(struct asm_context *ctx, enum asm_register reg);
-static bool asm_register_assigned_p(struct asm_context *ctx, enum asm_register reg);
-static int asm_reserve_register(struct asm_context *ctx, enum asm_register reg, int local);
-static enum asm_register asm_assign_callee_save_register(struct asm_context *ctx, int local);
-static enum asm_register asm_emit_move_to_callee_save(struct asm_address *addr, struct asm_procedure *code);
-static enum asm_register asm_force_reserve_register(struct asm_context *ctx, struct asm_procedure *code,
-													enum asm_register reg, int local);
-static enum asm_register asm_assign_register(struct asm_context *ctx, int local);
-static void asm_unassign_register(struct asm_context *ctx, enum asm_register reg);
-
-static int
+KC_PRIVATE int
 asm_get_register_owner(struct asm_context *ctx, enum asm_register reg)
 {
 	return ctx->assigned[reg];
 }
 
-static bool
+KC_PRIVATE bool
 asm_register_assigned_p(struct asm_context *ctx, enum asm_register reg)
 {
 	return ctx->assigned[reg] != REG_FREE;
 }
 
-static int
+KC_PRIVATE int
 asm_reserve_register(struct asm_context *ctx, enum asm_register reg, int local)
 {
 	if (ctx->assigned[reg] == local) return reg;
@@ -592,7 +581,7 @@ asm_reserve_register(struct asm_context *ctx, enum asm_register reg, int local)
 	return reg;
 }
 
-static enum asm_register
+KC_PRIVATE enum asm_register
 asm_assign_callee_save_register(struct asm_context *ctx, int local)
 {
 	enum asm_register reg;
@@ -606,7 +595,7 @@ asm_assign_callee_save_register(struct asm_context *ctx, int local)
 	return reg;
 }
 
-static enum asm_register
+KC_PRIVATE enum asm_register
 asm_emit_move_to_callee_save(struct asm_address *addr, struct asm_procedure *code)
 {
 	if (addr->tag != ADDR_REGISTER) FAILWITH("addr->tag = %s", asm_addr_tag_to_str(addr->tag));
@@ -622,7 +611,7 @@ asm_emit_move_to_callee_save(struct asm_address *addr, struct asm_procedure *cod
 	return reg;
 }
 
-static enum asm_register
+KC_PRIVATE enum asm_register
 asm_force_reserve_register(struct asm_context *ctx, struct asm_procedure *code, enum asm_register reg, int local)
 {
 	if (ctx->assigned[reg] == local) return reg;
@@ -633,7 +622,7 @@ asm_force_reserve_register(struct asm_context *ctx, struct asm_procedure *code, 
 	return reg;
 }
 
-static enum asm_register
+KC_PRIVATE enum asm_register
 asm_assign_register(struct asm_context *ctx, int local)
 {
 	enum asm_register reg;
@@ -647,19 +636,19 @@ asm_assign_register(struct asm_context *ctx, int local)
 	return reg;
 }
 
-static void
+KC_PRIVATE void
 asm_unassign_register(struct asm_context *ctx, enum asm_register reg)
 {
 	ctx->assigned[reg] = REG_FREE;
 }
 
-static bool
+KC_PRIVATE bool
 can_optimize_red_zone(struct asm_context *ctx)
 {
 	return ctx->is_leaf && ctx->stack_size <= RED_ZONE_SIZE;
 }
 
-static const char *
+KC_PRIVATE const char *
 ir_object_link_name(struct ir_toplevel *tl, union ir_object *obj)
 {
 	static char buf[400];
@@ -671,11 +660,11 @@ ir_object_link_name(struct ir_toplevel *tl, union ir_object *obj)
 	return buf;
 }
 
-static const char *
+KC_PRIVATE const char *
 asm_source_operand_to_str(struct asm_address *src, KCType *type,
 						  struct asm_context *ctx, struct ir_toplevel *tl)
 {
-	static char buf[0xff] = {0};
+	KC_PRIVATE char buf[0xff] = {0};
 	const char *s = buf;
 	switch (src->tag) {
 	case ADDR_REGISTER:
@@ -712,7 +701,7 @@ asm_source_operand_to_str(struct asm_address *src, KCType *type,
 	return s;
 }
 
-static void
+KC_PRIVATE void
 asm_unassign_blk_arg_register(struct asm_context *ctx, int blk_arg)
 {
 	struct asm_address *b = &ctx->vars[blk_arg];
@@ -743,7 +732,7 @@ asm_unassign_blk_arg_register(struct asm_context *ctx, int blk_arg)
 
 #define MATCH_ADDR2(_a0, _a1) (_v0->tag == (_a0) && _v1->tag == (_a1))
 
-static void
+KC_PRIVATE void
 emit_mem_cpy_code(struct asm_procedure *code,
 				  const char *dst_name, int64_t dst_offset,
 				  const char *src_name, int64_t src_offset,
@@ -806,7 +795,7 @@ emit_mem_cpy_code(struct asm_procedure *code,
 	asm_unassign_register(ctx, tmp);
 }
 
-static void
+KC_PRIVATE void
 emit_op_mov_ADDR_REGISTER__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_mov);
@@ -822,7 +811,7 @@ emit_op_mov_ADDR_REGISTER__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_
 					asm_reg_q_name[dst->as.i]));
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_REGISTER__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_load);
@@ -843,7 +832,7 @@ emit_op_load_ADDR_REGISTER__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm
 					asm_reg_name(dst->as.i, ins->type)));
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_load);
@@ -865,7 +854,7 @@ emit_op_load_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct 
 					asm_reg_name(dst->as.i, ins->type)));
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_WIDE__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_load);
@@ -887,7 +876,7 @@ emit_op_load_ADDR_WIDE__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_pro
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_WIDE__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_load);
@@ -926,7 +915,7 @@ emit_op_load_ADDR_WIDE__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_loadglobl);
@@ -960,7 +949,7 @@ emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct asm_procedure *code
 									 asm_reg_q_name[dst->as.wide[1]]));
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_loadglobl);
@@ -988,7 +977,7 @@ emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct asm_procedure *
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_load_ADDR_PUSH_ARG__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_load);
@@ -1034,7 +1023,7 @@ emit_op_load_ADDR_PUSH_ARG__ADDR_STACK(IR_Ins *ins, UNUSED void *dat, struct asm
 	asm_unassign_register(ctx, tmp);
 }
 
-static void
+KC_PRIVATE void
 emit_op_loadimm_ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_loadimm);
@@ -1049,7 +1038,7 @@ emit_op_loadimm_ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedur
 					asm_reg_name(dst->as.i, ins->type)));
 }
 
-static void
+KC_PRIVATE void
 emit_op_loadimm_ADDR_PUSH_ARG(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_loadimm);
@@ -1059,7 +1048,7 @@ emit_op_loadimm_ADDR_PUSH_ARG(IR_Ins *ins, UNUSED void *dat, struct asm_procedur
 	append_line(&code->body, fmt_str("\tpushq $%d\n", ins->arg.i32));
 }
 
-static void
+KC_PRIVATE void
 emit_op_neg_ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_neg);
@@ -1076,7 +1065,7 @@ emit_op_neg_ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct as
 					asm_reg_name(dst->as.i, ins->type)));
 }
 
-static void
+KC_PRIVATE void
 emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_cast);
@@ -1113,7 +1102,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void *dat, struc
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_cast_ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_cast);
@@ -1134,7 +1123,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct a
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_cast);
@@ -1173,7 +1162,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct 
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_conslice);
@@ -1206,7 +1195,7 @@ emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_IMM_INT(IR_Ins *ins, UNUSED void
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_conslice);
@@ -1229,7 +1218,7 @@ emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED voi
 	}
 }
 
-static void
+KC_PRIVATE void
 emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_conslice);
@@ -1255,7 +1244,7 @@ emit_op_conslice_ADDR_WIDE__ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED v
 					asm_reg_q_name[dst->as.wide[1]]));
 }
 
-static void
+KC_PRIVATE void
 emit_op_conslice_ADDR_WIDE__ADDR_STACK__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *dat, struct asm_procedure *code)
 {
 	assert(ins->op == ir_op_conslice);
@@ -1279,7 +1268,7 @@ emit_op_conslice_ADDR_WIDE__ADDR_STACK__ADDR_IMM_INT(IR_Ins *ins, UNUSED void *d
 					asm_reg_q_name[dst->as.wide[1]]));
 }
 
-static void
+KC_PRIVATE void
 emit_basic_op_ADDR_REGISTER__ADDR_STACK_LOAD__ADDR_IMM_INT(IR_Ins *ins, void *dat, struct asm_procedure *code)
 {
 	struct asm_context *ctx = &code->ctx;
@@ -1306,9 +1295,9 @@ emit_basic_op_ADDR_REGISTER__ADDR_STACK_LOAD__ADDR_IMM_INT(IR_Ins *ins, void *da
 					dst_name));
 }
 
-static void defer_emit_div_mod(IR_Ins *ins, void *dat, struct asm_procedure *code);
+KC_PRIVATE void defer_emit_div_mod(IR_Ins *ins, void *dat, struct asm_procedure *code);
 
-static void
+KC_PRIVATE void
 asm_emit_div_mod(IR_Ins *ins, struct asm_procedure *code, bool remainder_p)
 {
 	struct asm_context *ctx = &code->ctx;
@@ -1436,7 +1425,7 @@ asm_emit_div_mod(IR_Ins *ins, struct asm_procedure *code, bool remainder_p)
 	if (rax_in_use) append_line(&code->body, strdup("\tpopq %rax\n"));
 }
 
-static void
+KC_PRIVATE void
 defer_emit_div_mod(IR_Ins *ins, void *dat, struct asm_procedure *code)
 {
 	struct asm_context *ctx = &code->ctx;
@@ -1448,7 +1437,7 @@ defer_emit_div_mod(IR_Ins *ins, void *dat, struct asm_procedure *code)
 	dst->tag = ADDR_ARGUMENT;
 }
 
-static void
+KC_PRIVATE void
 asm_emit_basic_op(const char *asm_op, IR_Ins *ins, struct asm_address *dst,
 				  struct asm_address *x, struct asm_address *y,
 				  struct ir_toplevel *tl, struct asm_procedure *code)
@@ -1706,7 +1695,7 @@ asm_emit_basic_op(const char *asm_op, IR_Ins *ins, struct asm_address *dst,
 	}
 }
 
-static void
+KC_PRIVATE void
 asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *proc,
 			   struct ir_toplevel *tl, struct asm_procedure *code)
 {
@@ -2897,7 +2886,7 @@ asm_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_proc *proc,
 	}
 }
 
-static void
+KC_PRIVATE void
 asm_emit_callee_save_code(size_t offset, struct asm_procedure *code)
 {
 	struct asm_context *ctx = &code->ctx;
@@ -2912,7 +2901,7 @@ asm_emit_callee_save_code(size_t offset, struct asm_procedure *code)
 	}
 }
 
-static void
+KC_PRIVATE void
 asm_emit_prologue_and_epilogue(struct ir_proc *proc, struct asm_procedure *code)
 {
 	struct asm_context *ctx = &code->ctx;
@@ -2959,7 +2948,7 @@ asm_emit_prologue_and_epilogue(struct ir_proc *proc, struct asm_procedure *code)
 	append_line(&code->epilogue, strdup("\tret\n"));
 }
 
-static void
+KC_PUBLIC void
 asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_procedure *code)
 {
 	struct da_pointers blks = ir_blk_reverse_post_order(proc->entry);
@@ -2971,7 +2960,7 @@ asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_proc
 	da_free(&blks);
 }
 
-static void
+KC_PUBLIC void
 asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data)
 {
 	if (!data->is_static) {
@@ -3001,7 +2990,7 @@ asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data)
 	}
 }
 
-static void
+KC_PRIVATE void
 dump_lines(struct lines *asm_lines, FILE *file)
 {
 	da_foreach(line, asm_lines) {
@@ -3009,7 +2998,7 @@ dump_lines(struct lines *asm_lines, FILE *file)
 	}
 }
 
-static void
+KC_PUBLIC void
 asm_dump_procedure(struct asm_procedure *proc, FILE *file)
 {
 	dump_lines(&proc->prologue, file);
@@ -3017,14 +3006,14 @@ asm_dump_procedure(struct asm_procedure *proc, FILE *file)
 	dump_lines(&proc->epilogue, file);
 }
 
-static void
+KC_PRIVATE void
 asm_dump_data(struct asm_datum *data, FILE *file)
 {
 	dump_lines(&data->body, file);
 }
 
 
-static void
+KC_PUBLIC void
 asm_dump_module(struct asm_module *mod, FILE *file)
 {
 	for (size_t i = 0; i < mod->data.len; ++i) {

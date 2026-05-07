@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stdint.h"
+
 /* Command line flags parsing */
 
 typedef struct cmd_args Cmd_args;

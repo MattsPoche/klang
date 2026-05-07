@@ -1,12 +1,6 @@
-#pragma once
-
 #include "common.h"
-#include "da.h"
-#include "strview.h"
-#include "ast.h"
-#include "log.h"
-#include "lex.h"
-#include "parse.h"
+
+/* --- TYPE-CHECKER --- */
 
 struct type_var_bindings {
 	uint32_t len, cap;
@@ -15,29 +9,39 @@ struct type_var_bindings {
 	} *elems;
 };
 
-/* --- TYPE-CHECKER --- */
+KC_PUBLIC KCType AST_TYPE_BOOL   = {.tag = ast_type_bool};
+KC_PUBLIC KCType AST_TYPE_VOID   = {.tag = ast_type_void};
+KC_PUBLIC KCType AST_TYPE_U8	 = {.tag = ast_type_u8};
+KC_PUBLIC KCType AST_TYPE_U16	 = {.tag = ast_type_u16};
+KC_PUBLIC KCType AST_TYPE_U32	 = {.tag = ast_type_u32};
+KC_PUBLIC KCType AST_TYPE_U64    = {.tag = ast_type_u64};
+KC_PUBLIC KCType AST_TYPE_I8     = {.tag = ast_type_i8};
+KC_PUBLIC KCType AST_TYPE_I16    = {.tag = ast_type_i16};
+KC_PUBLIC KCType AST_TYPE_I32    = {.tag = ast_type_i32};
+KC_PUBLIC KCType AST_TYPE_I64    = {.tag = ast_type_i64};
+KC_PUBLIC KCType AST_TYPE_F32    = {.tag = ast_type_f32};
+KC_PUBLIC KCType AST_TYPE_F64    = {.tag = ast_type_f64};
+KC_PUBLIC KCType AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
 
-static KCType *infer_type(Parser *p, struct typing_context ctx, struct expression *exp);
-static bool unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u);
-static KCType *type_var_subst(KCType *type, struct type_var_bindings *bindings);
-static KCType *resolve_alias(Parser *p, KCType *t, struct scope *scope);
-struct expression *ast_desugar(Parser *p, struct expression *exp, struct scope *scope);
-static KCType *fresh_type_var(enum type_class c);
-static void add_type_var_binding(struct type_var_bindings *bindings, KCType *var, KCType *type);
-static KCType *find_type_var_binding(struct type_var_bindings *bindings, KCType *var);
-static KCType *instantiate_type_scheme(struct type_scheme *scm);
-static void type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm);
-static struct type_env *lookup_type_env(struct typing_context *ctx, struct token *var);
-static struct type_scheme generalize_type(struct typing_context *ctx, KCType *type);
-static KCType *type_recursive_find(KCType *type);
-static void specialize_generic_procedure(Parser *p, struct typing_context ctx, struct definition *def,
+KC_PRIVATE KCType *infer_type(Parser *p, struct typing_context ctx, struct expression *exp);
+KC_PRIVATE bool unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u);
+KC_PRIVATE KCType *type_var_subst(KCType *type, struct type_var_bindings *bindings);
+KC_PRIVATE KCType *resolve_alias(Parser *p, KCType *t, struct scope *scope);
+KC_PRIVATE KCType *fresh_type_var(enum type_class c);
+KC_PRIVATE void add_type_var_binding(struct type_var_bindings *bindings, KCType *var, KCType *type);
+KC_PRIVATE KCType *find_type_var_binding(struct type_var_bindings *bindings, KCType *var);
+KC_PRIVATE KCType *instantiate_type_scheme(struct type_scheme *scm);
+KC_PRIVATE void type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm);
+KC_PRIVATE struct type_env *lookup_type_env(struct typing_context *ctx, struct token *var);
+KC_PRIVATE struct type_scheme generalize_type(struct typing_context *ctx, KCType *type);
+KC_PRIVATE void specialize_generic_procedure(Parser *p, struct typing_context ctx, struct definition *def,
 										 struct type_spec *spec_def);
-static struct definition specialize_definition(Parser *p, struct typing_context ctx, struct definition *def,
+KC_PRIVATE struct definition specialize_definition(Parser *p, struct typing_context ctx, struct definition *def,
 											   struct type_var_bindings *bindings);
-static struct expression *specialize_expression(Parser *p, struct typing_context ctx,
+KC_PRIVATE struct expression *specialize_expression(Parser *p, struct typing_context ctx,
 												struct expression *exp, struct type_var_bindings *bindings);
 
-static KCType *
+KC_PRIVATE KCType *
 type_application(Parser *p, struct type_app *app, struct scope *scope)
 {
 	struct type_definition *def = lookup_type(scope, token_to_strview(app->cons));
@@ -57,7 +61,7 @@ type_application(Parser *p, struct type_app *app, struct scope *scope)
 	return newtype;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 type_get_underlying(struct scope *scope, KCType *type, KCType **out_type)
 {
 	type = type_find(type);
@@ -73,7 +77,7 @@ type_get_underlying(struct scope *scope, KCType *type, KCType **out_type)
 	return type;
 }
 
-static void
+KC_PRIVATE void
 fprint_full_type_name(Parser *p, struct typing_context ctx, KCType *t, FILE *f)
 {
 	KCType *u = resolve_alias(p, t, ctx.scope);
@@ -86,7 +90,7 @@ fprint_full_type_name(Parser *p, struct typing_context ctx, KCType *t, FILE *f)
 	fputs("`", f);
 }
 
-static void
+KC_PRIVATE void
 type_mismatch_error(Parser *p, struct typing_context ctx, KCType *t, KCType *u,
 					struct token *tok, char *debug_file, int debug_line)
 {
@@ -108,7 +112,7 @@ type_mismatch_error(Parser *p, struct typing_context ctx, KCType *t, KCType *u,
 	EXIT(1);
 }
 
-static KCType *
+KC_PUBLIC KCType *
 resolve_type(Parser *p, KCType *type, struct scope *scope)
 {
 	type = type_find(type);
@@ -188,14 +192,14 @@ resolve_type(Parser *p, KCType *type, struct scope *scope)
 	return NULL;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_var(KCType *t)
 {
 	t = type_find(t);
 	return t->tag == ast_type_var;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_integer(KCType *t)
 {
 	t = type_find(t);
@@ -234,7 +238,7 @@ type_is_integer(KCType *t)
 	}
 }
 
-static bool
+KC_PUBLIC bool
 type_is_signed_integer(KCType *t)
 {
 	t = type_find(t);
@@ -274,7 +278,7 @@ type_is_signed_integer(KCType *t)
 	}
 }
 
-static bool
+KC_PUBLIC bool
 type_is_unsigned_integer(KCType *t)
 {
 	t = type_find(t);
@@ -314,7 +318,8 @@ type_is_unsigned_integer(KCType *t)
 	}
 }
 
-static bool type_is_floating_point(KCType *t)
+KC_PUBLIC bool
+type_is_floating_point(KCType *t)
 {
 	t = type_find(t);
 	switch (t->tag) {
@@ -353,7 +358,7 @@ static bool type_is_floating_point(KCType *t)
 	}
 }
 
-static bool
+KC_PUBLIC bool
 type_is_numeric_scalar(KCType *t)
 {
 	t = type_find(t);
@@ -393,35 +398,35 @@ type_is_numeric_scalar(KCType *t)
 	}
 }
 
-static bool
+KC_PUBLIC bool
 type_is_signed_scalar(KCType *t)
 {
 	t = type_find(t);
 	return type_is_signed_integer(t) || type_is_floating_point(t);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_bool(KCType *t)
 {
 	t = type_find(t);
 	return t->tag == ast_type_bool;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_void(KCType *t)
 {
 	t = type_find(t);
 	return t->tag == ast_type_void;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_procedure(KCType *t)
 {
 	t = type_find(t);
 	return t->tag == ast_type_proc;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_pointer(KCType *t)
 {
 	t = type_find(t);
@@ -429,7 +434,7 @@ type_is_pointer(KCType *t)
 		|| t->tag == ast_type_mut_ptr;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_struct(KCType *t, struct scope *scope)
 {
 	t = type_find(t);
@@ -438,7 +443,7 @@ type_is_struct(KCType *t, struct scope *scope)
 	return t->tag == ast_type_struct;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_struct_ptr(KCType *t, struct scope *scope)
 {
 	t = type_find(t);
@@ -447,7 +452,7 @@ type_is_struct_ptr(KCType *t, struct scope *scope)
 	return type_is_pointer(t) && type_is_struct(t->as.ptr, scope);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_union(KCType *t, struct scope *scope)
 {
 	t = type_find(t);
@@ -456,7 +461,7 @@ type_is_union(KCType *t, struct scope *scope)
 	return t->tag == ast_type_union;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_union_ptr(KCType *t, struct scope *scope)
 {
 	t = type_find(t);
@@ -465,14 +470,14 @@ type_is_union_ptr(KCType *t, struct scope *scope)
 	return type_is_pointer(t) && type_is_union(t->as.ptr, scope);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_array(KCType *t)
 {
 	t = type_find(t);
 	return t->tag == ast_type_array;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_array_ptr(KCType *t)
 {
 	t = type_find(t);
@@ -480,7 +485,7 @@ type_is_array_ptr(KCType *t)
 		&& type_is_array(t->as.ptr);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_slice(KCType *t)
 {
 	t = type_find(t);
@@ -488,7 +493,7 @@ type_is_slice(KCType *t)
 		|| t->tag == ast_type_mut_slice;
 }
 
-UNUSED static bool
+UNUSED KC_PUBLIC bool
 type_is_slice_ptr(KCType *t)
 {
 	t = type_find(t);
@@ -496,14 +501,14 @@ type_is_slice_ptr(KCType *t)
 		&& type_is_slice(t->as.ptr);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_indexable(KCType *t)
 {
 	t = type_find(t);
 	return type_is_array(t) || type_is_array_ptr(t) || type_is_slice(t);
 }
 
-static KCType *
+KC_PRIVATE KCType *
 get_slice_pointer(KCType *t)
 {
 	KCType *arr = MEM_ALLOC(KCType);
@@ -526,7 +531,7 @@ get_slice_pointer(KCType *t)
 	return ptr;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 get_indexable_base_type(KCType *t)
 {
 	t = type_find(t);
@@ -537,7 +542,7 @@ get_indexable_base_type(KCType *t)
 	return NULL;
 }
 
-static bool
+KC_PRIVATE bool
 type_has_length(KCType *t, struct scope *scope)
 {
 	t = type_find(t);
@@ -548,14 +553,14 @@ type_has_length(KCType *t, struct scope *scope)
 	return type_is_slice(t);
 }
 
-static bool
+KC_PUBLIC bool
 type_is_scalar(KCType *t)
 {
 	t = type_find(t);
 	return type_is_numeric_scalar(t) || type_is_pointer(t) || type_is_bool(t);
 }
 
-static bool
+KC_PRIVATE bool
 type_contains_var(KCType *t)
 {
 	t = type_find(t);
@@ -611,14 +616,14 @@ type_contains_var(KCType *t)
 	return false;
 }
 
-static bool
+KC_PUBLIC bool
 type_is_polymorphic(KCType *t)
 {
 	t = type_find(t);
 	return type_is_procedure(t) && type_contains_var(t);
 }
 
-struct struct_type *
+KC_PUBLIC struct struct_type *
 struct_type_members(Parser *p, KCType *type, struct scope *scope)
 {
 	if (type->tag == ast_type_app)
@@ -633,7 +638,7 @@ struct_type_members(Parser *p, KCType *type, struct scope *scope)
 	return NULL;
 }
 
-static KCType *
+KC_PUBLIC KCType *
 type_slice_to_array_ptr(KCType *t)
 {
 	KCType *ptr = MEM_ALLOC(KCType);
@@ -651,7 +656,7 @@ type_slice_to_array_ptr(KCType *t)
 	return ptr;
 }
 
-UNUSED static KCType *
+UNUSED KC_PRIVATE KCType *
 type_array_to_slice(KCType *t, bool mutable_p)
 {
 	KCType *slice = MEM_ALLOC(KCType);
@@ -660,7 +665,7 @@ type_array_to_slice(KCType *t, bool mutable_p)
 	return slice;
 }
 
-static KCType *
+KC_PUBLIC KCType *
 copy_type(KCType *type)
 {
 	KCType *newtype = NULL;
@@ -743,7 +748,7 @@ copy_type(KCType *type)
 	return NULL;
 }
 
-static struct type_spec *
+KC_PUBLIC struct type_spec *
 lookup_poly_proc_spec(Parser *p, struct definition *def, KCType *t, struct scope *scope)
 {
 	assert(def->type->tag == ast_type_proc);
@@ -754,7 +759,7 @@ lookup_poly_proc_spec(Parser *p, struct definition *def, KCType *t, struct scope
 	return NULL;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 resolve_alias(Parser *p, KCType *t, struct scope *scope)
 {
 	if (t->tag == ast_type_app) {
@@ -765,7 +770,7 @@ resolve_alias(Parser *p, KCType *t, struct scope *scope)
 	return t;
 }
 
-static bool
+KC_PUBLIC bool
 type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 {
 	if (t == u) return true;
@@ -836,13 +841,13 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	return false;
 }
 
-static void
+KC_PRIVATE void
 add_type_var_binding(struct type_var_bindings *bindings, KCType *var, KCType *type)
 {
 	da_append(bindings, (struct type_pair){var, type});
 }
 
-static KCType *
+KC_PRIVATE KCType *
 find_type_var_binding(struct type_var_bindings *bindings, KCType *var)
 {
 	var = type_find(var);
@@ -855,7 +860,7 @@ find_type_var_binding(struct type_var_bindings *bindings, KCType *var)
 	return NULL;
 }
 
-static void
+KC_PRIVATE void
 bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindings *bindings,
 						   KCType *poly, KCType *mono)
 {
@@ -933,7 +938,7 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 	FAILWITH("TODO");
 }
 
-static KCType *
+KC_PRIVATE KCType *
 type_var_subst(KCType *type, struct type_var_bindings *bindings)
 {
 	if (type == NULL) return NULL;
@@ -1033,7 +1038,7 @@ type_var_subst(KCType *type, struct type_var_bindings *bindings)
 		UNIFY(ctx, infer_type(p, ctx, _E), u, _E);	\
 	} while (0)
 
-static struct definition
+KC_PRIVATE struct definition
 specialize_definition(Parser *p,
 					  struct typing_context ctx,
 					  struct definition *def,
@@ -1048,7 +1053,7 @@ specialize_definition(Parser *p,
 	};
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 specialize_expression(Parser *p,
 					  struct typing_context ctx,
 					  struct expression *exp,
@@ -1225,7 +1230,7 @@ void specialize_generic_procedure(Parser *p,
 	da_free(&bindings);
 }
 
-UNUSED static KCType *
+UNUSED KC_PRIVATE KCType *
 find_union_member_type(struct union_type *ut, struct token *cons_name)
 {
 	struct strview name = token_to_strview(cons_name);
@@ -1236,7 +1241,7 @@ find_union_member_type(struct union_type *ut, struct token *cons_name)
 	return NULL;
 }
 
-static struct type_env *
+KC_PRIVATE struct type_env *
 lookup_type_env(struct typing_context *ctx, struct token *var)
 {
 	struct strview var_name = token_to_strview(var);
@@ -1247,7 +1252,7 @@ lookup_type_env(struct typing_context *ctx, struct token *var)
 	return env;
 }
 
-UNUSED static bool
+UNUSED KC_PRIVATE bool
 type_occurs_in(KCType *var, KCType *type)
 {
 	var = type_find(var);
@@ -1306,7 +1311,7 @@ type_occurs_in(KCType *var, KCType *type)
 	}
 }
 
-static bool
+KC_PRIVATE bool
 type_var_is_free(struct typing_context *ctx, KCType *var)
 {
 	assert(var->tag == ast_type_var);
@@ -1320,7 +1325,7 @@ type_var_is_free(struct typing_context *ctx, KCType *var)
 	return true;
 }
 
-static void
+KC_PRIVATE void
 build_type_scheme(struct typing_context *ctx, KCType *type, struct type_scheme *scm)
 {
 	switch (type->tag) {
@@ -1375,7 +1380,7 @@ build_type_scheme(struct typing_context *ctx, KCType *type, struct type_scheme *
 	}
 }
 
-static struct type_scheme
+KC_PRIVATE struct type_scheme
 generalize_type(struct typing_context *ctx, KCType *type)
 {
 	struct type_scheme scm = {.type = type};
@@ -1383,7 +1388,7 @@ generalize_type(struct typing_context *ctx, KCType *type)
 	return scm;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 fresh_type_var(enum type_class c)
 {
 	KCType *t = MEM_ALLOC(KCType);
@@ -1392,7 +1397,7 @@ fresh_type_var(enum type_class c)
 	return t;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 fresh_type_var_from(KCType *type)
 {
 	assert(type->tag == ast_type_var);
@@ -1401,7 +1406,7 @@ fresh_type_var_from(KCType *type)
 }
 
 
-static KCType *
+KC_PRIVATE KCType *
 instantiate_type_scheme(struct type_scheme *scm)
 {
 	if (scm->args.len == 0) return scm->type;
@@ -1417,7 +1422,7 @@ instantiate_type_scheme(struct type_scheme *scm)
 	return type;
 }
 
-static KCType *
+KC_PUBLIC KCType *
 type_find(KCType *type)
 {
 	for (; type->tag == ast_type_var; type = type->as.var.forward) {
@@ -1427,7 +1432,7 @@ type_find(KCType *type)
 	return type;
 }
 
-static KCType *
+KC_PUBLIC KCType *
 type_recursive_find(KCType *type)
 {
 	KCType *newtype = NULL;
@@ -1500,7 +1505,7 @@ type_recursive_find(KCType *type)
 	}
 }
 
-static void
+KC_PRIVATE void
 type_var_set_equal_to(KCType *t, KCType *u)
 {
 	t = type_find(t);
@@ -1508,7 +1513,7 @@ type_var_set_equal_to(KCType *t, KCType *u)
 	t->as.var.forward = u;
 }
 
-static bool
+KC_PRIVATE bool
 unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 {
 	t = resolve_alias(p, type_find(t), ctx.scope);
@@ -1851,7 +1856,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	return false;
 }
 
-static bool
+KC_PRIVATE bool
 unify_cast(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 {
 	t = resolve_alias(p, type_find(t), ctx.scope);
@@ -1867,7 +1872,7 @@ unify_cast(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	}
 }
 
-static void
+KC_PRIVATE void
 type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm)
 {
 	struct type_env *env = MEM_ALLOC(struct type_env);
@@ -1877,7 +1882,7 @@ type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme 
 	ctx->env    = env;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 get_valcons_entry_type(struct valcons_entry *e)
 {
 	KCType *u = MEM_ALLOC(KCType);
@@ -1887,7 +1892,7 @@ get_valcons_entry_type(struct valcons_entry *e)
 	return u;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 get_fresh_valcons_entry_type(struct typing_context *ctx, struct valcons_entry *e)
 {
 	KCType *t = get_valcons_entry_type(e);
@@ -1897,7 +1902,7 @@ get_fresh_valcons_entry_type(struct typing_context *ctx, struct valcons_entry *e
 	return u;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 {
 	switch (exp->tag) {
@@ -2325,7 +2330,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	return exp->type = NULL;
 }
 
-static bool
+KC_PRIVATE bool
 specialize(Parser *p, struct typing_context ctx, struct definition *def)
 {
 	bool succ = false;
@@ -2340,7 +2345,7 @@ specialize(Parser *p, struct typing_context ctx, struct definition *def)
 	return succ;
 }
 
-static void
+KC_PUBLIC void
 type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
 {
 	for (size_t i = 0; i < exps->len; ++i) {
@@ -2364,7 +2369,15 @@ type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
 	} while (loop);
 }
 
-static size_t
+KC_PUBLIC uintptr_t
+align_adjust(uintptr_t x, uintptr_t alignment)
+{ /* alignment should be a non-zero power of two */
+	if (alignment == 1) return x;
+	uintptr_t mask = alignment - 1;
+	return x & mask ? (x & ~mask) + alignment : x;
+}
+
+KC_PUBLIC size_t
 type_size(KCType *t)
 {
 	switch (t->tag) {
@@ -2436,7 +2449,7 @@ type_size(KCType *t)
 	}
 }
 
-static size_t
+KC_PUBLIC size_t
 type_alignment(KCType *t)
 {
 	switch (t->tag) {
@@ -2484,7 +2497,7 @@ type_alignment(KCType *t)
 	return 0;
 }
 
-static size_t
+KC_PUBLIC size_t
 struct_member_offset(struct struct_type *st, size_t index)
 {
 	assert(index < st->len);
@@ -2496,7 +2509,7 @@ struct_member_offset(struct struct_type *st, size_t index)
 	return align_adjust(offset, type_alignment(st->elems[index].type));
 }
 
-static size_t
+KC_PUBLIC size_t
 get_struct_member_idx(KCType *t, struct token *mem)
 {
 	assert(t->tag == ast_type_struct);

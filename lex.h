@@ -1,6 +1,7 @@
 #pragma once
 
-#include "strview.h"
+#include "common.h"
+
 #define TAB_WIDTH 4
 
 enum token_type {
@@ -144,7 +145,7 @@ struct lexer {
 	uint32_t column;
 };
 
-static char *token_type_to_str(enum token_type tt);
-static void tokenize(struct lexer *lex, struct token_buffer *tokens);
-static struct strview token_to_strview(struct token *tok);
-static char *show_token(char *str, size_t len, struct token *tok);
+KC_PUBLIC char *token_type_to_str(enum token_type tt);
+KC_PUBLIC void tokenize(struct lexer *lex, struct token_buffer *tokens);
+KC_PUBLIC struct strview token_to_strview(struct token *tok);
+KC_PUBLIC char *show_token(char *str, size_t len, struct token *tok);

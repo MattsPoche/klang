@@ -1,19 +1,6 @@
-#pragma once
+#include "common.h"
 
-#include <assert.h>
-#include <ctype.h>
-#include <limits.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-
-#include "log.h"
-#include "da.h"
-#include "lex.h"
-
-static char *
+KC_PUBLIC char *
 token_type_to_str(enum token_type tt)
 {
 	switch (tt) {
@@ -123,7 +110,7 @@ token_type_to_str(enum token_type tt)
 	}
 }
 
-UNUSED static char *
+KC_PUBLIC char *
 show_token(char *str, size_t len, struct token *tok)
 {
 	snprintf(str, len, "%s(`%.*s`), %d, %d",
@@ -135,7 +122,7 @@ show_token(char *str, size_t len, struct token *tok)
 	return str;
 }
 
-static bool
+KC_PRIVATE bool
 isbrace(int c)
 {
 	static const char braces[] = { '(', ')', '[', ']', '{', '}' };
@@ -145,7 +132,7 @@ isbrace(int c)
 	return false;
 }
 
-static int
+KC_PRIVATE int
 lex_lookahead(struct lexer *lex, size_t n)
 {
 	size_t offset = lex->offset + n;
@@ -156,13 +143,13 @@ lex_lookahead(struct lexer *lex, size_t n)
 	}
 }
 
-static int
+KC_PRIVATE int
 lex_peekc(struct lexer *lex)
 {
 	return lex_lookahead(lex, 0);
 }
 
-static int
+KC_PRIVATE int
 lex_nextc(struct lexer *lex)
 {
 	if (lex->offset >= lex->length) return EOF;
@@ -182,7 +169,7 @@ lex_nextc(struct lexer *lex)
 	return c;
 }
 
-static void
+KC_PRIVATE void
 lex_skip_line(struct lexer *lex)
 {
 	for (;;) {
@@ -191,7 +178,7 @@ lex_skip_line(struct lexer *lex)
 	}
 }
 
-static void
+KC_PRIVATE void
 lex_skip_comment(struct lexer *lex)
 {
 	int c, n;
@@ -210,7 +197,7 @@ lex_skip_comment(struct lexer *lex)
 	}
 }
 
-static void
+KC_PRIVATE void
 lex_skip_ws(struct lexer *lex)
 {
 	for (;;) {
@@ -233,7 +220,7 @@ lex_skip_ws(struct lexer *lex)
 	}
 }
 
-static struct token
+KC_PRIVATE struct token
 make_token(struct lexer *lex)
 {
 	return (struct token) {
@@ -246,7 +233,7 @@ make_token(struct lexer *lex)
 	};
 }
 
-static struct strview
+KC_PUBLIC struct strview
 token_to_strview(struct token *tok)
 {
 	return (struct strview) {
@@ -255,7 +242,7 @@ token_to_strview(struct token *tok)
 	};
 }
 
-static void
+KC_PUBLIC void
 tokenize(struct lexer *lex, struct token_buffer *tokens)
 {
 	for (;;) {

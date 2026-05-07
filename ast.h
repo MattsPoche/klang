@@ -448,19 +448,3 @@ struct expression {
 		} named_init;
 	} as;
 };
-
-KCType AST_TYPE_BOOL   = {.tag = ast_type_bool};
-KCType AST_TYPE_VOID   = {.tag = ast_type_void};
-KCType AST_TYPE_U8	   = {.tag = ast_type_u8};
-KCType AST_TYPE_U16	   = {.tag = ast_type_u16};
-KCType AST_TYPE_U32	   = {.tag = ast_type_u32};
-KCType AST_TYPE_U64    = {.tag = ast_type_u64};
-KCType AST_TYPE_I8     = {.tag = ast_type_i8};
-KCType AST_TYPE_I16    = {.tag = ast_type_i16};
-KCType AST_TYPE_I32    = {.tag = ast_type_i32};
-KCType AST_TYPE_I64    = {.tag = ast_type_i64};
-KCType AST_TYPE_F32    = {.tag = ast_type_f32};
-KCType AST_TYPE_F64    = {.tag = ast_type_f64};
-KCType AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
-
-#define AST_TYPE_UNION_TAG AST_TYPE_I64

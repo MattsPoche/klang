@@ -33,6 +33,7 @@
 		fputc('\n', stderr);											\
 		EXIT(1);														\
 	} while (0)
+
 #define UNUSED __attribute__((unused))
 
 #define ASSERT(_test, _fmt_msg, ...)									\
@@ -48,3 +49,24 @@
 
 #define MEM_ALLOC_ARRAY(type, n) calloc(n, sizeof(type))
 #define MEM_ALLOC(type) MEM_ALLOC_ARRAY(type, 1)
+
+#ifndef KC_PUBLIC
+#    define KC_PUBLIC
+#endif
+
+#ifndef KC_PUBLIC_DATA
+#    define KC_PUBLIC_DATA extern
+#endif
+
+#define KC_PRIVATE static
+
+#include "./da.h"
+#include "./strview.h"
+#include "./ast.h"
+#include "./lex.h"
+#include "./parse.h"
+#include "./type.h"
+#include "./log.h"
+#include "./scope.h"
+#include "./ir.h"
+#include "./linux_system_v_x86_64.h"

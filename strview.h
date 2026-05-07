@@ -3,12 +3,10 @@
 
 #include <assert.h>
 #include <ctype.h>
-#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
-
-#include "common.h"
 
 struct strview {
 	size_t len;
@@ -97,9 +95,9 @@ int escape_char(int c)
 	case '\\': return '\\';
 	case '\'': return '\'';
 	case '\"': return '\"';
-	case 'x': FAILWITH("TODO: escape hex");     break;
-	case 'u': FAILWITH("TODO: escape unicode"); break;
-	case 'U': FAILWITH("TODO: escape unicode"); break;
+	case 'x': assert(false && "TODO: escape hex");     break;
+	case 'u': assert(false && "TODO: escape unicode"); break;
+	case 'U': assert(false && "TODO: escape unicode"); break;
 	}
 	return c;
 }
@@ -191,7 +189,7 @@ bool sv_to_int(struct strview sv, int64_t *out)
 			sv.ptr += 2;
 			sv.len -= 2;
 			return sv_to_int_base16(sv, out);
-		default:  FAILWITH("TODO: unknown base (sv_to_int)."); break;
+		default: assert(false && "TODO: unknown base (sv_to_int)."); break;
 		}
 	}
 	return sv_to_int_base10(sv, out);

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "ir.h"
-
 enum asm_register {
 	/* caller save */
 	asm_reg_rax,
@@ -139,6 +137,7 @@ struct asm_modules {
 #define REG_FREE -1
 #define RED_ZONE_SIZE 128
 
-static void asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_procedure *code);
-static void asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data);
-static void asm_dump_module(struct asm_module *mod, FILE *file);
+KC_PUBLIC void asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_procedure *code);
+KC_PUBLIC void asm_dump_procedure(struct asm_procedure *proc, FILE *file);
+KC_PUBLIC void asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data);
+KC_PUBLIC void asm_dump_module(struct asm_module *mod, FILE *file);

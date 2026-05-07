@@ -1,29 +1,13 @@
-#pragma once
-
-#include <assert.h>
-#include <ctype.h>
-#include <limits.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-
 #include "common.h"
-#include "strview.h"
-#include "lex.h"
-#include "ast.h"
-#include "parse.h"
-#include "log.h"
 
-static const char *ast_binop_to_str(enum binop op);
-static void ast_def_fprint(struct definition *def, FILE *file);
-static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
-static void parse_definition(Parser *p, struct definition *def, struct scope *scope);
-static struct expression *parse_expression(Parser *p, struct scope *scope);
-static KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+KC_PRIVATE const char *ast_binop_to_str(enum binop op);
+KC_PRIVATE void ast_def_fprint(struct definition *def, FILE *file);
+KC_PRIVATE KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+KC_PRIVATE void parse_definition(Parser *p, struct definition *def, struct scope *scope);
+KC_PRIVATE struct expression *parse_expression(Parser *p, struct scope *scope);
+KC_PRIVATE KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 
-static bool
+KC_PUBLIC bool
 exp_is_integer_literal(struct expression *exp)
 {
 	if (exp->tag != ast_exp_literal) return false;
@@ -33,21 +17,21 @@ exp_is_integer_literal(struct expression *exp)
 }
 
 /* --- Parser --- */
-static struct token *
+KC_PRIVATE struct token *
 peek_token2(Parser *p)
 {
 	assert(p->tokens.idx < p->tokens.len - 1);
 	return &p->tokens.elems[p->tokens.idx + 1];
 }
 
-static struct token *
+KC_PRIVATE struct token *
 peek_token(Parser *p)
 {
 	assert(p->tokens.idx < p->tokens.len);
 	return &p->tokens.elems[p->tokens.idx];
 }
 
-static struct token *
+KC_PRIVATE struct token *
 next_token(Parser *p, struct token **rt)
 {
 	assert(p->tokens.len > 0);
@@ -57,7 +41,7 @@ next_token(Parser *p, struct token **rt)
 	return tok;
 }
 
-static void
+KC_PRIVATE void
 error_unexpected_token(Parser *p, struct token *token, const char *debug_filename, const int debug_line)
 {
 	log_error_impl(p->lexer.filename, token, debug_filename, debug_line,
@@ -65,7 +49,7 @@ error_unexpected_token(Parser *p, struct token *token, const char *debug_filenam
 	EXIT(1);
 }
 
-static void
+KC_PUBLIC void
 error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, const int debug_line)
 {
 	log_error_impl(p->lexer.filename, id, debug_filename, debug_line,
@@ -73,7 +57,7 @@ error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, c
 	EXIT(1);
 }
 
-static struct token *
+KC_PRIVATE struct token *
 expect(Parser *p, struct token *token, enum token_type tag, const char *debug_filename, const int debug_line)
 {
 	if (token->tt != tag) {
@@ -86,7 +70,7 @@ expect(Parser *p, struct token *token, enum token_type tag, const char *debug_fi
 #define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __LINE__)
 #define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __LINE__)
 
-static struct proc_type
+KC_PUBLIC struct proc_type
 procedure_type(struct procedure *proc)
 {
 	struct proc_type pt = {0};
@@ -101,7 +85,7 @@ procedure_type(struct procedure *proc)
 
 /* TODO: Improve error messages in parser
  */
-static struct type_ptrs
+KC_PRIVATE struct type_ptrs
 parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 				struct scope *scope, bool introduce_type_var_p)
 {
@@ -122,7 +106,7 @@ parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 	return list;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = MEM_ALLOC(KCType);
@@ -150,7 +134,7 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 	return type;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = MEM_ALLOC(KCType);
@@ -173,7 +157,7 @@ parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	return type;
 }
 
-static KCType *
+KC_PRIVATE KCType *
 parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = NULL;
@@ -320,7 +304,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 	return type;
 }
 
-static void
+KC_PRIVATE void
 parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 {
 	struct type_ptrs args = {0};
@@ -390,7 +374,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 	type_def->type = type;
 }
 
-static void
+KC_PRIVATE void
 parse_definition(Parser *p, struct definition *def, struct scope *scope)
 {
 	/* We enter with `let` token already consumed */
@@ -453,7 +437,7 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 	}
 }
 
-static struct expression *
+KC_PUBLIC struct expression *
 parse_toplevel_expression(Parser *p, struct scope *scope)
 {
 	struct token *tok;
@@ -478,7 +462,7 @@ parse_toplevel_expression(Parser *p, struct scope *scope)
 	return exp;
 }
 
-static bool
+KC_PUBLIC bool
 parser_is_at_end(Parser *p)
 {
 	return peek_token(p)->tt == tt_eof;
@@ -488,7 +472,7 @@ parser_is_at_end(Parser *p)
 #define ASSOC_RIGHT(x)  (x)
 #define ASSOC_LEFT_P(x) ((x) < 0)
 
-static int
+KC_PRIVATE int
 precedence(enum operator op)
 {
 	switch (op) {
@@ -553,7 +537,7 @@ precedence(enum operator op)
 	}
 }
 
-static bool
+KC_PRIVATE bool
 check_precedence(enum operator op1, enum operator op2)
 {
 	int p1 = precedence(op1);
@@ -561,7 +545,7 @@ check_precedence(enum operator op1, enum operator op2)
 	return (ABS(p1) < ABS(p2) || (ABS(p1) == ABS(p2) && ASSOC_LEFT_P(p1)));
 }
 
-static bool
+KC_PRIVATE bool
 shunt(struct expression *op1, struct expression_stack *out, struct expression_stack *ops)
 {
 	struct expression *op2;
@@ -586,14 +570,14 @@ shunt(struct expression *op1, struct expression_stack *out, struct expression_st
 	return 1;
 }
 
-static bool
+KC_PRIVATE bool
 exp_is_intlit(struct expression *exp)
 {
 	return exp->tag == ast_exp_literal
 		&& exp->as.lit.token->tt == tt_intlit;
 }
 
-static struct token *
+KC_PRIVATE struct token *
 copy_token(struct token *tok)
 {
 	struct token *new_tok = MEM_ALLOC(struct token);
@@ -601,7 +585,7 @@ copy_token(struct token *tok)
 	return new_tok;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 copy_exp(struct expression *exp)
 {
 	struct expression *new_exp = MEM_ALLOC(struct expression);
@@ -609,7 +593,7 @@ copy_exp(struct expression *exp)
 	return new_exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *right, struct expression *left)
 {
 	if (exp_is_intlit(right) && exp_is_intlit(left)) {
@@ -741,7 +725,7 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 eval_unaop_exp(struct expression *exp, struct expression *operand)
 {
 	if (exp_is_intlit(operand)) {
@@ -798,7 +782,7 @@ eval_unaop_exp(struct expression *exp, struct expression *operand)
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 build_expression_tree(Parser *p, struct expression_stack *out)
 {
 	struct expression_stack stack = {0};
@@ -825,7 +809,7 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 parse_if(Parser *p, struct expression *exp, struct scope *scope)
 {
 	struct token *tok = NULL;
@@ -845,7 +829,7 @@ parse_if(Parser *p, struct expression *exp, struct scope *scope)
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope *scope)
 {
 #define PARSE_INIT       0
@@ -906,7 +890,7 @@ parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope 
 #undef PARSE_DONE
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 parse_array_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 {
 	exp->tag = ast_exp_array_initializer;
@@ -928,7 +912,7 @@ parse_array_initializer_list(Parser *p, struct scope *scope, struct expression *
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 {
 	struct token *tok = NULL;
@@ -974,7 +958,7 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 	return exp;
 }
 
-static struct expression *
+KC_PRIVATE struct expression *
 parse_expression(Parser *p, struct scope *scope)
 {
 	struct expression_stack out = {0};
@@ -1422,7 +1406,7 @@ flush:
 	return exp;
 }
 
-static const char *
+KC_PRIVATE const char *
 ast_binop_to_str(enum binop op)
 {
 	switch (op) {
@@ -1463,7 +1447,7 @@ ast_binop_to_str(enum binop op)
 
 /* --- AST Printer --- */
 
-static char *
+KC_PUBLIC char *
 ast_type_to_str(KCType *t)
 {
 	char *str;
@@ -1475,7 +1459,7 @@ ast_type_to_str(KCType *t)
 	return str;
 }
 
-static void
+KC_PUBLIC void
 ast_type_fprint(KCType *t, FILE *file)
 {
 	t = type_find(t);
@@ -1594,7 +1578,7 @@ ast_type_fprint(KCType *t, FILE *file)
 	}
 }
 
-static void
+KC_PRIVATE void
 ast_def_fprint(struct definition *def, FILE *file)
 {
 	fputs("let ", file);
@@ -1626,7 +1610,7 @@ ast_def_fprint(struct definition *def, FILE *file)
 	}
 }
 
-static void
+KC_PUBLIC void
 ast_fprint(struct expression *exp, FILE *file)
 {
 	switch (exp->tag) {

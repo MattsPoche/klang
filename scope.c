@@ -1,6 +1,6 @@
-#pragma once
+#include "common.h"
 
-static struct symtbl_entry *
+KC_PUBLIC struct symtbl_entry *
 symtbl_find(struct symtbl *symtbl, struct strview name)
 {
 	for (size_t i = 0; i < symtbl->len; ++i) {
@@ -11,7 +11,7 @@ symtbl_find(struct symtbl *symtbl, struct strview name)
 	return NULL;
 }
 
-static struct symtbl_entry *
+KC_PUBLIC struct symtbl_entry *
 symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_exp)
 {
 	struct symtbl_entry *entry = NULL;
@@ -27,7 +27,7 @@ symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_
 	return entry;
 }
 
-static void
+KC_PUBLIC void
 symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
 				   int64_t tag_val, KCType *type, struct type_definition *def)
 {
@@ -44,7 +44,7 @@ symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
 		});
 }
 
-static struct type_definition *
+KC_PUBLIC struct type_definition *
 typetbl_find(struct typetbl *typetbl, struct strview name)
 {
 	for (size_t i = 0; i < typetbl->len; ++i) {
@@ -55,7 +55,7 @@ typetbl_find(struct typetbl *typetbl, struct strview name)
 	return NULL;
 }
 
-static void
+KC_PUBLIC void
 typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
 {
 	assert(def.name != NULL);
@@ -64,7 +64,7 @@ typetbl_add_impl(struct typetbl *typetbl, struct type_definition def)
 	da_append(typetbl, def);
 }
 
-static struct symtbl_entry *
+KC_PUBLIC struct symtbl_entry *
 lookup_entry(struct scope *scope, struct strview name)
 {
 	while (scope) {
@@ -75,7 +75,7 @@ lookup_entry(struct scope *scope, struct strview name)
 	return NULL;
 }
 
-static struct type_definition *
+KC_PUBLIC struct type_definition *
 lookup_type(struct scope *scope, struct strview name)
 {
 	while (scope) {
