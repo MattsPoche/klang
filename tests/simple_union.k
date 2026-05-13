@@ -2,17 +2,19 @@ newtype 'a Option =
   | None
   | Some: 'a
 
-/*
 newtype ('a, 'e) Result =
-  | Ok:  'a
-  | Err: 'e
-*/
+  | Ok:    'a
+  | Error: 'e
 
 newtype FILE = void*
 
 type str = &[i8]
 
 /* let nullptr: void* = 0 as void* */
+
+let libc_errno_location: () -> i32* = #extern(__errno_location)
+let libc_strerror: (i32) -> [i8]* = #extern(strerror)
+
 let stdout: FILE = #extern(stdout)
 let stdin:  FILE = #extern(stdin)
 let stderr: FILE = #extern(stderr)
@@ -21,16 +23,18 @@ let libc_fopen: ([i8]*, [i8]*) -> FILE = #extern(fopen)
 let libc_fwrite: (void*, u64, u64, FILE) -> u64 = #extern(fwrite)
 let fclose: (FILE) -> i32 = #extern(fclose)
 
-let foo(flag: bool) [i64, 4] =
-  if flag then
-    [1, 2, 3, 4]
-  else
-    [5, 6, 7, 8]
-  end
+let get_errno() i32 = *libc_errno_location()
+  
+let get_error_str(errno: i32) str = str_of_cstr(libc_strerror(errno))
 
-let fopen(path: [i8]*, mode: [i8]*) FILE Option =
-  let f: FILE = libc_fopen(path, mode) in
-  if f = 0 as FILE then None else Some(f) end
+let open_read_file(path: [i8]*) (FILE, {errno: i32, msg: str}) Result =
+  let f: FILE = libc_fopen(path, #ptr("r\0")) in
+  if f = 0 as FILE then
+    let e: i32 = get_errno() in
+    Error {errno = e, msg = get_error_str(e)}
+  else
+    Ok(f)
+  end
 
 let print_char(c: i8) =
   libc_fwrite(&c, 1, 1, stdout)
@@ -47,16 +51,16 @@ let print_digits(n: 'a) =
 
 let print_int(n: 'a) =
   if n = 0 then
-    print_char("0"[0])
+    print_char(#"0")
   else
-    let n: 'a = if n < 0 then print_char("-"[0]); -n else n end in
+    let n: 'a = if n < 0 then print_char(#"-"); -n else n end in
     print_digits(n)
   end
 
 let print_bool(x: bool) =
   print_string(if x then "true" else "false" end)
 
-let print_newline() = print_char("\n"[0])
+let print_newline() = print_char(#"\n")
 
 let puts(str: str) =
   print_string(str);
@@ -66,7 +70,7 @@ let print_slice(slice: &['a]) =
   let mut i: u64 = 0 in
   while i < #len(slice) do
     print_int(slice[i]);
-    print_char(" "[0]);
+    print_char(#" ");
     i += 1
   done
 
@@ -85,16 +89,32 @@ let main(argc: i32, argv: [[i8]*]*) i32 =
   print_string("file = ");
   print_string(filename);
   print_newline();
-  case fopen(#ptr(filename), #ptr("r\0")) of
-    Some(file) ->
+  case open_read_file(#ptr(filename)) of
+    Ok(file) ->
 	  print_string("Opened file: ");
 	  print_string(filename);
 	  print_newline();
 	  fclose(file),
-    None ->
-	  print_string("Unable to open file: ");
+    Error(&e) ->	
+	  print_string("Error code: ");
+	  print_int(e.errno);
+	  print_newline();
+	  print_string(e.msg);
+	  print_newline();
+	  0,
+  end;
+  case open_read_file(#ptr("foo_bar\0")) of
+    Ok(file) ->
+	  print_string("Opened file: ");
 	  print_string(filename);
 	  print_newline();
-	  0
-  end;
-  0
+	  fclose(file);
+	  0,
+    Error(&e) ->
+	  print_string("Error code: ");
+	  print_int(e.errno);
+	  print_newline();
+	  print_string(e.msg);
+	  print_newline();
+	  0,
+  end

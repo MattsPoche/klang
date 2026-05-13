@@ -17,6 +17,7 @@ KC_PUBLIC_DATA KCType AST_TYPE_F64;
 KC_PUBLIC_DATA KCType AST_TYPE_STRING;
 
 #define AST_TYPE_UNION_TAG AST_TYPE_I64
+#define AST_TYPE_CHAR      AST_TYPE_I8
 
 KC_PUBLIC void type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps);
 KC_PUBLIC bool type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope);

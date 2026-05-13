@@ -18,10 +18,11 @@ bool sv_open_file(const char *filename, struct strview *sv);
 bool sv_is_equal(struct strview s1, struct strview s2);
 struct strview sv_of_cstr(char *str);
 char *sv_to_cstr(struct strview sv);
-size_t sv_unescape_string(struct strview sv, char **ret);
+struct strview sv_unescape_string(struct strview sv);
 bool sv_to_int(struct strview sv, int64_t *out);
 bool sv_to_int_base10(struct strview sv, int64_t *out);
 bool sv_to_int_base16(struct strview sv, int64_t *out);
+struct strview sv_drop_char(struct strview sv);
 
 #define SV_FMT "%.*s"
 #define SV_ARGS(sv) ((int)(sv).len), ((sv).ptr)
@@ -102,11 +103,12 @@ int escape_char(int c)
 	return c;
 }
 
-size_t sv_unescape_string(struct strview sv, char **ret)
+struct strview
+sv_unescape_string(struct strview sv)
 {
 	char *s = malloc(sv.len + 1);
 	assert(s != NULL);
-	int64_t length = 0;
+	size_t length = 0;
 	size_t i = 0;
 	if (sv.len && sv.ptr[0] == '"') i++;
 	for (; i < sv.len; ++i) {
@@ -123,8 +125,7 @@ size_t sv_unescape_string(struct strview sv, char **ret)
 	}
 done:
 	s[length] = 0;
-	*ret = s;
-	return length;
+	return (struct strview){.ptr = s, .len = length};
 }
 
 static int8_t conv_tbl[UINT8_MAX] = {
@@ -193,6 +194,14 @@ bool sv_to_int(struct strview sv, int64_t *out)
 		}
 	}
 	return sv_to_int_base10(sv, out);
+}
+
+struct strview sv_drop_char(struct strview sv)
+{
+	if (sv.len == 0) return sv;
+	sv.ptr++;
+	sv.len--;
+	return sv;
 }
 
 #endif /* STRVIEW_IMPLEMENTATION */

@@ -60,6 +60,12 @@
 
 #define KC_PRIVATE static
 
+typedef float  float32_t;
+typedef double float64_t;
+
+static_assert(sizeof(int32_t) == sizeof(float32_t));
+static_assert(sizeof(int64_t) == sizeof(float64_t));
+
 #include "./da.h"
 #include "./strview.h"
 #include "./ast.h"

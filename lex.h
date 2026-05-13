@@ -53,13 +53,13 @@ enum token_type {
 	tt_done,
 	tt_break,
 	tt_continue,
+	tt_return,
 	tt_if,
 	tt_then,
 	tt_else,
 	tt_elif,
 	tt_case,
 	tt_of,
-	tt_return,
 	tt_true,
 	tt_false,
 	tt_colon_equal,     // :=
@@ -86,6 +86,7 @@ enum token_type {
 	tt_void,
 	tt_bool,
 	tt_string,
+	tt_char,
 	tt_typevar,
 	/* Integer */
 	tt_i8,
@@ -109,11 +110,12 @@ enum token_type {
 	tt_extern,
 	tt_ptr,
 	tt_len,
+	tt_sizeof,
 	TOKEN_TYPE_MAX,
 };
 
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
-CHECK_EXAUSTIVE_KEYWORDS(67);
+CHECK_EXAUSTIVE_KEYWORDS(69);
 
 struct token {
 	enum token_type tt;

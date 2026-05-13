@@ -4,105 +4,107 @@ KC_PUBLIC char *
 token_type_to_str(enum token_type tt)
 {
 	switch (tt) {
-	case tt_true: 		        return "tt_true";
-	case tt_false: 		        return "tt_false";
-	case tt_underscore: 		return "tt_underscore";
-	case tt_tilde:				return "tt_tilde";
-	case tt_tick:				return "tt_tick";
-	case tt_plus:				return "tt_plus";
-	case tt_minus:				return "tt_minus";
-	case tt_equal:				return "tt_equal";
-	case tt_bang:				return "tt_bang";
-	case tt_at:					return "tt_at";
-	case tt_hash:				return "tt_hash";
-	case tt_dollar:				return "tt_dollar";
-	case tt_percent:			return "tt_percent";
-	case tt_caret:				return "tt_caret";
-	case tt_and:				return "tt_and";
-	case tt_star:				return "tt_star";
-	case tt_lparen:				return "tt_lparen";
-	case tt_rparen:				return "tt_rparen";
-	case tt_lbrace:				return "tt_lbrace";
-	case tt_rbrace:				return "tt_rbrace";
-	case tt_lbracket:			return "tt_lbracket";
-	case tt_rbracket:			return "tt_rbracket";
-	case tt_pipe:				return "tt_pipe";
-	case tt_backslash:			return "tt_backslash";
-	case tt_colon:				return "tt_colon";
-	case tt_semicolon:			return "tt_semicolon";
-	case tt_quote:				return "tt_quote";
-	case tt_double_quote:		return "tt_double_quote";
-	case tt_less:				return "tt_less";
-	case tt_more:				return "tt_more";
-	case tt_question:			return "tt_question";
-	case tt_comma:				return "tt_comma";
-	case tt_period:				return "tt_period";
-	case tt_slash:				return "tt_slash";
-	case tt_eof:				return "tt_eof";
-	case tt_let:                return "tt_let";
-	case tt_type:				return "tt_type";
-	case tt_newtype:			return "tt_newtype";
-	case tt_struct:			    return "tt_struct";
-	case tt_mut:                return "tt_mut";
-	case tt_in:                 return "tt_in";
-	case tt_end:                return "tt_end";
-	case tt_as:                 return "tt_as";
-	case tt_while:				return "tt_while";
-	case tt_for:				return "tt_for";
-	case tt_do:				    return "tt_do";
-	case tt_done:				return "tt_done";
-	case tt_break:			    return "tt_break";
-	case tt_continue:			return "tt_continue";
-	case tt_if:					return "tt_if";
-	case tt_then:				return "tt_then";
-	case tt_else:				return "tt_else";
-	case tt_elif:				return "tt_elif";
-	case tt_case:				return "tt_case";
-	case tt_of: 				return "tt_of";
-	case tt_return:             return "tt_return";
-	case tt_colon_equal:        return "tt_colon_equal";
-	case tt_and_equal:			return "tt_and_equal";
-	case tt_pipe_equal:			return "tt_pipe_equal";
-	case tt_caret_equal:		return "tt_caret_equal";
-	case tt_plus_equal:			return "tt_plus_equal";
-	case tt_minus_equal:		return "tt_minus_equal";
-	case tt_star_equal:			return "tt_star_equal";
-	case tt_slash_equal:		return "tt_slash_equal";
-	case tt_percent_equal:		return "tt_percent_equal";
-	case tt_bang_equal:			return "tt_bang_equal";
-	case tt_less_equal:			return "tt_less_equal";
-	case tt_more_equal:			return "tt_more_equal";
-	case tt_less_less:			return "tt_less_less";
-	case tt_more_more:			return "tt_more_more";
-	case tt_less_less_equal:	return "tt_less_less_equal";
-	case tt_more_more_equal:	return "tt_more_more_equal";
-	case tt_pipe_pipe:			return "tt_pipe_pipe";
-	case tt_and_and:			return "tt_and_and";
-	case tt_minus_more:			return "tt_minus_more";
-	case tt_period_period:		return "tt_period_period";
-	case tt_void:				return "tt_void";
-	case tt_bool:				return "tt_bool";
-	case tt_string:				return "tt_string";
-	case tt_i8:					return "tt_i8";
-	case tt_i16:				return "tt_i16";
-	case tt_i32:				return "tt_i32";
-	case tt_i64:				return "tt_i64";
-	case tt_u8:					return "tt_u8";
-	case tt_u16:				return "tt_u16";
-	case tt_u32:				return "tt_u32";
-	case tt_u64:				return "tt_u64";
-	case tt_f32:				return "tt_f32";
-	case tt_f64:				return "tt_f64";
-	case tt_ident:				return "tt_ident";
-	case tt_hexlit:				return "tt_hexlit";
-	case tt_intlit:				return "tt_intlit";
-	case tt_floatlit:			return "tt_floatlit";
-	case tt_undefined:			return "tt_undefined";
-	case tt_noreturn:			return "tt_noreturn";
-	case tt_extern:			    return "tt_extern";
-	case tt_ptr:			    return "tt_ptr";
-	case tt_len:			    return "tt_len";
-	case tt_typevar:            return "tt_typevar";
+	case tt_true: 		     return "tt_true";
+	case tt_false: 		     return "tt_false";
+	case tt_underscore: 	 return "tt_underscore";
+	case tt_tilde:			 return "tt_tilde";
+	case tt_tick:			 return "tt_tick";
+	case tt_plus:			 return "tt_plus";
+	case tt_minus:			 return "tt_minus";
+	case tt_equal:			 return "tt_equal";
+	case tt_bang:			 return "tt_bang";
+	case tt_at:				 return "tt_at";
+	case tt_hash:			 return "tt_hash";
+	case tt_dollar:			 return "tt_dollar";
+	case tt_percent:		 return "tt_percent";
+	case tt_caret:			 return "tt_caret";
+	case tt_and:			 return "tt_and";
+	case tt_star:			 return "tt_star";
+	case tt_lparen:			 return "tt_lparen";
+	case tt_rparen:			 return "tt_rparen";
+	case tt_lbrace:			 return "tt_lbrace";
+	case tt_rbrace:			 return "tt_rbrace";
+	case tt_lbracket:		 return "tt_lbracket";
+	case tt_rbracket:		 return "tt_rbracket";
+	case tt_pipe:			 return "tt_pipe";
+	case tt_backslash:		 return "tt_backslash";
+	case tt_colon:			 return "tt_colon";
+	case tt_semicolon:		 return "tt_semicolon";
+	case tt_quote:			 return "tt_quote";
+	case tt_double_quote:	 return "tt_double_quote";
+	case tt_less:			 return "tt_less";
+	case tt_more:			 return "tt_more";
+	case tt_question:		 return "tt_question";
+	case tt_comma:			 return "tt_comma";
+	case tt_period:			 return "tt_period";
+	case tt_slash:			 return "tt_slash";
+	case tt_eof:			 return "tt_eof";
+	case tt_let:             return "tt_let";
+	case tt_type:			 return "tt_type";
+	case tt_newtype:		 return "tt_newtype";
+	case tt_struct:			 return "tt_struct";
+	case tt_mut:             return "tt_mut";
+	case tt_in:              return "tt_in";
+	case tt_end:             return "tt_end";
+	case tt_as:              return "tt_as";
+	case tt_while:			 return "tt_while";
+	case tt_for:			 return "tt_for";
+	case tt_do:				 return "tt_do";
+	case tt_done:			 return "tt_done";
+	case tt_break:			 return "tt_break";
+	case tt_continue:		 return "tt_continue";
+	case tt_if:				 return "tt_if";
+	case tt_then:			 return "tt_then";
+	case tt_else:			 return "tt_else";
+	case tt_elif:			 return "tt_elif";
+	case tt_case:			 return "tt_case";
+	case tt_of: 			 return "tt_of";
+	case tt_return:          return "tt_return";
+	case tt_colon_equal:     return "tt_colon_equal";
+	case tt_and_equal:		 return "tt_and_equal";
+	case tt_pipe_equal:		 return "tt_pipe_equal";
+	case tt_caret_equal:	 return "tt_caret_equal";
+	case tt_plus_equal:		 return "tt_plus_equal";
+	case tt_minus_equal:	 return "tt_minus_equal";
+	case tt_star_equal:		 return "tt_star_equal";
+	case tt_slash_equal:	 return "tt_slash_equal";
+	case tt_percent_equal:	 return "tt_percent_equal";
+	case tt_bang_equal:		 return "tt_bang_equal";
+	case tt_less_equal:		 return "tt_less_equal";
+	case tt_more_equal:		 return "tt_more_equal";
+	case tt_less_less:		 return "tt_less_less";
+	case tt_more_more:		 return "tt_more_more";
+	case tt_less_less_equal: return "tt_less_less_equal";
+	case tt_more_more_equal: return "tt_more_more_equal";
+	case tt_pipe_pipe:		 return "tt_pipe_pipe";
+	case tt_and_and:		 return "tt_and_and";
+	case tt_minus_more:		 return "tt_minus_more";
+	case tt_period_period:	 return "tt_period_period";
+	case tt_void:			 return "tt_void";
+	case tt_bool:			 return "tt_bool";
+	case tt_string:			 return "tt_string";
+	case tt_char:			 return "tt_char";
+	case tt_i8:				 return "tt_i8";
+	case tt_i16:			 return "tt_i16";
+	case tt_i32:			 return "tt_i32";
+	case tt_i64:			 return "tt_i64";
+	case tt_u8:				 return "tt_u8";
+	case tt_u16:			 return "tt_u16";
+	case tt_u32:			 return "tt_u32";
+	case tt_u64:			 return "tt_u64";
+	case tt_f32:			 return "tt_f32";
+	case tt_f64:			 return "tt_f64";
+	case tt_ident:			 return "tt_ident";
+	case tt_hexlit:			 return "tt_hexlit";
+	case tt_intlit:			 return "tt_intlit";
+	case tt_floatlit:		 return "tt_floatlit";
+	case tt_undefined:		 return "tt_undefined";
+	case tt_noreturn:		 return "tt_noreturn";
+	case tt_extern:			 return "tt_extern";
+	case tt_ptr:			 return "tt_ptr";
+	case tt_len:			 return "tt_len";
+	case tt_sizeof:          return "tt_sizeof";
+	case tt_typevar:         return "tt_typevar";
 	case TOKEN_TYPE_MAX:
 	default:
 		assert(0 && "TODO: Unknown token tag");
@@ -242,6 +244,27 @@ token_to_strview(struct token *tok)
 	};
 }
 
+KC_PRIVATE bool
+lex_str_char(struct lexer *lex, struct token *tok)
+{
+	switch (lex_peekc(lex)) {
+	case '\\':
+		lex_nextc(lex);
+		lex_nextc(lex);
+		tok->tok_len += 2;
+		return true;
+	case '\"':
+		lex_nextc(lex);
+		tok->tok_len++;
+		return false;
+	case EOF: log_error_and_die(lex->filename, tok, "Syntax error"); break;
+	default:
+		lex_nextc(lex);
+		tok->tok_len++;
+		return true;
+	}
+}
+
 KC_PUBLIC void
 tokenize(struct lexer *lex, struct token_buffer *tokens)
 {
@@ -255,7 +278,12 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 			da_append(tokens, tok);
 			return;
 		}
-		if (c == '#' || c == '_' || isalpha(c)) {
+		if (c == '#' && lex_peekc(lex) == '\"') {
+			tok.tt = tt_char;
+			lex_nextc(lex);
+			tok.tok_len++;
+			while (lex_str_char(lex, &tok));
+		} else if (c == '#' || c == '_' || isalpha(c)) {
 			/* Identifier */
 			while ((c = lex_peekc(lex)) == '_' || isalnum(c)) {
 				lex_nextc(lex);
@@ -263,7 +291,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 			}
 			/* Match Keywords */
 			struct strview sv = token_to_strview(&tok);
-			CHECK_EXAUSTIVE_KEYWORDS(67);
+			CHECK_EXAUSTIVE_KEYWORDS(69);
 			if (sv_is_equal(sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
 			else if (sv_is_equal(sv, sv_of_cstr("let")))        tok.tt = tt_let;
 			else if (sv_is_equal(sv, sv_of_cstr("type")))       tok.tt = tt_type;
@@ -305,6 +333,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 			else if (sv_is_equal(sv, sv_of_cstr("#extern")))    tok.tt = tt_extern;
 			else if (sv_is_equal(sv, sv_of_cstr("#ptr")))       tok.tt = tt_ptr;
 			else if (sv_is_equal(sv, sv_of_cstr("#len")))       tok.tt = tt_len;
+			else if (sv_is_equal(sv, sv_of_cstr("#sizeof")))    tok.tt = tt_sizeof;
 			else tok.tt = tt_ident;
 		} else if (isdigit(c)) {
 			c = lex_peekc(lex);
@@ -343,24 +372,8 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 		} else {
 			switch (c) {
 			case '\"': {
-				/* parse string literal */
-				bool loop = true;
 				tok.tt = tt_string;
-				while (loop) {
-					switch (lex_nextc(lex)) {
-					case '\\':
-						lex_nextc(lex);
-						tok.tok_len++;
-						break;
-					case '"':
-						loop = false;
-						break;
-					case EOF:
-						log_error_and_die(lex->filename, &tok, "Syntax error");
-						break;
-					}
-					tok.tok_len++;
-				}
+				while (lex_str_char(lex, &tok));
 			} break;
 			case '\'':
 				tok.tt = tt_typevar;

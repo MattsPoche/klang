@@ -283,7 +283,29 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	} break;
 	case ast_exp_literal: {
 		struct literal *lit = &exp->as.lit;
-		if (type_is_integer(exp->type)) {
+		switch (lit->tag) {
+		case LITERAL_BOOL:
+			assert(lit->as.i == 1 || lit->as.i == 0);
+			switch (dst.tag) {
+			case DST_VAL: {
+				da_append(&blk->code, (IR_Ins){
+						.op = ir_op_loadimm,
+						.type = exp->type,
+						.dst = dst.reg,
+						.arg.i32 = lit->as.i,
+					});
+			} break;
+			case DST_CPY:  FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_REF:  FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_NONE: FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+			default:
+				FAILWITH("TODO: ast_exp_literal");
+				break;
+			}
+			break;
+		case LITERAL_CHAR:
+		case LITERAL_INT:
 			assert(lit->as.i <= INT32_MAX && lit->as.i >= INT32_MIN);
 			switch (dst.tag) {
 			case DST_RET:
@@ -316,27 +338,72 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				FAILWITH("TODO: ast_exp_literal");
 				break;
 			}
-		} else if (type_is_bool(exp->type)) {
-			assert(lit->as.i == 1 || lit->as.i == 0);
+			break;
+		case LITERAL_FLOAT:  FAILWITH("TODO: LITERAL_FLOAT"); break;
+		case LITERAL_STRING: {
+			char *str = exp->as.lit.as.s.ptr;
+			size_t length = exp->as.lit.as.s.len;
+			size_t id = tl->len;
+			union ir_object p = {
+				.data.is_static = true,
+				.data.tag  = IRO_DATA,
+				.data.size = length,
+				.data.dat  = str,
+				.data.link = fmt_str(".LSTR%zu", id),
+			};
+			da_append(tl, p);
 			switch (dst.tag) {
 			case DST_VAL: {
 				da_append(&blk->code, (IR_Ins){
-						.op = ir_op_loadimm,
+						.op   = ir_op_loadglobl,
 						.type = exp->type,
-						.dst = dst.reg,
-						.arg.i32 = lit->as.i,
+						.dst  = dst.reg,
+						.arg.u32 = id,
 					});
 			} break;
-			case DST_CPY:  FAILWITH("TODO: ast_exp_literal"); break;
-			case DST_REF:  FAILWITH("TODO: ast_exp_literal"); break;
-			case DST_NONE: FAILWITH("TODO: ast_exp_literal"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
-			default:
-				FAILWITH("TODO: ast_exp_literal");
-				break;
+			case DST_CPY: {
+				int tmp = ir_proc_new_reg(tl, proc_id);
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_loadglobl,
+						.type = exp->type,
+						.dst  = tmp,
+						.arg.u32 = id,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_store,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.rx[0] = tmp,
+					});
+			} break;
+			case DST_REF: {
+				int tmp = ir_proc_new_reg(tl, proc_id);
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_alloca,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.i32 = 1,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_loadglobl,
+						.type = exp->type,
+						.dst  = tmp,
+						.arg.u32 = id,
+					});
+				da_append(&blk->code, (IR_Ins){
+						.op   = ir_op_store,
+						.type = exp->type,
+						.dst  = dst.reg,
+						.arg.rx[0] = tmp,
+					});
+			} break;
+			case DST_RET: FAILWITH("TODO: ast_exp_string"); break;
+			case DST_NONE: FAILWITH("TODO: ast_exp_string"); break;
+			default:      FAILWITH("Unreachable"); break;
 			}
-		} else {
-			FAILWITH("TODO: ast_exp_literal (%s)", ast_type_to_str(exp->type));
+			return blk;
+		} break;
+		default: FAILWITH("Unreachable"); break;
 		}
 		return blk;
 	} break;
@@ -471,11 +538,12 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		case DST_CPY:  FAILWITH("TODO: ast_exp_undefined"); break;
 		case DST_REF:  FAILWITH("TODO: ast_exp_undefined"); break;
 		case DST_NONE: FAILWITH("TODO: ast_exp_undefined"); break;
-		case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+		case DST_RET: FAILWITH("TODO: ast_exp_undefined"); break;
 		default:       FAILWITH("Unreachable"); break;
 		}
 		return blk; /* do nothing */
 	} break;
+#if 0
 	case ast_exp_string: {
 		char *str = NULL;
 		size_t length = sv_unescape_string(token_to_strview(exp->tok), &str);
@@ -533,12 +601,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.arg.rx[0] = tmp,
 				});
 		} break;
-		case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+		case DST_RET: FAILWITH("TODO: ast_exp_string"); break;
 		case DST_NONE: FAILWITH("TODO: ast_exp_string"); break;
 		default:      FAILWITH("Unreachable"); break;
 		}
 		return blk;
 	} break;
+#endif
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_ident: {
 		struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
@@ -716,7 +785,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			} break;
 			case DST_REF: FAILWITH("TODO: DST_REF"); break;
 			case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_RET: FAILWITH("TODO: DST_RET"); break;
 			default: FAILWITH("Unreachable"); break;
 			}
 			return right;
@@ -868,9 +937,9 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					});
 				return blk;
 			} break;
-			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_len)"); break;
-			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_len)"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_CPY:  FAILWITH("TODO: DST_CPY (ast_exp_get_len)"); break;
+			case DST_REF:  FAILWITH("TODO: DST_REF (ast_exp_get_len)"); break;
+			case DST_RET:  FAILWITH("TODO: DST_RET (ast_exp_get_len)"); break;
 			case DST_NONE: FAILWITH("TODO: DST_NONE (ast_exp_get_len)"); break;
 			default: FAILWITH("Unreachable"); break;
 			}
@@ -891,10 +960,10 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					});
 				return blk;
 			} break;
-			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_len)"); break;
-			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_len)"); break;
+			case DST_CPY:  FAILWITH("TODO: DST_CPY (ast_exp_get_len)"); break;
+			case DST_REF:  FAILWITH("TODO: DST_REF (ast_exp_get_len)"); break;
 			case DST_NONE: FAILWITH("TODO: DST_NONE (ast_exp_get_len)"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_RET:  FAILWITH("TODO: DST_RET (ast_exp_get_len)"); break;
 			default: FAILWITH("Unreachable"); break;
 			}
 		} else {
@@ -916,21 +985,53 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					});
 				return blk;
 			} break;
-			case DST_CPY: FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
-			case DST_REF: FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
+			case DST_CPY:  FAILWITH("TODO: DST_CPY (ast_exp_get_ptr)"); break;
+			case DST_REF:  FAILWITH("TODO: DST_REF (ast_exp_get_ptr)"); break;
 			case DST_NONE: FAILWITH("TODO: DST_NONE (ast_exp_get_ptr)"); break;
-			case DST_RET: FAILWITH("TODO: ast_exp_literal"); break;
+			case DST_RET:  FAILWITH("TODO: DST_RET (ast_exp_get_ptr)"); break;
 			default: FAILWITH("Unreachable"); break;
 			}
 		} else {
 			FAILWITH("TODO: ast_exp_get_ptr");
 		}
 	} break;
+	case ast_exp_size_of: {
+		switch (dst.tag) {
+		case DST_RET:
+		case DST_VAL: {
+			da_append(&blk->code, (IR_Ins){
+					.op      = ir_op_loadimm,
+					.type    = exp->type,
+					.dst     = dst.reg,
+					.arg.i32 = type_size(exp->as.size_of.type),
+				});
+		} break;
+		case DST_CPY: {
+			int tmp = ir_proc_new_reg(tl, proc_id);
+			da_append(&blk->code, (IR_Ins){
+					.op		 = ir_op_loadimm,
+					.type	 = exp->type,
+					.dst	 = tmp,
+					.arg.i32 = type_size(exp->as.size_of.type),
+				});
+			da_append(&blk->code, (IR_Ins){
+					.op		   = ir_op_store,
+					.type	   = exp->type,
+					.dst	   = dst.reg,
+					.arg.rx[0] = tmp,
+				});
+		} break;
+		case DST_REF:  FAILWITH("TODO: ast_exp_size_of"); break;
+		case DST_NONE: FAILWITH("TODO: ast_exp_size_of"); break;
+		default:       FAILWITH("TODO: ast_exp_size_of"); break;
+		}
+		return blk;
+	} break;
 	case ast_exp_unary: {
 		struct unary *una = &exp->as.una;
 		switch ((enum unaop)una->op) {
 		case unaop_lnot: FAILWITH("TODO: unaop_lnot"); break;
-		case unaop_not: FAILWITH("TODO: unaop_not"); break;
+		case unaop_not:  FAILWITH("TODO: unaop_not"); break;
 		case unaop_pos: {
 			switch (dst.tag) {
 			case DST_VAL: {
@@ -997,9 +1098,9 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			case DST_RET:
 			case DST_VAL: {
 				da_append(&blk->code, (IR_Ins){
-						.op   = ir_op_load,
-						.type = exp->type,
-						.dst  = dst.reg,
+						.op        = ir_op_load,
+						.type      = exp->type,
+						.dst       = dst.reg,
 						.arg.rx[0] = reg,
 					});
 			} break;
@@ -1238,25 +1339,25 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			case DST_CPY: {
 				int tmp = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
-						.op   = ir_op_call,
-						.type = exp->type,
-						.dst  = tmp,
+						.op        = ir_op_call,
+						.type      = exp->type,
+						.dst       = tmp,
 						.arg.rx[0] = preg,
 						.arg.rx[1] = args.len,
 					});
 				da_append(&blk->code, (IR_Ins){
-						.op = ir_op_store,
-						.type = exp->type,
-						.dst = dst.reg,
+						.op        = ir_op_store,
+						.type      = exp->type,
+						.dst       = dst.reg,
 						.arg.rx[0] = tmp,
 					});
 			} break;
 			case DST_REF: {
 				int tmp = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
-						.op   = ir_op_alloca,
-						.type = exp->type,
-						.dst  = dst.reg,
+						.op      = ir_op_alloca,
+						.type    = exp->type,
+						.dst     = dst.reg,
 						.arg.i32 = 1,
 					});
 				da_append(&blk->code, (IR_Ins){
@@ -1637,17 +1738,19 @@ ast_compile(struct scope *scope)
 			p.tag = IRO_DATA;
 			p.hddr.is_static = true;
 			p.hddr.link = generate_mangled_name(id_name, def->type);
-			switch ((int)exp->as.lit.token->tt) {
-			case tt_intlit:
+			switch (exp->as.lit.tag) {
+			case LITERAL_BOOL:   FAILWITH("TODO: LITERAL_BOOL"); break;
+			case LITERAL_INT:
 				p.data.size = type_size(def->type);
 				p.data.type = def->type;
 				p.data.dat = malloc(p.data.size);
 				assert(p.data.dat != NULL);
 				memcpy(p.data.dat, &exp->as.lit.as.i, p.data.size);
 				break;
-			default:
-				FAILWITH("TODO: tt == %s", token_type_to_str(exp->as.lit.token->tt));
-				break;
+			case LITERAL_FLOAT:  FAILWITH("TODO: LITERAL_FLOAT");  break;
+			case LITERAL_STRING: FAILWITH("TODO: LITERAL_STRING"); break;
+			case LITERAL_CHAR:   FAILWITH("TODO: LITERAL_CHAR");   break;
+			default:             FAILWITH("Unreachable"); break;
 			}
 			da_append(&tl, p);
 		} else {
@@ -1939,7 +2042,6 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 		exp->as.wloop.cond = ast_desugar(p, exp->as.wloop.cond, scope);
 		exp->as.wloop.body = ast_desugar(p, exp->as.wloop.body, scope);
 		return exp;
-	case ast_exp_string: return exp;
 	case ast_exp_array_initializer: [[fallthrough]];
 	case ast_exp_struct_initializer: {
 		struct expression_stack *exps = &exp->as.init;
@@ -2026,6 +2128,16 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	case ast_exp_get_len:
 		exp->as.get_len = ast_desugar(p, exp->as.get_len, scope);
 		return exp;
+	case ast_exp_size_of: {
+		KCType *t = resolve_type(p, exp->as.size_of.type, scope);
+		if (t == NULL) {
+			log_error_and_die(p->lexer.filename, exp->tok,
+							  "Failed to resolve type of expression `%s`.",
+							  ast_type_to_str(exp->type));
+		}
+		exp->as.size_of.type = t;
+		return exp;
+	} break;
 	case ast_exp_binary: {
 		switch ((int)exp->as.bin.op) {
 		case binop_and: {

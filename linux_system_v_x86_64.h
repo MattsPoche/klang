@@ -74,8 +74,8 @@ struct asm_address {
 	KCType *type;
 	union {
 		int64_t i;
-		double d;
-		float f;
+		float64_t d;
+		float32_t f;
 		int32_t stack[2]; /* stack address */
 		int32_t wide[2];  /* two registers to hold value */
 	} as;

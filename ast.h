@@ -310,11 +310,20 @@ struct let {
 	struct expression *body;
 };
 
+enum literal_tag {
+	LITERAL_BOOL,
+	LITERAL_INT,
+	LITERAL_FLOAT,
+	LITERAL_CHAR,
+	LITERAL_STRING,
+};
+
 struct literal {
-	struct token *token;
+	enum literal_tag tag;
 	union {
-		int64_t i;
-		double  d;
+		struct strview s;
+		int64_t        i;
+		float64_t      f;
 	} as;
 };
 
@@ -393,7 +402,6 @@ enum ast_exp_tag {
 	ast_exp_definition,
 	ast_exp_let,
 	ast_exp_literal,
-	ast_exp_string,
 	ast_exp_array_initializer,
 	ast_exp_struct_initializer,
 	ast_exp_named_struct_initializer,
@@ -413,6 +421,7 @@ enum ast_exp_tag {
 	ast_exp_extern_symbol,
 	ast_exp_get_ptr,
 	ast_exp_get_len,
+	ast_exp_size_of,
 };
 
 struct expression {
@@ -420,7 +429,7 @@ struct expression {
 	struct token *tok;
 	bool is_lvalue;
 	bool is_mutable;
-	struct kc_type *type;    // type anotation
+	KCType *type;    // type anotation
 	union _exp_internal {
 		struct definition  def;
 		struct let         let;
@@ -440,8 +449,11 @@ struct expression {
 		struct expression *get_ptr;
 		struct expression *get_len;
 		struct expression *ret;
-		struct token      *str;
 		struct expression_stack init;
+		struct {
+			struct expression *exp;
+			KCType *type;
+		} size_of;
 		struct {
 			struct expression_stack exps;
 			struct token_ptrs ids;

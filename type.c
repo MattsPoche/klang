@@ -41,6 +41,12 @@ KC_PRIVATE struct definition specialize_definition(Parser *p, struct typing_cont
 KC_PRIVATE struct expression *specialize_expression(Parser *p, struct typing_context ctx,
 												struct expression *exp, struct type_var_bindings *bindings);
 
+KC_PRIVATE bool
+exp_is_integer_literal(struct expression *exp)
+{
+	return exp->tag == ast_exp_literal && exp->as.lit.tag == LITERAL_INT;
+}
+
 KC_PRIVATE KCType *
 type_application(Parser *p, struct type_app *app, struct scope *scope)
 {
@@ -1078,7 +1084,6 @@ specialize_expression(Parser *p,
 		newexp->as.let.body = specialize_expression(p, ctx, exp->as.let.body, bindings);
 		break;
 	case ast_exp_literal: newexp->as.lit = exp->as.lit; break;
-	case ast_exp_string: /* do nothing */ break;
 	case ast_exp_array_initializer: FAILWITH("TODO: ast_exp_array_initializer"); break;
 	case ast_exp_struct_initializer: FAILWITH("TODO: ast_exp_struct_initializer"); break;
 	case ast_exp_named_struct_initializer: FAILWITH("TODO: ast_exp_named_struct_initializer"); break;
@@ -1185,6 +1190,7 @@ specialize_expression(Parser *p,
 	case ast_exp_get_len:
 		newexp->as.get_len = specialize_expression(p, ctx, exp->as.get_len, bindings);
 		break;
+	case ast_exp_size_of: FAILWITH("TODO: ast_exp_size_of"); break;
 	default: FAILWITH("Unreachable"); break;
 	}
 	return newexp;
@@ -1818,7 +1824,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 				type_var_set_equal_to(t, u);
 				return unify(p, ctx, t->as.var.contains, get_indexable_base_type(u));
 			} else {
-				FAILWITH("TODO");
+				return false;
 			}
 		} break;
 		case type_class_struct: {
@@ -1929,19 +1935,14 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	case ast_exp_literal: {
 		struct literal *lit = &exp->as.lit;
 		KCType *type;
-		if (lit->token->tt == tt_intlit || lit->token->tt == tt_hexlit) {
-			type = fresh_type_var(type_class_integer);
-		} else if (lit->token->tt == tt_floatlit) {
-			type = fresh_type_var(type_class_float);
-		} else if (lit->token->tt == tt_true || lit->token->tt == tt_false) {
-			type = &AST_TYPE_BOOL;
-		} else {
-			FAILWITH("TODO: ast_exp_literal");
+		switch (lit->tag) {
+		case LITERAL_BOOL:   type = &AST_TYPE_BOOL;                     break;
+		case LITERAL_INT:    type = fresh_type_var(type_class_integer); break;
+		case LITERAL_FLOAT:  type = fresh_type_var(type_class_float);   break;
+		case LITERAL_STRING: type = &AST_TYPE_STRING;                   break;
+		case LITERAL_CHAR:   type = &AST_TYPE_CHAR;                     break;
 		}
 		return exp->type = type;
-	} break;
-	case ast_exp_string: {
-		return exp->type = &AST_TYPE_STRING;
 	} break;
 	case ast_exp_array_initializer: {
 		KCType *base = fresh_type_var(type_class_any);
@@ -2241,9 +2242,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			return exp->type = ret_type;
 		} break;
 		case unaop_cast: {
-			if (exp->as.cast.exp->tag == ast_exp_literal
-				&& (exp->as.cast.exp->as.lit.token->tt == tt_intlit
-					|| exp->as.cast.exp->as.lit.token->tt == tt_hexlit)
+			if (exp_is_integer_literal(exp->as.cast.exp)
 				&& type_is_integer(exp->as.cast.type)) {
 				KCType *type = exp->as.cast.type;
 				*exp = *exp->as.cast.exp;
@@ -2323,6 +2322,13 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	case ast_exp_get_len: {
 		KCType *type = fresh_type_var(type_class_length);
 		UNIFY_EXP(ctx, exp->as.get_len, type);
+		return exp->type = &AST_TYPE_U64;
+	} break;
+	case ast_exp_size_of: {
+		if (exp->as.size_of.exp) {
+			exp->as.size_of.type = infer_type(p, ctx, exp->as.size_of.exp);
+		}
+		assert(exp->as.size_of.type);
 		return exp->type = &AST_TYPE_U64;
 	} break;
 	default: FAILWITH("Unreachable"); break;

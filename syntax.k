@@ -31,7 +31,7 @@ let open_read_file(path: [i8]*) (FILE, {errno: i32, msg: str}) Result =
   let f: FILE = libc_fopen(path, #ptr("r\0")) in
   if f = 0 as FILE then
     let e: i32 = get_errno() in
-    Error {errno = e, msg = get_error_str(e)}
+    Error{errno = e, msg = get_error_str(e)}
   else
     Ok(f)
   end
@@ -81,40 +81,9 @@ let str_of_cstr(cstr: [i8]*) str =
   done;
   cstr[..length]
 
-let main(argc: i32, argv: [[i8]*]*) i32 =
-  print_string("argc = ");
-  print_int(argc);
-  print_newline();
-  let filename: str = str_of_cstr(argv[0]) in
-  print_string("file = ");
-  print_string(filename);
-  print_newline();
-  case open_read_file(#ptr(filename)) of
-    Ok(file) ->
-	  print_string("Opened file: ");
-	  print_string(filename);
-	  print_newline();
-	  fclose(file),
-    Error(&e) ->	
-	  print_string("Error code: ");
-	  print_int(e.errno);
-	  print_newline();
-	  print_string(e.msg);
-	  print_newline();
-	  0,
-  end;
-  case open_read_file(#ptr("foo_bar\0")) of
-    Ok(file) ->
-	  print_string("Opened file: ");
-	  print_string(filename);
-	  print_newline();
-	  fclose(file);
-	  0,
-    Error(&e) ->
-	  print_string("Error code: ");
-	  print_int(e.errno);
-	  print_newline();
-	  print_string(e.msg);
-	  print_newline();
-	  0,
-  end
+let main() i32 =
+  let x: i32 = 0x45 in
+  print_string("#sizeof(0x45) = "); print_int(#sizeof(x)); print_newline();
+  print_string("#sizeof(: i64) = "); print_int(#sizeof(: i64)); print_newline();
+  x
+  

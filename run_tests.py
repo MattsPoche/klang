@@ -106,9 +106,7 @@ fizzbuzz = ("fizzbuzz\n"
 slice_output = "Hello, World\nHello\nWorld\n0 1 2 3 4 \n0 1 2 \n2 3 4 \n"
 constexpr_output = "489\n-351\n28980\n0\n481\n4\nfalse\ntrue\nfalse\ntrue\nfalse\n"
 generic_types = "69\n420\n1303948\n38438273\n32 33 34 35 36 37 38 \n69\nHello, World\n690\n6969\n"
-simple_union = "argc = 1\nfile = ./a.out\nOpened file: ./a.out\n"
-
-
+simple_union = "argc = 1\nfile = ./a.out\nOpened file: ./a.out\nError code: 2\nNo such file or directory\n"
 
 tests = [
 	{"file_name": "tests/fibonacci.k",			   "exit_code": 89,  "output": None},

@@ -25,6 +25,10 @@ TODOS:
 #include <dlfcn.h>
 #include <unistd.h>
 
+#define STRVIEW_IMPLEMENTATION
+#include "strview.h"
+#include "cmd_flags.h"
+
 #ifdef UNITY_BUILD
 
 #define KC_PUBLIC      static
@@ -45,10 +49,6 @@ TODOS:
 #include "common.h"
 
 #endif
-
-#define STRVIEW_IMPLEMENTATION
-#include "strview.h"
-#include "cmd_flags.h"
 
 KC_PRIVATE struct asm_module *
 compile_file(const char *filename, struct asm_module *asm_mod, bool is_dll)

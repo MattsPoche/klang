@@ -23,13 +23,13 @@ let print_digits(n: i64) =
 
 let print_int(n: i64) =
   if n = 0 then
-    print_char("0"[0])
+    print_char(#"0")
   else
-    let n: i64 = if n < 0 then print_char("-"[0]); -n else n end in
+    let n: i64 = if n < 0 then print_char(#"-"); -n else n end in
     print_digits(n)
   end
 
-let print_newline() = print_char("\n"[0])
+let print_newline() = print_char(#"\n")
 
 let puts(str: &[i8]) =
   print_string(str);
@@ -39,7 +39,7 @@ let print_slice(slice: &[i64]) =
   let mut i: u64 = 0 in
   while i < #len(slice) do
     print_int(slice[i]);
-    print_char(" "[0]);
+    print_char(#" ");
     i += 1
   done;
   print_newline()

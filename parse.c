@@ -7,15 +7,6 @@ KC_PRIVATE void parse_definition(Parser *p, struct definition *def, struct scope
 KC_PRIVATE struct expression *parse_expression(Parser *p, struct scope *scope);
 KC_PRIVATE KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
 
-KC_PUBLIC bool
-exp_is_integer_literal(struct expression *exp)
-{
-	if (exp->tag != ast_exp_literal) return false;
-	if (exp->as.lit.token->tt == tt_intlit) return true;
-	if (exp->as.lit.token->tt == tt_hexlit) return true;
-	return false;
-}
-
 /* --- Parser --- */
 KC_PRIVATE struct token *
 peek_token2(Parser *p)
@@ -227,7 +218,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 			next_token(p, NULL);
 			struct expression *exp = parse_expression(p, scope);
 			assert(exp->tag == ast_exp_literal);
-			assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
+			assert(exp->as.lit.tag == LITERAL_INT);
 			type->as.array.is_sized = true;
 			type->as.array.size = exp->as.lit.as.i;
 		} else {
@@ -353,7 +344,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 			next_token(p, NULL);
 			struct expression *exp = parse_expression(p, &sc);
 			assert(exp->tag == ast_exp_literal);
-			assert(exp->as.lit.token->tt == tt_intlit || exp->as.lit.token->tt == tt_hexlit);
+			assert(exp->as.lit.tag == LITERAL_INT);
 			tag_value = exp->as.lit.as.i;
 			EXPECT(next_token(p, NULL), tt_rparen);
 		}
@@ -574,15 +565,7 @@ KC_PRIVATE bool
 exp_is_intlit(struct expression *exp)
 {
 	return exp->tag == ast_exp_literal
-		&& exp->as.lit.token->tt == tt_intlit;
-}
-
-KC_PRIVATE struct token *
-copy_token(struct token *tok)
-{
-	struct token *new_tok = MEM_ALLOC(struct token);
-	*new_tok = *tok;
-	return new_tok;
+		&& exp->as.lit.tag == LITERAL_INT;
 }
 
 KC_PRIVATE struct expression *
@@ -606,98 +589,68 @@ eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *righ
 			break;
 		case binop_add:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x + y;
 			break;
 		case binop_sub:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x - y;
 			break;
 		case binop_mul:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x * y;
 			break;
 		case binop_div:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x / y;
 			break;
 		case binop_mod:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x % y;
 			break;
 		case binop_xor:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x ^ y;
 			break;
 		case binop_land:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x & y;
 			break;
 		case binop_lor:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = right->as.lit.token;
+			exp->as.lit.tag = LITERAL_INT;
 			exp->as.lit.as.i = x | y;
 			break;
 		case binop_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(right->as.lit.token);
-			if (x == y) {
-				exp->as.lit.token->tt = tt_true;
-				exp->as.lit.as.i = 1;
-			} else {
-				exp->as.lit.token->tt = tt_false;
-				exp->as.lit.as.i = 0;
-			}
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = x == y;
 			break;
 		case binop_less_than:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(right->as.lit.token);
-			if (x < y) {
-				exp->as.lit.token->tt = tt_true;
-				exp->as.lit.as.i = 1;
-			} else {
-				exp->as.lit.token->tt = tt_false;
-				exp->as.lit.as.i = 0;
-			}
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = x < y;
 			break;
 		case binop_more_than:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(right->as.lit.token);
-			if (x > y) {
-				exp->as.lit.token->tt = tt_true;
-				exp->as.lit.as.i = 1;
-			} else {
-				exp->as.lit.token->tt = tt_false;
-				exp->as.lit.as.i = 0;
-			}
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = x > y;
 			break;
 		case binop_less_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(right->as.lit.token);
-			if (x <= y) {
-				exp->as.lit.token->tt = tt_true;
-				exp->as.lit.as.i = 1;
-			} else {
-				exp->as.lit.token->tt = tt_false;
-				exp->as.lit.as.i = 0;
-			}
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = x <= y;
 			break;
 		case binop_more_equal:
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = copy_token(right->as.lit.token);
-			if (x >= y) {
-				exp->as.lit.token->tt = tt_true;
-				exp->as.lit.as.i = 1;
-			} else {
-				exp->as.lit.token->tt = tt_false;
-				exp->as.lit.as.i = 0;
-			}
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = x >= y;
 			break;
 		case binop_or:
 		case binop_and:
@@ -753,15 +706,14 @@ eval_unaop_exp(struct expression *exp, struct expression *operand)
 	} else if (exp->as.una.op == op_slice) {
 		struct expression *idx = exp->as.slice.idx;
 		struct expression *len = exp->as.slice.len;
-		if (exp->as.slice.idx == NULL) {
+		if (idx == NULL) {
 			idx = MEM_ALLOC(struct expression);
 			idx->tag = ast_exp_literal;
-			idx->as.lit.token = MEM_ALLOC(struct token);
-			idx->as.lit.token->tt = tt_intlit;
+			idx->as.lit.tag = LITERAL_INT;
 			idx->as.lit.as.i = 0;
 			exp->as.slice.idx = idx;
 		}
-		if (exp->as.slice.len == NULL) {
+		if (len == NULL) {
 			len = MEM_ALLOC(struct expression);
 			len->tag = ast_exp_get_len;
 			len->as.get_len = copy_exp(operand);
@@ -1089,6 +1041,21 @@ parse_expression(Parser *p, struct scope *scope)
 		case tt_newtype: FAILWITH("TODO: tt_newtype"); break;
 		case tt_typevar: FAILWITH("TODO: tt_typevar"); break;
 		case tt_struct: FAILWITH("TODO: tt_struct"); break;
+		case tt_sizeof:
+			assert(op_prev == true);
+			op_prev = false;
+			exp->tok = next_token(p, NULL);
+			exp->tag = ast_exp_size_of;
+			EXPECT(next_token(p, NULL), tt_lparen);
+			if (ACCEPT(peek_token(p), tt_colon)) {
+				next_token(p, NULL);
+				exp->as.size_of.type = parse_type(p, scope, false);
+			} else {
+				exp->as.size_of.exp = parse_expression(p, scope);
+			}
+			EXPECT(next_token(p, NULL), tt_rparen);
+			da_append(&out, exp);
+			break;
 		case tt_return:
 			assert(op_prev == true);
 			op_prev = false;
@@ -1170,17 +1137,31 @@ parse_expression(Parser *p, struct scope *scope)
 		case tt_string:
 			assert(op_prev == true);
 			op_prev = false;
-			exp->tag = ast_exp_string;
-			exp->as.str = next_token(p, &exp->tok);
+			exp->tag = ast_exp_literal;
+			exp->tok = next_token(p, NULL);
+			exp->as.lit.tag = LITERAL_STRING;
+			exp->as.lit.as.s = sv_unescape_string(token_to_strview(exp->tok));
 			da_append(&out, exp);
 			break;
+		case tt_char: {
+			assert(op_prev == true);
+			op_prev = false;
+			exp->tag = ast_exp_literal;
+			exp->tok = next_token(p, NULL);
+			exp->as.lit.tag = LITERAL_CHAR;
+			struct strview sv = sv_unescape_string(sv_drop_char(token_to_strview(exp->tok)));
+			assert(sv.len == 1);
+			exp->as.lit.as.i = sv.ptr[0];
+			free(sv.ptr);
+			da_append(&out, exp);
+		} break;
 		case tt_true:
 			assert(op_prev == true);
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = tok;
-			exp->as.lit.as.i = 1;
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = true;
 			da_append(&out, exp);
 			break;
 		case tt_false:
@@ -1188,8 +1169,8 @@ parse_expression(Parser *p, struct scope *scope)
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = tok;
-			exp->as.lit.as.i = 0;
+			exp->as.lit.tag = LITERAL_BOOL;
+			exp->as.lit.as.i = false;
 			da_append(&out, exp);
 			break;
 		case tt_intlit:
@@ -1197,7 +1178,7 @@ parse_expression(Parser *p, struct scope *scope)
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
-			exp->as.lit.token = tok;
+			exp->as.lit.tag = LITERAL_INT;
 			assert(sv_to_int(token_to_strview(tok), &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
@@ -1206,7 +1187,7 @@ parse_expression(Parser *p, struct scope *scope)
 			op_prev = false;
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, &tok);
-			exp->as.lit.token = tok;
+			exp->as.lit.tag = LITERAL_INT;
 			assert(sv_to_int(token_to_strview(tok), &exp->as.lit.as.i));
 			da_append(&out, exp);
 			break;
@@ -1216,8 +1197,6 @@ parse_expression(Parser *p, struct scope *scope)
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_undefined;
-			exp->as.lit.token = tok;
-			exp->as.lit.as.i = 0;
 			da_append(&out, exp);
 			break;
 		case tt_noreturn: FAILWITH("TODO: tt_noreturn"); break;
@@ -1623,7 +1602,7 @@ ast_fprint(struct expression *exp, FILE *file)
 		ast_fprint(exp->as.let.body, file);
 		break;
 	case ast_exp_literal:
-		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->as.lit.token)));
+		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->tok)));
 		break;
 	case ast_exp_procedure_literal: {
 		struct procedure *proc = &exp->as.proc;
@@ -1682,7 +1661,6 @@ ast_fprint(struct expression *exp, FILE *file)
 		fputc('}', file);
 	} break;
 	case ast_exp_array_initializer: FAILWITH("TODO: ast_exp_array_initializer"); break;
-	case ast_exp_string:
 	case ast_exp_ident:
 		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(exp->tok)));
 		break;
@@ -1694,6 +1672,17 @@ ast_fprint(struct expression *exp, FILE *file)
 	case ast_exp_get_len:
 		fputs("#len(", file);
 		ast_fprint(exp->as.get_ptr, file);
+		fputc(')', file);
+		break;
+	case ast_exp_size_of:
+		fputs("#sizeof(", file);
+		if (exp->as.size_of.exp) {
+			ast_fprint(exp->as.size_of.exp, file);
+		} else {
+			assert(exp->as.size_of.type);
+			fputs(": ", file);
+			ast_type_fprint(exp->as.size_of.type, file);
+		}
 		fputc(')', file);
 		break;
 	case ast_exp_extern_symbol:
