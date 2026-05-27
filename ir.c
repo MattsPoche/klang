@@ -71,8 +71,8 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 	if (exp->type->tag == ast_type_array) {
 		KCType *base_type = MEM_ALLOC(KCType);
 		base_type->tag = ast_type_ptr;
-		base_type->as.ptr = exp->type;
-		for (size_t i = 0; i < exp->as.init.len; ++i) {
+		base_type->ptr = exp->type;
+		for (size_t i = 0; i < exp->init.len; ++i) {
 			int ptr = ir_proc_new_reg(tl, proc_id);
 			int idx = ir_proc_new_reg(tl, proc_id);
 			da_append(&blk->code, (IR_Ins){
@@ -88,19 +88,19 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = dst.reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->as.init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
 		}
 		return blk;
 	}
 	if (exp->type->tag == ast_type_slice) {
 		KCType *array_type = MEM_ALLOC(KCType);
 		array_type->tag = ast_type_array;
-		array_type->as.array.base = exp->type->as.slice;
-		array_type->as.array.is_sized = true;
-		array_type->as.array.size = exp->as.init.len;
+		array_type->array.base = exp->type->slice;
+		array_type->array.is_sized = true;
+		array_type->array.size = exp->init.len;
 		KCType *base_type = MEM_ALLOC(KCType);
 		base_type->tag = ast_type_ptr;
-		base_type->as.ptr = array_type;
+		base_type->ptr = array_type;
 		/* allocate space for array */
 		int array_reg = ir_proc_new_reg(tl, proc_id);
 		da_append(&blk->code, (IR_Ins){
@@ -109,7 +109,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 				.dst  = array_reg,
 				.arg.i32 = 1,
 			});
-		for (size_t i = 0; i < exp->as.init.len; ++i) {
+		for (size_t i = 0; i < exp->init.len; ++i) {
 			int ptr = ir_proc_new_reg(tl, proc_id);
 			int idx = ir_proc_new_reg(tl, proc_id);
 			da_append(&blk->code, (IR_Ins){
@@ -125,7 +125,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = array_reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->as.init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
 		}
 		/* build slice */
 		int slice_reg = ir_proc_new_reg(tl, proc_id);
@@ -135,7 +135,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 				.op      = ir_op_loadimm,
 				.type    = &AST_TYPE_U64,
 				.dst     = len_reg,
-				.arg.u32 = exp->as.init.len,
+				.arg.u32 = exp->init.len,
 			});
 		/* construct slice value */
 		da_append(&blk->code, (IR_Ins){
@@ -155,10 +155,10 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 		return blk;
 	}
 	if (exp->type->tag == ast_type_struct) {
-		struct struct_type *st = &exp->type->as.struct_t;
+		struct struct_type *st = &exp->type->struct_t;
 		KCType *base_type = MEM_ALLOC(KCType);
 		base_type->tag = ast_type_ptr;
-		base_type->as.ptr = exp->type;
+		base_type->ptr = exp->type;
 		for (size_t i = 0; i < st->len; ++i) {
 			int ptr = ir_proc_new_reg(tl, proc_id);
 			int idx = ir_proc_new_reg(tl, proc_id);
@@ -175,7 +175,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = dst.reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->as.init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
 		}
 		return blk;
 	}
@@ -191,10 +191,10 @@ dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size
 	assert(exp->tag == ast_exp_named_struct_initializer);
 	KCType *base_type = MEM_ALLOC(KCType);
 	base_type->tag = ast_type_ptr;
-	base_type->as.ptr = exp->type;
-	for (size_t i = 0; i < exp->as.named_init.ids.len; ++i) {
-		struct token *name = exp->as.named_init.ids.elems[i];
-		struct expression *exp_init = exp->as.named_init.exps.elems[i];
+	base_type->ptr = exp->type;
+	for (size_t i = 0; i < exp->named_init.ids.len; ++i) {
+		struct token *name = exp->named_init.ids.elems[i];
+		struct expression *exp_init = exp->named_init.exps.elems[i];
 		uint32_t idx = get_struct_member_idx(exp->type, name);
 		int ptr_reg = ir_proc_new_reg(tl, proc_id);
 		int idx_reg = ir_proc_new_reg(tl, proc_id);
@@ -222,7 +222,7 @@ dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id
 {
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_value_cons);
-	int64_t tag_val = exp->as.valcons.tag_val;
+	int64_t tag_val = exp->valcons.tag_val;
 	assert(tag_val <= INT32_MAX);
 	assert(tag_val >= INT32_MIN);
 	int tag = ir_proc_new_reg(tl, proc_id);
@@ -241,7 +241,7 @@ dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id
 			.dst  = dst.reg,
 			.arg.i32 = tag,
 		});
-	if (exp->as.valcons.exp) {
+	if (exp->valcons.exp) {
 		/* offset to data field */
 		da_append(&blk->code, (IR_Ins){
 				.op   = ir_op_loadimm,
@@ -257,7 +257,7 @@ dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id
 				.arg.rx[1] = tmp,
 			});
 		/* set data field */
-		blk = ast_compile_expression(exp->as.valcons.exp, DEST_CPY(data_offset), proc_id, blk, scope, tl);
+		blk = ast_compile_expression(exp->valcons.exp, DEST_CPY(data_offset), proc_id, blk, scope, tl);
 	}
 	return blk;
 }
@@ -268,7 +268,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 {
 	switch (exp->tag) {
 	case ast_exp_let: {
-		struct let *let = &exp->as.let;
+		struct let *let = &exp->let;
 		struct definition *def = &let->def;
 		int var = ir_proc_new_reg(tl, proc_id);
 		def->ir_symbol = var;
@@ -282,17 +282,17 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		return ast_compile_expression(let->body, dst, proc_id, res, &let->scope, tl);
 	} break;
 	case ast_exp_literal: {
-		struct literal *lit = &exp->as.lit;
+		struct literal *lit = &exp->lit;
 		switch (lit->tag) {
 		case LITERAL_BOOL:
-			assert(lit->as.i == 1 || lit->as.i == 0);
+			assert(lit->i == 1 || lit->i == 0);
 			switch (dst.tag) {
 			case DST_VAL: {
 				da_append(&blk->code, (IR_Ins){
 						.op = ir_op_loadimm,
 						.type = exp->type,
 						.dst = dst.reg,
-						.arg.i32 = lit->as.i,
+						.arg.i32 = lit->i,
 					});
 			} break;
 			case DST_CPY:  FAILWITH("TODO: ast_exp_literal"); break;
@@ -306,7 +306,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			break;
 		case LITERAL_CHAR:
 		case LITERAL_INT:
-			assert(lit->as.i <= INT32_MAX && lit->as.i >= INT32_MIN);
+			assert(lit->i <= INT32_MAX && lit->i >= INT32_MIN);
 			switch (dst.tag) {
 			case DST_RET:
 			case DST_VAL: {
@@ -314,7 +314,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 						.op = ir_op_loadimm,
 						.type = exp->type,
 						.dst = dst.reg,
-						.arg.i32 = lit->as.i,
+						.arg.i32 = lit->i,
 					});
 			} break;
 			case DST_CPY: {
@@ -323,7 +323,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 						.op = ir_op_loadimm,
 						.type = exp->type,
 						.dst = tmp,
-						.arg.i32 = lit->as.i,
+						.arg.i32 = lit->i,
 					});
 				da_append(&blk->code, (IR_Ins){
 						.op = ir_op_store,
@@ -341,8 +341,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			break;
 		case LITERAL_FLOAT:  FAILWITH("TODO: LITERAL_FLOAT"); break;
 		case LITERAL_STRING: {
-			char *str = exp->as.lit.as.s.ptr;
-			size_t length = exp->as.lit.as.s.len;
+			char *str = exp->lit.s.ptr;
+			size_t length = exp->lit.s.len;
 			size_t id = tl->len;
 			union ir_object p = {
 				.data.is_static = true,
@@ -543,76 +543,11 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		}
 		return blk; /* do nothing */
 	} break;
-#if 0
-	case ast_exp_string: {
-		char *str = NULL;
-		size_t length = sv_unescape_string(token_to_strview(exp->tok), &str);
-		size_t id = tl->len;
-		union ir_object p = {
-			.data.is_static = true,
-			.data.tag  = IRO_DATA,
-			.data.size = length,
-			.data.dat  = str,
-			.data.link = fmt_str(".LSTR%zu", id),
-		};
-		da_append(tl, p);
-		switch (dst.tag) {
-		case DST_VAL: {
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_loadglobl,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.u32 = id,
-				});
-		} break;
-		case DST_CPY: {
-			int tmp = ir_proc_new_reg(tl, proc_id);
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_loadglobl,
-					.type = exp->type,
-					.dst  = tmp,
-					.arg.u32 = id,
-				});
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_store,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.rx[0] = tmp,
-				});
-		} break;
-		case DST_REF: {
-			int tmp = ir_proc_new_reg(tl, proc_id);
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_alloca,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.i32 = 1,
-				});
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_loadglobl,
-					.type = exp->type,
-					.dst  = tmp,
-					.arg.u32 = id,
-				});
-			da_append(&blk->code, (IR_Ins){
-					.op   = ir_op_store,
-					.type = exp->type,
-					.dst  = dst.reg,
-					.arg.rx[0] = tmp,
-				});
-		} break;
-		case DST_RET: FAILWITH("TODO: ast_exp_string"); break;
-		case DST_NONE: FAILWITH("TODO: ast_exp_string"); break;
-		default:      FAILWITH("Unreachable"); break;
-		}
-		return blk;
-	} break;
-#endif
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_ident: {
 		struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
 		assert(entry->tag == SYMTBL_VARIABL);
-		struct definition *def = entry->as.variable.def;
+		struct definition *def = entry->variable.def;
 		assert(def != NULL);
 		size_t ir_symbol;
 		if (type_is_polymorphic(def->type)) {
@@ -686,7 +621,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		return blk;
 	} break;
 	case ast_exp_binary: {
-		struct binary *bin = &exp->as.bin;
+		struct binary *bin = &exp->bin;
 		enum ir_opcode op;
 		switch ((enum binop)bin->op) {
 		case binop_sequence: {
@@ -806,10 +741,10 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
-					base_type->as.ptr = base->type;
+					base_type->ptr = base->type;
 				}
 				if (idx->tag == ast_exp_literal) {
-					size_t index = idx->as.lit.as.i;
+					size_t index = idx->lit.i;
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_loadimm,
@@ -850,7 +785,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(bin->left->tok));
 				assert(entry != NULL);
 				assert(entry->tag == SYMTBL_VARIABL);
-				struct definition *def = entry->as.variable.def;
+				struct definition *def = entry->variable.def;
 				assert(type_is_numeric_scalar(def->type)
 					   || type_is_bool(def->type)
 					   || type_is_pointer(def->type));
@@ -866,14 +801,14 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				}
 			} break;
 			case ast_exp_unary: {
-				switch ((int)bin->left->as.una.op) {
+				switch ((int)bin->left->una.op) {
 				case op_dereference: {
 					int left_reg = ir_proc_new_reg(tl, proc_id);
-					if (bin->left->as.una.exp->tag == ast_exp_ident) {
-						right = ast_compile_expression(bin->left->as.una.exp, DEST_VAL(left_reg),
+					if (bin->left->una.exp->tag == ast_exp_ident) {
+						right = ast_compile_expression(bin->left->una.exp, DEST_VAL(left_reg),
 													   proc_id, right, scope, tl);
 					} else {
-						right = ast_compile_expression(bin->left->as.una.exp, DEST_REF(left_reg),
+						right = ast_compile_expression(bin->left->una.exp, DEST_REF(left_reg),
 													   proc_id, right, scope, tl);
 					}
 					da_append(&right->code, (IR_Ins){
@@ -908,7 +843,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		FAILWITH("TODO: ast_exp_binary");
 	} break;
 	case ast_exp_get_len: {
-		struct expression *target = exp->as.get_len;
+		struct expression *target = exp->get_len;
 		if (type_is_slice(target->type)) {
 			switch (dst.tag) {
 			case DST_VAL: {
@@ -945,8 +880,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			}
 		} else if (type_is_array(target->type)) {
 			size_t len = 0;
-			if (target->type->as.array.is_sized) {
-				len = target->type->as.array.size;
+			if (target->type->array.is_sized) {
+				len = target->type->array.size;
 			} else {
 				FAILWITH("TODO: unsized array");
 			}
@@ -971,7 +906,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		}
 	} break;
 	case ast_exp_get_ptr: {
-		struct expression *slice = exp->as.get_ptr;
+		struct expression *slice = exp->get_ptr;
 		if (type_is_slice(slice->type)) {
 			switch (dst.tag) {
 			case DST_VAL: {
@@ -1003,7 +938,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.op      = ir_op_loadimm,
 					.type    = exp->type,
 					.dst     = dst.reg,
-					.arg.i32 = type_size(exp->as.size_of.type),
+					.arg.i32 = type_size(exp->size_of.type),
 				});
 		} break;
 		case DST_CPY: {
@@ -1012,7 +947,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.op		 = ir_op_loadimm,
 					.type	 = exp->type,
 					.dst	 = tmp,
-					.arg.i32 = type_size(exp->as.size_of.type),
+					.arg.i32 = type_size(exp->size_of.type),
 				});
 			da_append(&blk->code, (IR_Ins){
 					.op		   = ir_op_store,
@@ -1028,7 +963,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		return blk;
 	} break;
 	case ast_exp_unary: {
-		struct unary *una = &exp->as.una;
+		struct unary *una = &exp->una;
 		switch ((enum unaop)una->op) {
 		case unaop_lnot: FAILWITH("TODO: unaop_lnot"); break;
 		case unaop_not:  FAILWITH("TODO: unaop_not"); break;
@@ -1126,8 +1061,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			return blk;
 		} break;
 		case unaop_index: {
-			struct expression *base = exp->as.idx.exp;
-			struct expression *idx =  exp->as.idx.idx;
+			struct expression *base = exp->idx.exp;
+			struct expression *idx =  exp->idx.idx;
 			switch (dst.tag) {
 			case DST_RET:
 			case DST_VAL: {
@@ -1157,7 +1092,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					}
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
-					base_type->as.ptr = base->type;
+					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
@@ -1197,9 +1132,9 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			FAILWITH("TODO: unaop_index");
 		} break;
 		case unaop_slice: {
-			struct expression *base = exp->as.slice.exp;
-			struct expression *idx =  exp->as.slice.idx;
-			struct expression *len =  exp->as.slice.len;
+			struct expression *base = exp->slice.exp;
+			struct expression *idx =  exp->slice.idx;
+			struct expression *len =  exp->slice.len;
 			switch (dst.tag) {
 			case DST_RET:
 			case DST_VAL: {
@@ -1213,7 +1148,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
-					base_type->as.ptr = base->type;
+					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
@@ -1258,7 +1193,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
-					base_type->as.ptr = base->type;
+					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
 					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
@@ -1306,7 +1241,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			FAILWITH("TODO: unaop_slice");
 		} break;
 		case unaop_call: {
-			struct call *call = &exp->as.call;
+			struct call *call = &exp->call;
 			struct ir_args args = {0};
 			int preg = ir_proc_new_reg(tl, proc_id);
 			blk = ast_compile_expression(call->proc, DEST_VAL(preg), proc_id, blk, scope, tl);
@@ -1382,13 +1317,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		} break;
 		case unaop_cast: {
 			int reg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(exp->as.cast.exp, DEST_VAL(reg), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->cast.exp, DEST_VAL(reg), proc_id, blk, scope, tl);
 			switch (dst.tag) {
 			case DST_RET: [[fallthrough]];
 			case DST_VAL: {
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_cast,
-						.type = exp->as.cast.type,
+						.type = exp->cast.type,
 						.dst  = dst.reg,
 						.arg.rx[0] = reg,
 					});
@@ -1398,7 +1333,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int tmp = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_cast,
-						.type = exp->as.cast.type,
+						.type = exp->cast.type,
 						.dst  = tmp,
 						.arg.rx[0] = reg,
 					});
@@ -1421,7 +1356,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		FAILWITH("TODO: ast_exp_unary");
 	} break;
 	case ast_exp_if: {
-		struct exp_if *iff = &exp->as.iff;
+		struct exp_if *iff = &exp->iff;
 		int cond_reg = ir_proc_new_reg(tl, proc_id);
 		blk = ast_compile_expression(iff->cond, DEST_VAL(cond_reg), proc_id, blk, scope, tl);
 		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
@@ -1492,7 +1427,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		return join;
 	} break;
 	case ast_exp_case: {
-		struct exp_case *cc = &exp->as.ccase;
+		struct exp_case *cc = &exp->ccase;
 		int val_reg = ir_proc_new_reg(tl, proc_id);
 		blk = ast_compile_expression(cc->cexp, DEST_REF(val_reg), proc_id, blk, scope, tl);
 		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
@@ -1642,13 +1577,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		blk->term.op = ir_op_goto;
 		blk->term.b0 = cond;
 		int cond_reg = ir_proc_new_reg(tl, proc_id);
-		cond = ast_compile_expression(exp->as.wloop.cond, DEST_VAL(cond_reg), proc_id, cond, scope, tl);
+		cond = ast_compile_expression(exp->wloop.cond, DEST_VAL(cond_reg), proc_id, cond, scope, tl);
 		cond->term.op = ir_op_if;
 		da_append(&cond->term.args, cond_reg);
 		cond->term.b0 = body;
 		cond->term.b1 = join;
 		cond->term.j0 = join;
-		body = ast_compile_expression(exp->as.wloop.body, DEST_NONE(), proc_id, body, scope, tl);
+		body = ast_compile_expression(exp->wloop.body, DEST_NONE(), proc_id, body, scope, tl);
 		body->term.op = ir_op_goto;
 		body->term.b0 = cond;
 		return join;
@@ -1690,7 +1625,7 @@ ast_create_proc_object(union ir_object *p, struct definition *def, KCType *type,
 	}
 	p->proc.type = type;
 	p->proc.def  = def;
-	p->proc.node = &exp->as.proc;
+	p->proc.node = &exp->proc;
 	p->proc.regc = 0;
 }
 
@@ -1702,7 +1637,7 @@ ast_compile(struct scope *scope)
 	for (size_t i = 0; i < st->len; ++i) {
 		if (st->elems[i].tag == SYMTBL_VALCONS) continue;
 		assert(st->elems[i].tag == SYMTBL_VARIABL);
-		struct definition *def = st->elems[i].as.variable.def;
+		struct definition *def = st->elems[i].variable.def;
 		struct expression *exp = def->exp;
 		union ir_object p = {0};
 		struct strview id_name = token_to_strview(def->id);
@@ -1738,14 +1673,14 @@ ast_compile(struct scope *scope)
 			p.tag = IRO_DATA;
 			p.hddr.is_static = true;
 			p.hddr.link = generate_mangled_name(id_name, def->type);
-			switch (exp->as.lit.tag) {
+			switch (exp->lit.tag) {
 			case LITERAL_BOOL:   FAILWITH("TODO: LITERAL_BOOL"); break;
 			case LITERAL_INT:
 				p.data.size = type_size(def->type);
 				p.data.type = def->type;
 				p.data.dat = malloc(p.data.size);
 				assert(p.data.dat != NULL);
-				memcpy(p.data.dat, &exp->as.lit.as.i, p.data.size);
+				memcpy(p.data.dat, &exp->lit.i, p.data.size);
 				break;
 			case LITERAL_FLOAT:  FAILWITH("TODO: LITERAL_FLOAT");  break;
 			case LITERAL_STRING: FAILWITH("TODO: LITERAL_STRING"); break;
@@ -2018,7 +1953,7 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	}
 	switch (exp->tag) {
 	case ast_exp_definition: {
-		struct definition *def = &exp->as.def;
+		struct definition *def = &exp->def;
 		if (type_is_polymorphic(def->type)) {
 			for (size_t i = 0; i < def->specs.len; ++i) {
 				struct type_spec *spec_def = &def->specs.elems[i];
@@ -2034,24 +1969,24 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 		return exp;
 	} break;
 	case ast_exp_let:
-		exp->as.let.def.exp = ast_desugar(p, exp->as.let.def.exp, scope);
-		exp->as.let.def.type = resolve_type(p, exp->as.let.def.type, scope);
-		exp->as.let.body = ast_desugar(p, exp->as.let.body, &exp->as.let.scope);
+		exp->let.def.exp = ast_desugar(p, exp->let.def.exp, scope);
+		exp->let.def.type = resolve_type(p, exp->let.def.type, scope);
+		exp->let.body = ast_desugar(p, exp->let.body, &exp->let.scope);
 		return exp;
 	case ast_exp_while:
-		exp->as.wloop.cond = ast_desugar(p, exp->as.wloop.cond, scope);
-		exp->as.wloop.body = ast_desugar(p, exp->as.wloop.body, scope);
+		exp->wloop.cond = ast_desugar(p, exp->wloop.cond, scope);
+		exp->wloop.body = ast_desugar(p, exp->wloop.body, scope);
 		return exp;
 	case ast_exp_array_initializer: [[fallthrough]];
 	case ast_exp_struct_initializer: {
-		struct expression_stack *exps = &exp->as.init;
+		struct expression_stack *exps = &exp->init;
 		for (size_t i = 0; i < exps->len; ++i) {
 			exps->elems[i] = ast_desugar(p, exps->elems[i], scope);
 		}
 		return exp;
 	} break;
 	case ast_exp_named_struct_initializer: {
-		struct expression_stack *exps = &exp->as.named_init.exps;
+		struct expression_stack *exps = &exp->named_init.exps;
 		for (size_t i = 0; i < exps->len; ++i) {
 			exps->elems[i] = ast_desugar(p, exps->elems[i], scope);
 		}
@@ -2059,50 +1994,50 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	} break;
 	case ast_exp_zero_struct_initializer:	FAILWITH("TODO: ast_exp_zero_struct_initializer"); break;
 	case ast_exp_procedure_literal:
-		for (size_t i = 0; i < exp->as.proc.formals.len; ++i) {
-			exp->as.proc.formals.elems[i].type =
-				resolve_type(p, exp->as.proc.formals.elems[i].type, scope);
+		for (size_t i = 0; i < exp->proc.formals.len; ++i) {
+			exp->proc.formals.elems[i].type =
+				resolve_type(p, exp->proc.formals.elems[i].type, scope);
 		}
-		exp->as.proc.ret = resolve_type(p, exp->as.proc.ret, scope);
-		exp->as.proc.body = ast_desugar(p, exp->as.proc.body, &exp->as.proc.scope);
+		exp->proc.ret = resolve_type(p, exp->proc.ret, scope);
+		exp->proc.body = ast_desugar(p, exp->proc.body, &exp->proc.scope);
 		return exp;
 	case ast_exp_undefined:  FAILWITH("TODO: ast_exp_undefined"); break;
 	case ast_exp_value_cons:
-		if (exp->as.valcons.exp)
-			exp->as.valcons.exp = ast_desugar(p, exp->as.valcons.exp, scope);
+		if (exp->valcons.exp)
+			exp->valcons.exp = ast_desugar(p, exp->valcons.exp, scope);
 		return exp;
 	case ast_exp_unary:
-		if ((enum unaop)exp->as.una.op == unaop_call) {
-			exp->as.call.proc = ast_desugar(p, exp->as.call.proc, scope);
-			for (size_t i = 0; i < exp->as.call.args.len; ++i) {
-				exp->as.call.args.elems[i] = ast_desugar(p, exp->as.call.args.elems[i], scope);
+		if ((enum unaop)exp->una.op == unaop_call) {
+			exp->call.proc = ast_desugar(p, exp->call.proc, scope);
+			for (size_t i = 0; i < exp->call.args.len; ++i) {
+				exp->call.args.elems[i] = ast_desugar(p, exp->call.args.elems[i], scope);
 			}
-		} else if ((enum unaop)exp->as.una.op == unaop_index) {
-			struct index *idx = &exp->as.idx;
+		} else if ((enum unaop)exp->una.op == unaop_index) {
+			struct index *idx = &exp->idx;
 			idx->exp = ast_desugar(p, idx->exp, scope);
 			idx->idx = ast_desugar(p, idx->idx, scope);
-		} else if ((enum unaop)exp->as.una.op == unaop_slice) {
-			struct slice *slice = &exp->as.slice;
+		} else if ((enum unaop)exp->una.op == unaop_slice) {
+			struct slice *slice = &exp->slice;
 			slice->exp = ast_desugar(p, slice->exp, scope);
 			slice->idx = ast_desugar(p, slice->idx, scope);
 			slice->len = ast_desugar(p, slice->len, scope);
-		} else if (((enum unaop)exp->as.una.op == unaop_cast)) {
-			struct cast *cast = &exp->as.cast;
+		} else if (((enum unaop)exp->una.op == unaop_cast)) {
+			struct cast *cast = &exp->cast;
 			cast->type = resolve_type(p, cast->type, scope);
 			cast->exp = ast_desugar(p, cast->exp, scope);
 		} else {
-			exp->as.una.exp = ast_desugar(p, exp->as.una.exp, scope);
+			exp->una.exp = ast_desugar(p, exp->una.exp, scope);
 		}
 		return exp;
 	case ast_exp_if:
-		exp->as.iff.cond = ast_desugar(p, exp->as.iff.cond, scope);
-		exp->as.iff.tb = ast_desugar(p, exp->as.iff.tb, scope);
-		if (exp->as.iff.fb != NULL)
-			exp->as.iff.fb = ast_desugar(p, exp->as.iff.fb, scope);
+		exp->iff.cond = ast_desugar(p, exp->iff.cond, scope);
+		exp->iff.tb = ast_desugar(p, exp->iff.tb, scope);
+		if (exp->iff.fb != NULL)
+			exp->iff.fb = ast_desugar(p, exp->iff.fb, scope);
 		return exp;
 	case ast_exp_case: {
-		exp->as.ccase.cexp = ast_desugar(p, exp->as.ccase.cexp, scope);
-		struct case_branches *branches = &exp->as.ccase.branches;
+		exp->ccase.cexp = ast_desugar(p, exp->ccase.cexp, scope);
+		struct case_branches *branches = &exp->ccase.branches;
 		for (size_t i = 0; i < branches->len; ++i) {
 			struct case_branch *branch = &branches->elems[i];
 			struct scope *sc = &branch->scope;
@@ -2112,8 +2047,8 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 				branch->guard = ast_desugar(p, branch->guard, sc);
 			branch->body = ast_desugar(p, branch->body, sc);
 		}
-		if (exp->as.ccase.else_exp != NULL)
-			ast_desugar(p, exp->as.ccase.else_exp, scope);
+		if (exp->ccase.else_exp != NULL)
+			ast_desugar(p, exp->ccase.else_exp, scope);
 		return exp;
 	} break;
 	case ast_exp_return:			FAILWITH("TODO: ast_exp_return"); break;
@@ -2123,86 +2058,86 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	case ast_exp_ident:
 	case ast_exp_extern_symbol: return exp;
 	case ast_exp_get_ptr:
-		exp->as.get_ptr = ast_desugar(p, exp->as.get_ptr, scope);
+		exp->get_ptr = ast_desugar(p, exp->get_ptr, scope);
 		return exp;
 	case ast_exp_get_len:
-		exp->as.get_len = ast_desugar(p, exp->as.get_len, scope);
+		exp->get_len = ast_desugar(p, exp->get_len, scope);
 		return exp;
 	case ast_exp_size_of: {
-		KCType *t = resolve_type(p, exp->as.size_of.type, scope);
+		KCType *t = resolve_type(p, exp->size_of.type, scope);
 		if (t == NULL) {
 			log_error_and_die(p->lexer.filename, exp->tok,
 							  "Failed to resolve type of expression `%s`.",
 							  ast_type_to_str(exp->type));
 		}
-		exp->as.size_of.type = t;
+		exp->size_of.type = t;
 		return exp;
 	} break;
 	case ast_exp_binary: {
-		switch ((int)exp->as.bin.op) {
+		switch ((int)exp->bin.op) {
 		case binop_and: {
-			struct expression *left = ast_desugar(p, exp->as.bin.left, scope);
-			struct expression *right = ast_desugar(p, exp->as.bin.right, scope);
+			struct expression *left = ast_desugar(p, exp->bin.left, scope);
+			struct expression *right = ast_desugar(p, exp->bin.right, scope);
 			struct expression *iff = MEM_ALLOC(struct expression);
 			struct expression *fb  = MEM_ALLOC(struct expression);
 			iff->tag = ast_exp_if;
 			iff->tok = exp->tok;
 			iff->type = exp->type;
-			iff->as.iff.cond = left;
-			iff->as.iff.tb = right;
-			iff->as.iff.fb = fb;
+			iff->iff.cond = left;
+			iff->iff.tb = right;
+			iff->iff.fb = fb;
 			fb->tag = ast_exp_literal;
 			fb->type = &AST_TYPE_BOOL;
 			fb->tok = exp->tok;
-			fb->as.lit.as.i = 0;
+			fb->lit.i = 0;
 			return iff;
 		} break;
 		case binop_or: {
 			FAILWITH("TODO: binop_or");
 		} break;
 		case binop_member: {
-			exp->as.bin.left = ast_desugar(p, exp->as.bin.left, scope);
-			exp->as.bin.right->type = &AST_TYPE_U64;
-			if (exp->as.bin.right->tag == ast_exp_literal) {
+			exp->bin.left = ast_desugar(p, exp->bin.left, scope);
+			exp->bin.right->type = &AST_TYPE_U64;
+			if (exp->bin.right->tag == ast_exp_literal) {
 				return exp;
 			} else {
-				assert(exp->as.bin.right->tag == ast_exp_ident);
-				struct struct_type *mems = struct_type_members(p, exp->as.bin.left->type, scope);
+				assert(exp->bin.right->tag == ast_exp_ident);
+				struct struct_type *mems = struct_type_members(p, exp->bin.left->type, scope);
 				for (size_t i = 0; i < mems->len; ++i) {
 					if (sv_is_equal(token_to_strview(mems->elems[i].name),
-									token_to_strview(exp->as.bin.right->tok))) {
-						exp->as.bin.right->tag = ast_exp_literal;
-						exp->as.bin.right->as.lit.as.i = i;
+									token_to_strview(exp->bin.right->tok))) {
+						exp->bin.right->tag = ast_exp_literal;
+						exp->bin.right->lit.i = i;
 						return exp;
 					}
 				}
 				FAILWITH("Unreachable");
 			}
 		} break;
-		case binop_add_assign: exp->as.bin.op = op_add;                 goto desugar_assignment;
-		case binop_and_assign: exp->as.bin.op = op_and;                 goto desugar_assignment;
-		case binop_lor_assign: exp->as.bin.op = op_lor;                 goto desugar_assignment;
-		case binop_xor_assign: exp->as.bin.op = op_xor;                 goto desugar_assignment;
-		case binop_sub_assign: exp->as.bin.op = op_sub;                 goto desugar_assignment;
-		case binop_mul_assign: exp->as.bin.op = op_mul;                 goto desugar_assignment;
-		case binop_div_assign: exp->as.bin.op = op_div;                 goto desugar_assignment;
-		case binop_mod_assign: exp->as.bin.op = op_mod;                 goto desugar_assignment;
-		case binop_shift_left_assign:  exp->as.bin.op = op_shift_left;  goto desugar_assignment;
-		case binop_shift_right_assign: exp->as.bin.op = op_shift_right; goto desugar_assignment;
+		case binop_add_assign: exp->bin.op = op_add;                 goto desugar_assignment;
+		case binop_and_assign: exp->bin.op = op_and;                 goto desugar_assignment;
+		case binop_lor_assign: exp->bin.op = op_lor;                 goto desugar_assignment;
+		case binop_xor_assign: exp->bin.op = op_xor;                 goto desugar_assignment;
+		case binop_sub_assign: exp->bin.op = op_sub;                 goto desugar_assignment;
+		case binop_mul_assign: exp->bin.op = op_mul;                 goto desugar_assignment;
+		case binop_div_assign: exp->bin.op = op_div;                 goto desugar_assignment;
+		case binop_mod_assign: exp->bin.op = op_mod;                 goto desugar_assignment;
+		case binop_shift_left_assign:  exp->bin.op = op_shift_left;  goto desugar_assignment;
+		case binop_shift_right_assign: exp->bin.op = op_shift_right; goto desugar_assignment;
 		desugar_assignment:
 		{
 			struct expression *assign = MEM_ALLOC(struct expression);
 			*assign = *exp;
-			assign->as.bin.op = op_assign;
-			assign->as.bin.left = exp->as.bin.left;
-			assign->as.bin.right = exp;
+			assign->bin.op = op_assign;
+			assign->bin.left = exp->bin.left;
+			assign->bin.right = exp;
 			return ast_desugar(p, assign, scope);
 		} break;
 		default: {
-			struct expression *left = ast_desugar(p, exp->as.bin.left, scope);
-			struct expression *right = ast_desugar(p, exp->as.bin.right, scope);
-			exp->as.bin.left = left;
-			exp->as.bin.right = right;
+			struct expression *left = ast_desugar(p, exp->bin.left, scope);
+			struct expression *right = ast_desugar(p, exp->bin.right, scope);
+			exp->bin.left = left;
+			exp->bin.right = right;
 			return exp;
 		}
 		}

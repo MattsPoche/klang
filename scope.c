@@ -19,8 +19,8 @@ symtbl_add(struct symtbl *symtbl, struct definition *def, struct expression *tl_
 		entry = da_allot(symtbl);
 		entry->name = def->id;
 		entry->tag  = SYMTBL_VARIABL;
-		entry->as.variable.def = def;
-		entry->as.variable.tl_exp = tl_exp;
+		entry->variable.def = def;
+		entry->variable.tl_exp = tl_exp;
 	} else {
 		FAILWITH("TODO: Symbol already defined.");
 	}
@@ -37,7 +37,7 @@ symtbl_add_valcons(struct symtbl *symtbl, struct token *name,
 		e->name = name;
 		e->tag  = SYMTBL_VALCONS;
 	}
-	da_append(&e->as.valcons, (struct valcons_entry){
+	da_append(&e->valcons, (struct valcons_entry){
 			.tag_val = tag_val,
 			.td      = def,
 			.type    = type,

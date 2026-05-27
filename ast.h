@@ -147,7 +147,7 @@ struct symtbl_entry {
 			struct definition *def;
 			struct expression *tl_exp;
 		} variable;
-	} as;
+	};
 };
 
 struct symtbl {
@@ -257,7 +257,7 @@ struct kc_type {
 		struct kc_type *mut_slice;
 		struct token *basic;
 		struct type_var var;
-	} as;
+	};
 };
 
 typedef struct kc_type KCType;
@@ -324,7 +324,7 @@ struct literal {
 		struct strview s;
 		int64_t        i;
 		float64_t      f;
-	} as;
+	};
 };
 
 struct exp_if {
@@ -430,7 +430,7 @@ struct expression {
 	bool is_lvalue;
 	bool is_mutable;
 	KCType *type;    // type anotation
-	union _exp_internal {
+	union {
 		struct definition  def;
 		struct let         let;
 		struct literal     lit;
@@ -458,5 +458,5 @@ struct expression {
 			struct expression_stack exps;
 			struct token_ptrs ids;
 		} named_init;
-	} as;
+	};
 };

@@ -82,8 +82,8 @@ let str_of_cstr(cstr: [i8]*) str =
   cstr[..length]
 
 let main() i32 =
-  let x: i32 = 0x45 in
-  print_string("#sizeof(0x45) = "); print_int(#sizeof(x)); print_newline();
-  print_string("#sizeof(: i64) = "); print_int(#sizeof(: i64)); print_newline();
-  x
+  for i: i32 in ..69 do
+    print_int(i); print_newline()
+  done;
+  0
   

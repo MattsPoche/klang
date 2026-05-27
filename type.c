@@ -21,7 +21,7 @@ KC_PUBLIC KCType AST_TYPE_I32    = {.tag = ast_type_i32};
 KC_PUBLIC KCType AST_TYPE_I64    = {.tag = ast_type_i64};
 KC_PUBLIC KCType AST_TYPE_F32    = {.tag = ast_type_f32};
 KC_PUBLIC KCType AST_TYPE_F64    = {.tag = ast_type_f64};
-KC_PUBLIC KCType AST_TYPE_STRING = {.tag = ast_type_slice, .as.slice = &AST_TYPE_I8};
+KC_PUBLIC KCType AST_TYPE_STRING = {.tag = ast_type_slice, .slice = &AST_TYPE_I8};
 
 KC_PRIVATE KCType *infer_type(Parser *p, struct typing_context ctx, struct expression *exp);
 KC_PRIVATE bool unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u);
@@ -44,7 +44,7 @@ KC_PRIVATE struct expression *specialize_expression(Parser *p, struct typing_con
 KC_PRIVATE bool
 exp_is_integer_literal(struct expression *exp)
 {
-	return exp->tag == ast_exp_literal && exp->as.lit.tag == LITERAL_INT;
+	return exp->tag == ast_exp_literal && exp->lit.tag == LITERAL_INT;
 }
 
 KC_PRIVATE KCType *
@@ -72,7 +72,7 @@ type_get_underlying(struct scope *scope, KCType *type, KCType **out_type)
 {
 	type = type_find(type);
 	if (type->tag == ast_type_app) {
-		struct type_definition *def = lookup_type(scope, token_to_strview(type->as.app.cons));
+		struct type_definition *def = lookup_type(scope, token_to_strview(type->app.cons));
 		if (def == NULL) {
 			if (out_type) *out_type = type;
 			return NULL;
@@ -103,8 +103,8 @@ type_mismatch_error(Parser *p, struct typing_context ctx, KCType *t, KCType *u,
 	fflush(stdout);
 	{ /* check for undefined identifiers in signatures */
 		KCType *chk = NULL;
-		if (!type_get_underlying(ctx.scope, t, &chk)) ERROR_UNDEFINED_IDENT(chk->as.app.cons);
-		if (!type_get_underlying(ctx.scope, u, &chk)) ERROR_UNDEFINED_IDENT(chk->as.app.cons);
+		if (!type_get_underlying(ctx.scope, t, &chk)) ERROR_UNDEFINED_IDENT(chk->app.cons);
+		if (!type_get_underlying(ctx.scope, u, &chk)) ERROR_UNDEFINED_IDENT(chk->app.cons);
 	}
 	struct strview msg = {0};
 	FILE *stream = open_memstream(&msg.ptr, &msg.len);
@@ -139,38 +139,38 @@ resolve_type(Parser *p, KCType *type, struct scope *scope)
 		return type;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		type->as.ptr = resolve_type(p, type->as.ptr, scope);
+		type->ptr = resolve_type(p, type->ptr, scope);
 		type->tag = ast_type_ptr;
 		return type;
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		type->as.slice = resolve_type(p, type->as.slice, scope);
+		type->slice = resolve_type(p, type->slice, scope);
 		type->tag = ast_type_slice;
 		return type;
 	case ast_type_array:
-		type->as.array.base = resolve_type(p, type->as.array.base, scope);
+		type->array.base = resolve_type(p, type->array.base, scope);
 		return type;
 	case ast_type_proc:
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			type->as.proc.args.elems[i] = resolve_type(p, type->as.proc.args.elems[i], scope);
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			type->proc.args.elems[i] = resolve_type(p, type->proc.args.elems[i], scope);
 		}
-		type->as.proc.ret = resolve_type(p, type->as.proc.ret, scope);
+		type->proc.ret = resolve_type(p, type->proc.ret, scope);
 		return type;
 	case ast_type_istruct:
 	case ast_type_struct:
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			type->as.struct_t.elems[i].type = resolve_type(p, type->as.struct_t.elems[i].type, scope);
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			type->struct_t.elems[i].type = resolve_type(p, type->struct_t.elems[i].type, scope);
 		}
 		return type;
 	case ast_type_union:
-		for (size_t i = 0; i < type->as.union_t.len; ++i) {
-			type->as.union_t.elems[i].type = resolve_type(p, type->as.union_t.elems[i].type, scope);
+		for (size_t i = 0; i < type->union_t.len; ++i) {
+			type->union_t.elems[i].type = resolve_type(p, type->union_t.elems[i].type, scope);
 		}
 		return type;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
-	case ast_type_app: return resolve_type(p, type_application(p, &type->as.app, scope), scope);
+	case ast_type_app: return resolve_type(p, type_application(p, &type->app, scope), scope);
 	case ast_type_var:
-		switch (type->as.var.class) {
+		switch (type->var.class) {
 		case type_class_integer:
 		case type_class_signed_integer:
 			type->tag = ast_type_i64;
@@ -455,7 +455,7 @@ type_is_struct_ptr(KCType *t, struct scope *scope)
 	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_struct_ptr(type_get_underlying(scope, t, NULL), scope);
-	return type_is_pointer(t) && type_is_struct(t->as.ptr, scope);
+	return type_is_pointer(t) && type_is_struct(t->ptr, scope);
 }
 
 KC_PUBLIC bool
@@ -473,7 +473,7 @@ type_is_union_ptr(KCType *t, struct scope *scope)
 	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_is_union_ptr(type_get_underlying(scope, t, NULL), scope);
-	return type_is_pointer(t) && type_is_union(t->as.ptr, scope);
+	return type_is_pointer(t) && type_is_union(t->ptr, scope);
 }
 
 KC_PUBLIC bool
@@ -488,7 +488,7 @@ type_is_array_ptr(KCType *t)
 {
 	t = type_find(t);
 	return type_is_pointer(t)
-		&& type_is_array(t->as.ptr);
+		&& type_is_array(t->ptr);
 }
 
 KC_PUBLIC bool
@@ -504,7 +504,7 @@ type_is_slice_ptr(KCType *t)
 {
 	t = type_find(t);
 	return type_is_pointer(t)
-		&& type_is_slice(t->as.ptr);
+		&& type_is_slice(t->ptr);
 }
 
 KC_PUBLIC bool
@@ -523,17 +523,17 @@ get_slice_pointer(KCType *t)
 	switch ((int)t->tag) {
 	case ast_type_slice:
 		ptr->tag = ast_type_ptr;
-		arr->as.array.base = t->as.slice;
+		arr->array.base = t->slice;
 		break;
 	case ast_type_mut_slice:
 		ptr->tag = ast_type_mut_ptr;
-		arr->as.array.base = t->as.mut_slice;
+		arr->array.base = t->mut_slice;
 		break;
 	default:
 		FAILWITH("KCType is not a slice");
 		break;
 	}
-	ptr->as.ptr = arr;
+	ptr->ptr = arr;
 	return ptr;
 }
 
@@ -542,9 +542,9 @@ get_indexable_base_type(KCType *t)
 {
 	t = type_find(t);
 	assert(type_is_indexable(t));
-	if (type_is_array(t))     return t->as.array.base;
-	if (type_is_array_ptr(t)) return t->as.ptr->as.array.base;
-	if (type_is_slice(t))     return t->as.slice;
+	if (type_is_array(t))     return t->array.base;
+	if (type_is_array_ptr(t)) return t->ptr->array.base;
+	if (type_is_slice(t))     return t->slice;
 	return NULL;
 }
 
@@ -554,8 +554,8 @@ type_has_length(KCType *t, struct scope *scope)
 	t = type_find(t);
 	if (t->tag == ast_type_app)
 		return type_has_length(type_get_underlying(scope, t, NULL), scope);
-	if (type_is_array_ptr(t)) return type_has_length(t->as.ptr, scope);
-	if (type_is_array(t))     return t->as.array.is_sized;
+	if (type_is_array_ptr(t)) return type_has_length(t->ptr, scope);
+	if (type_is_array(t))     return t->array.is_sized;
 	return type_is_slice(t);
 }
 
@@ -586,34 +586,34 @@ type_contains_var(KCType *t)
 	case ast_type_f64:
 		return false;
 	case ast_type_app:
-		for (size_t i = 0; i < t->as.app.args.len; ++i) {
-			if (type_contains_var(t->as.app.args.elems[i])) return true;
+		for (size_t i = 0; i < t->app.args.len; ++i) {
+			if (type_contains_var(t->app.args.elems[i])) return true;
 		}
 		return false;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		return type_contains_var(t->as.ptr);
+		return type_contains_var(t->ptr);
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		return type_contains_var(t->as.slice);
+		return type_contains_var(t->slice);
 	case ast_type_array:
-		return type_contains_var(t->as.array.base);
+		return type_contains_var(t->array.base);
 	case ast_type_istruct:
 	case ast_type_struct:
-		for (size_t i = 0; i < t->as.struct_t.len; ++i) {
-			if (type_contains_var(t->as.struct_t.elems[i].type)) return true;
+		for (size_t i = 0; i < t->struct_t.len; ++i) {
+			if (type_contains_var(t->struct_t.elems[i].type)) return true;
 		}
 		return false;
 	case ast_type_union:
-		for (size_t i = 0; i < t->as.union_t.len; ++i) {
-			if (type_contains_var(t->as.union_t.elems[i].type)) return true;
+		for (size_t i = 0; i < t->union_t.len; ++i) {
+			if (type_contains_var(t->union_t.elems[i].type)) return true;
 		}
 		return false;
 	case ast_type_proc:
-		for (size_t i = 0; i < t->as.proc.args.len; ++i) {
-			if (type_contains_var(t->as.proc.args.elems[i])) return true;
+		for (size_t i = 0; i < t->proc.args.len; ++i) {
+			if (type_contains_var(t->proc.args.elems[i])) return true;
 		}
-		return type_contains_var(t->as.proc.ret);
+		return type_contains_var(t->proc.ret);
 	case ast_type_var:
 		return true;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
@@ -633,13 +633,13 @@ KC_PUBLIC struct struct_type *
 struct_type_members(Parser *p, KCType *type, struct scope *scope)
 {
 	if (type->tag == ast_type_app)
-		return struct_type_members(p, type_application(p, &type->as.app, scope), scope);
+		return struct_type_members(p, type_application(p, &type->app, scope), scope);
 	if (type->tag == ast_type_struct)
-		return &type->as.struct_t;
-	if (type->tag == ast_type_ptr && type->as.ptr->tag == ast_type_struct)
-		return &type->as.ptr->as.struct_t;
-	if (type->tag == ast_type_mut_ptr && type->as.ptr->tag == ast_type_struct)
-		return &type->as.mut_ptr->as.struct_t;
+		return &type->struct_t;
+	if (type->tag == ast_type_ptr && type->ptr->tag == ast_type_struct)
+		return &type->ptr->struct_t;
+	if (type->tag == ast_type_mut_ptr && type->ptr->tag == ast_type_struct)
+		return &type->mut_ptr->struct_t;
 	FAILWITH("KCType has no struct members");
 	return NULL;
 }
@@ -650,15 +650,15 @@ type_slice_to_array_ptr(KCType *t)
 	KCType *ptr = MEM_ALLOC(KCType);
 	KCType *array = MEM_ALLOC(KCType);
 	array->tag = ast_type_array;
-	array->as.array.is_sized = false;
-	array->as.array.base = t->as.slice;
+	array->array.is_sized = false;
+	array->array.base = t->slice;
 	if (t->tag == ast_type_mut_slice) {
 		ptr->tag = ast_type_mut_ptr;
 	} else {
 		assert(t->tag == ast_type_slice);
 		ptr->tag = ast_type_ptr;
 	}
-	ptr->as.ptr = array;
+	ptr->ptr = array;
 	return ptr;
 }
 
@@ -667,7 +667,7 @@ type_array_to_slice(KCType *t, bool mutable_p)
 {
 	KCType *slice = MEM_ALLOC(KCType);
 	slice->tag = mutable_p ? ast_type_mut_slice : ast_type_slice;
-	slice->as.slice = t->as.array.base;
+	slice->slice = t->array.base;
 	return slice;
 }
 
@@ -692,9 +692,9 @@ copy_type(KCType *type)
 	case ast_type_app:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.app.cons = type->as.app.cons;
-		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			da_append(&newtype->as.app.args, copy_type(type->as.app.args.elems[i]));
+		newtype->app.cons = type->app.cons;
+		for (size_t i = 0; i < type->app.args.len; ++i) {
+			da_append(&newtype->app.args, copy_type(type->app.args.elems[i]));
 		}
 		return newtype;
 	case ast_type_var:
@@ -705,48 +705,48 @@ copy_type(KCType *type)
 	case ast_type_mut_ptr:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.ptr = copy_type(type->as.ptr);
+		newtype->ptr = copy_type(type->ptr);
 		return newtype;
 	case ast_type_slice:
 	case ast_type_mut_slice:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.slice = copy_type(type->as.slice);
+		newtype->slice = copy_type(type->slice);
 		return newtype;
 	case ast_type_array:
 		newtype = MEM_ALLOC(KCType);
 		*newtype = *type;
-		newtype->as.array.base = copy_type(type->as.array.base);
+		newtype->array.base = copy_type(type->array.base);
 		return newtype;
 	case ast_type_istruct:
 	case ast_type_struct:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			da_append(&newtype->as.struct_t, (struct struct_member) {
-					.name = type->as.struct_t.elems[i].name,
-					.type = copy_type(type->as.struct_t.elems[i].type),
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			da_append(&newtype->struct_t, (struct struct_member) {
+					.name = type->struct_t.elems[i].name,
+					.type = copy_type(type->struct_t.elems[i].type),
 				});
 		}
 		return newtype;
 	case ast_type_union:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			da_append(&newtype->as.union_t, (struct union_member) {
-					.name      = type->as.union_t.elems[i].name,
-					.tag_value = type->as.union_t.elems[i].tag_value,
-					.type      = copy_type(type->as.union_t.elems[i].type),
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			da_append(&newtype->union_t, (struct union_member) {
+					.name      = type->union_t.elems[i].name,
+					.tag_value = type->union_t.elems[i].tag_value,
+					.type      = copy_type(type->union_t.elems[i].type),
 				});
 		}
 		return newtype;
 	case ast_type_proc:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			da_append(&newtype->as.proc.args, copy_type(type->as.proc.args.elems[i]));
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			da_append(&newtype->proc.args, copy_type(type->proc.args.elems[i]));
 		}
-		newtype->as.proc.ret = copy_type(type->as.proc.ret);
+		newtype->proc.ret = copy_type(type->proc.ret);
 		return newtype;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	default: FAILWITH("TODO: Unreachable"); break;
@@ -769,9 +769,9 @@ KC_PRIVATE KCType *
 resolve_alias(Parser *p, KCType *t, struct scope *scope)
 {
 	if (t->tag == ast_type_app) {
-		struct type_definition *def = lookup_type(scope, token_to_strview(t->as.app.cons));
-		if (def == NULL) ERROR_UNDEFINED_IDENT(t->as.app.cons);
-		if (def->is_alias) return type_application(p, &t->as.app, scope);
+		struct type_definition *def = lookup_type(scope, token_to_strview(t->app.cons));
+		if (def == NULL) ERROR_UNDEFINED_IDENT(t->app.cons);
+		if (def->is_alias) return type_application(p, &t->app, scope);
 	}
 	return t;
 }
@@ -788,12 +788,12 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	case ast_type_app:
 		if (t->tag != u->tag)
 			return false;
-		if (t->as.app.args.len != u->as.app.args.len)
+		if (t->app.args.len != u->app.args.len)
 			return false;
-		if (!sv_is_equal(token_to_strview(t->as.app.cons), token_to_strview(u->as.app.cons)))
+		if (!sv_is_equal(token_to_strview(t->app.cons), token_to_strview(u->app.cons)))
 			return false;
-		for (size_t i = 0; i < t->as.app.args.len; ++i) {
-			if (!type_equiv(p, t->as.app.args.elems[i], u->as.app.args.elems[i], scope)) return false;
+		for (size_t i = 0; i < t->app.args.len; ++i) {
+			if (!type_equiv(p, t->app.args.elems[i], u->app.args.elems[i], scope)) return false;
 		}
 		return true;
 	case ast_type_void:
@@ -813,21 +813,21 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	case ast_type_mut_ptr:
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		return t->tag == u->tag && type_equiv(p, t->as.ptr, u->as.ptr, scope);
+		return t->tag == u->tag && type_equiv(p, t->ptr, u->ptr, scope);
 	case ast_type_array:
 		return t->tag == u->tag
-			&& t->as.array.is_sized == u->as.array.is_sized
-			&& t->as.array.size == u->as.array.size
-			&& type_equiv(p, t->as.array.base, t->as.array.base, scope);
+			&& t->array.is_sized == u->array.is_sized
+			&& t->array.size == u->array.size
+			&& type_equiv(p, t->array.base, t->array.base, scope);
 	case ast_type_istruct:
 	case ast_type_struct:
 		if (t->tag != u->tag) return false;
-		if (t->as.struct_t.len != u->as.struct_t.len) return false;
-		for (size_t i = 0; i < t->as.struct_t.len; ++i) {
-			if (!sv_is_equal(token_to_strview(t->as.struct_t.elems[i].name),
-							 token_to_strview(u->as.struct_t.elems[i].name)))
+		if (t->struct_t.len != u->struct_t.len) return false;
+		for (size_t i = 0; i < t->struct_t.len; ++i) {
+			if (!sv_is_equal(token_to_strview(t->struct_t.elems[i].name),
+							 token_to_strview(u->struct_t.elems[i].name)))
 				return false;
-			if (!type_equiv(p, t->as.struct_t.elems[i].type, u->as.struct_t.elems[i].type, scope))
+			if (!type_equiv(p, t->struct_t.elems[i].type, u->struct_t.elems[i].type, scope))
 				return false;
 		}
 		return true;
@@ -835,10 +835,10 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc:
 		if (t->tag != u->tag) return false;
-		if (!type_equiv(p, t->as.proc.ret, t->as.proc.ret, scope)) return false;
-		if (t->as.proc.args.len != u->as.proc.args.len) return false;
-		for (size_t i = 0; i < t->as.proc.args.len; ++i) {
-			if (!type_equiv(p, t->as.proc.args.elems[i], u->as.proc.args.elems[i], scope))
+		if (!type_equiv(p, t->proc.ret, t->proc.ret, scope)) return false;
+		if (t->proc.args.len != u->proc.args.len) return false;
+		for (size_t i = 0; i < t->proc.args.len; ++i) {
+			if (!type_equiv(p, t->proc.args.elems[i], u->proc.args.elems[i], scope))
 				return false;
 		}
 		return true;
@@ -889,46 +889,46 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 		return;
 	case ast_type_app:
 		assert(mono->tag == ast_type_app);
-		assert(poly->as.app.args.len == mono->as.app.args.len);
-		for (size_t i = 0; i < poly->as.app.args.len; ++i) {
+		assert(poly->app.args.len == mono->app.args.len);
+		for (size_t i = 0; i < poly->app.args.len; ++i) {
 			bind_polymorphic_type_vars(p, scope, bindings,
-									   poly->as.app.args.elems[i],
-									   mono->as.app.args.elems[i]);
+									   poly->app.args.elems[i],
+									   mono->app.args.elems[i]);
 		}
 		break;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
 		assert(type_is_pointer(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->as.ptr, mono->as.ptr);
+		bind_polymorphic_type_vars(p, scope, bindings, poly->ptr, mono->ptr);
 		return;
 	case ast_type_slice:
 	case ast_type_mut_slice:
 		assert(type_is_slice(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->as.slice, mono->as.slice);
+		bind_polymorphic_type_vars(p, scope, bindings, poly->slice, mono->slice);
 		return;
 	case ast_type_array:
 		assert(type_is_array(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->as.array.base, mono->as.array.base);
+		bind_polymorphic_type_vars(p, scope, bindings, poly->array.base, mono->array.base);
 		return;
 	case ast_type_istruct:
 	case ast_type_struct:
 		assert(type_is_struct(mono, scope));
-		assert(poly->as.struct_t.len == mono->as.struct_t.len);
-		for (size_t i = 0; i < poly->as.struct_t.len; ++i) {
+		assert(poly->struct_t.len == mono->struct_t.len);
+		for (size_t i = 0; i < poly->struct_t.len; ++i) {
 			bind_polymorphic_type_vars(p, scope, bindings,
-									   poly->as.struct_t.elems[i].type,
-									   mono->as.struct_t.elems[i].type);
+									   poly->struct_t.elems[i].type,
+									   mono->struct_t.elems[i].type);
 		}
 		return;
 	case ast_type_union: FAILWITH("TODO: ast_type_union"); break;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc:
 		assert(type_is_procedure(mono));
-		assert(poly->as.proc.args.len == mono->as.proc.args.len);
-		for (size_t i = 0; i < poly->as.proc.args.len; ++i) {
-			bind_polymorphic_type_vars(p, scope, bindings, poly->as.proc.args.elems[i], mono->as.proc.args.elems[i]);
+		assert(poly->proc.args.len == mono->proc.args.len);
+		for (size_t i = 0; i < poly->proc.args.len; ++i) {
+			bind_polymorphic_type_vars(p, scope, bindings, poly->proc.args.elems[i], mono->proc.args.elems[i]);
 		}
-		bind_polymorphic_type_vars(p, scope, bindings, poly->as.proc.ret, mono->as.proc.ret);
+		bind_polymorphic_type_vars(p, scope, bindings, poly->proc.ret, mono->proc.ret);
 		return;
 	case ast_type_var: {
 		KCType *b = find_type_var_binding(bindings, poly);
@@ -966,10 +966,10 @@ type_var_subst(KCType *type, struct type_var_bindings *bindings)
 	case ast_type_app:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = ast_type_app;
-		newtype->as.app.cons = type->as.app.cons;
-		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			da_append(&newtype->as.app.args,
-					  type_var_subst(type->as.app.args.elems[i], bindings));
+		newtype->app.cons = type->app.cons;
+		for (size_t i = 0; i < type->app.args.len; ++i) {
+			da_append(&newtype->app.args,
+					  type_var_subst(type->app.args.elems[i], bindings));
 		}
 		return newtype;
 	case ast_type_var: {
@@ -981,48 +981,48 @@ type_var_subst(KCType *type, struct type_var_bindings *bindings)
 	case ast_type_mut_ptr:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.ptr = type_var_subst(type->as.ptr, bindings);
+		newtype->ptr = type_var_subst(type->ptr, bindings);
 		return newtype;
 	case ast_type_slice:
 	case ast_type_mut_slice:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.slice = type_var_subst(type->as.slice, bindings);
+		newtype->slice = type_var_subst(type->slice, bindings);
 		return newtype;
 	case ast_type_array:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.array.base = type_var_subst(type->as.array.base, bindings);
+		newtype->array.base = type_var_subst(type->array.base, bindings);
 		return newtype;
 	case ast_type_istruct:
 	case ast_type_struct:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			da_append(&newtype->as.struct_t, (struct struct_member) {
-					.name = type->as.struct_t.elems[i].name,
-					.type = type_var_subst(type->as.struct_t.elems[i].type, bindings),
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			da_append(&newtype->struct_t, (struct struct_member) {
+					.name = type->struct_t.elems[i].name,
+					.type = type_var_subst(type->struct_t.elems[i].type, bindings),
 				});
 		}
 		return newtype;
 	case ast_type_union:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.union_t.len; ++i) {
-			da_append(&newtype->as.union_t, (struct union_member) {
-					.name      = type->as.union_t.elems[i].name,
-					.tag_value = type->as.union_t.elems[i].tag_value,
-					.type      = type_var_subst(type->as.union_t.elems[i].type, bindings),
+		for (size_t i = 0; i < type->union_t.len; ++i) {
+			da_append(&newtype->union_t, (struct union_member) {
+					.name      = type->union_t.elems[i].name,
+					.tag_value = type->union_t.elems[i].tag_value,
+					.type      = type_var_subst(type->union_t.elems[i].type, bindings),
 				});
 		}
 		return newtype;
 	case ast_type_proc:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			da_append(&newtype->as.proc.args, type_var_subst(type->as.proc.args.elems[i], bindings));
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			da_append(&newtype->proc.args, type_var_subst(type->proc.args.elems[i], bindings));
 		}
-		newtype->as.proc.ret = type_var_subst(type->as.proc.ret, bindings);
+		newtype->proc.ret = type_var_subst(type->proc.ret, bindings);
 		return newtype;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	default: FAILWITH("TODO: Unreachable"); break;
@@ -1075,15 +1075,15 @@ specialize_expression(Parser *p,
 	switch (exp->tag) {
 	case ast_exp_definition: FAILWITH("TODO: ast_exp_definition"); break;
 	case ast_exp_let:
-		newexp->as.let.def = specialize_definition(p, ctx, &exp->as.let.def, bindings);
-		newexp->as.let.scope.parent = ctx.scope;
-		symtbl_add(&newexp->as.let.scope.symtbl, &newexp->as.let.def, NULL);
-		ctx.scope = &newexp->as.let.scope;
-		type_env_add(&ctx, newexp->as.let.def.id,
-					 generalize_type(&ctx, type_recursive_find(newexp->as.let.def.type)));
-		newexp->as.let.body = specialize_expression(p, ctx, exp->as.let.body, bindings);
+		newexp->let.def = specialize_definition(p, ctx, &exp->let.def, bindings);
+		newexp->let.scope.parent = ctx.scope;
+		symtbl_add(&newexp->let.scope.symtbl, &newexp->let.def, NULL);
+		ctx.scope = &newexp->let.scope;
+		type_env_add(&ctx, newexp->let.def.id,
+					 generalize_type(&ctx, type_recursive_find(newexp->let.def.type)));
+		newexp->let.body = specialize_expression(p, ctx, exp->let.body, bindings);
 		break;
-	case ast_exp_literal: newexp->as.lit = exp->as.lit; break;
+	case ast_exp_literal: newexp->lit = exp->lit; break;
 	case ast_exp_array_initializer: FAILWITH("TODO: ast_exp_array_initializer"); break;
 	case ast_exp_struct_initializer: FAILWITH("TODO: ast_exp_struct_initializer"); break;
 	case ast_exp_named_struct_initializer: FAILWITH("TODO: ast_exp_named_struct_initializer"); break;
@@ -1097,30 +1097,30 @@ specialize_expression(Parser *p,
 		newexp->type = instantiate_type_scheme(&env->scheme);
 	} break;
 	case ast_exp_binary:
-		newexp->as.bin.op = exp->as.bin.op;
-		newexp->as.bin.left = specialize_expression(p, ctx, exp->as.bin.left, bindings);
-		newexp->as.bin.right = specialize_expression(p, ctx, exp->as.bin.right, bindings);
+		newexp->bin.op = exp->bin.op;
+		newexp->bin.left = specialize_expression(p, ctx, exp->bin.left, bindings);
+		newexp->bin.right = specialize_expression(p, ctx, exp->bin.right, bindings);
 		break;
 	case ast_exp_value_cons: FAILWITH("TODO: ast_exp_value_cons"); break;
 	case ast_exp_unary:
-		newexp->as.una.op = exp->as.una.op;
-		switch ((enum unaop)exp->as.una.op) {
+		newexp->una.op = exp->una.op;
+		switch ((enum unaop)exp->una.op) {
 		case unaop_lnot:
 		case unaop_not:
 		case unaop_neg:
 		case unaop_pos:
 		case unaop_address_of:
 		case unaop_dereference:
-			newexp->as.una.exp = specialize_expression(p, ctx, exp->as.una.exp, bindings);
+			newexp->una.exp = specialize_expression(p, ctx, exp->una.exp, bindings);
 			break;
 		case unaop_index:
-			newexp->as.idx.exp = specialize_expression(p, ctx, exp->as.idx.exp, bindings);
-			newexp->as.idx.idx = specialize_expression(p, ctx, exp->as.idx.idx, bindings);
+			newexp->idx.exp = specialize_expression(p, ctx, exp->idx.exp, bindings);
+			newexp->idx.idx = specialize_expression(p, ctx, exp->idx.idx, bindings);
 			break;
 		case unaop_call: {
-			newexp->as.call.proc = specialize_expression(p, ctx, exp->as.call.proc, bindings);
-			if (type_is_polymorphic(newexp->as.call.proc->type)) {
-				struct call *call = &newexp->as.call;
+			newexp->call.proc = specialize_expression(p, ctx, exp->call.proc, bindings);
+			if (type_is_polymorphic(newexp->call.proc->type)) {
+				struct call *call = &newexp->call;
 				if (call->proc->tag != ast_exp_ident) {
 					FAILWITH("TODO: polymorphic procedure must be let-bound.");
 				}
@@ -1128,7 +1128,7 @@ specialize_expression(Parser *p,
 				struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
 				if (entry == NULL) ERROR_UNDEFINED_IDENT(call->proc->tok);
 				if (entry->tag == SYMTBL_VARIABL) {
-					generic = entry->as.variable.def;
+					generic = entry->variable.def;
 				} else {
 					FAILWITH("TODO: expected procedure.");
 				}
@@ -1136,13 +1136,13 @@ specialize_expression(Parser *p,
 				KCType *inf_type = MEM_ALLOC(KCType);
 				inf_type->tag = ast_type_proc;
 				KCType *ret_type = newexp->type;
-				inf_type->as.proc.ret = ret_type;
-				for (size_t i = 0; i < exp->as.call.args.len; ++i) {
-					struct expression *arg_exp = exp->as.call.args.elems[i];
+				inf_type->proc.ret = ret_type;
+				for (size_t i = 0; i < exp->call.args.len; ++i) {
+					struct expression *arg_exp = exp->call.args.elems[i];
 					arg_exp = specialize_expression(p, ctx, arg_exp, bindings);
 					assert(arg_exp->type);
-					da_append(&newexp->as.call.args, arg_exp);
-					da_append(&inf_type->as.proc.args, arg_exp->type);
+					da_append(&newexp->call.args, arg_exp);
+					da_append(&inf_type->proc.args, arg_exp->type);
 				}
 				UNIFY(ctx, call->proc->type, inf_type, newexp);
 				if (lookup_poly_proc_spec(p, generic, inf_type, ctx.scope) == NULL) {
@@ -1151,33 +1151,33 @@ specialize_expression(Parser *p,
 						});
 				}
 			} else {
-				for (size_t i = 0; i < exp->as.call.args.len; ++i) {
-					struct expression *arg_exp = exp->as.call.args.elems[i];
-					da_append(&newexp->as.call.args, specialize_expression(p, ctx, arg_exp, bindings));
+				for (size_t i = 0; i < exp->call.args.len; ++i) {
+					struct expression *arg_exp = exp->call.args.elems[i];
+					da_append(&newexp->call.args, specialize_expression(p, ctx, arg_exp, bindings));
 				}
 			}
 		} break;
 		case unaop_cast:
-			newexp->as.cast.type = type_var_subst(exp->as.cast.type, bindings);
-			newexp->as.cast.exp = specialize_expression(p, ctx, exp->as.cast.exp, bindings);
+			newexp->cast.type = type_var_subst(exp->cast.type, bindings);
+			newexp->cast.exp = specialize_expression(p, ctx, exp->cast.exp, bindings);
 			break;
 		case unaop_slice:
-			newexp->as.slice.exp = specialize_expression(p, ctx, exp->as.slice.exp, bindings);
-			newexp->as.slice.idx = specialize_expression(p, ctx, exp->as.slice.idx, bindings);
-			newexp->as.slice.len = specialize_expression(p, ctx, exp->as.slice.len, bindings);
+			newexp->slice.exp = specialize_expression(p, ctx, exp->slice.exp, bindings);
+			newexp->slice.idx = specialize_expression(p, ctx, exp->slice.idx, bindings);
+			newexp->slice.len = specialize_expression(p, ctx, exp->slice.len, bindings);
 			break;
 		default: FAILWITH("Unreachable"); break;
 		}
 		break;
 	case ast_exp_while:
-		newexp->as.wloop.cond = specialize_expression(p, ctx, exp->as.wloop.cond, bindings);
-		newexp->as.wloop.body = specialize_expression(p, ctx, exp->as.wloop.body, bindings);
+		newexp->wloop.cond = specialize_expression(p, ctx, exp->wloop.cond, bindings);
+		newexp->wloop.body = specialize_expression(p, ctx, exp->wloop.body, bindings);
 		break;
 	case ast_exp_if:
-		newexp->as.iff.cond = specialize_expression(p, ctx, exp->as.iff.cond, bindings);
-		newexp->as.iff.tb   = specialize_expression(p, ctx, exp->as.iff.tb, bindings);
-		if (exp->as.iff.fb)
-			newexp->as.iff.fb = specialize_expression(p, ctx, exp->as.iff.fb, bindings);
+		newexp->iff.cond = specialize_expression(p, ctx, exp->iff.cond, bindings);
+		newexp->iff.tb   = specialize_expression(p, ctx, exp->iff.tb, bindings);
+		if (exp->iff.fb)
+			newexp->iff.fb = specialize_expression(p, ctx, exp->iff.fb, bindings);
 		break;
 	case ast_exp_case: FAILWITH("TODO: ast_exp_case"); break;
 	case ast_exp_return: FAILWITH("TODO: ast_exp_return"); break;
@@ -1185,10 +1185,10 @@ specialize_expression(Parser *p,
 	case ast_exp_continue: FAILWITH("TODO: ast_exp_continue"); break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_get_ptr:
-		newexp->as.get_ptr = specialize_expression(p, ctx, exp->as.get_ptr, bindings);
+		newexp->get_ptr = specialize_expression(p, ctx, exp->get_ptr, bindings);
 		break;
 	case ast_exp_get_len:
-		newexp->as.get_len = specialize_expression(p, ctx, exp->as.get_len, bindings);
+		newexp->get_len = specialize_expression(p, ctx, exp->get_len, bindings);
 		break;
 	case ast_exp_size_of: FAILWITH("TODO: ast_exp_size_of"); break;
 	default: FAILWITH("Unreachable"); break;
@@ -1216,8 +1216,8 @@ void specialize_generic_procedure(Parser *p,
 	spec_def->exp->is_mutable = def->exp->is_mutable;
 	spec_def->exp->tok = def->exp->tok;
 	struct type_var_bindings bindings = {0};
-	struct procedure *newproc = &spec_def->exp->as.proc;
-	struct procedure *proc = &def->exp->as.proc;
+	struct procedure *newproc = &spec_def->exp->proc;
+	struct procedure *proc = &def->exp->proc;
 	{
 		bind_polymorphic_type_vars(p, ctx.scope, &bindings, generic_type, spec_type);
 		type_env_add(&ctx, def->id, generalize_type(&ctx, spec_type));
@@ -1278,39 +1278,39 @@ type_occurs_in(KCType *var, KCType *type)
 	case ast_type_f32:
 	case ast_type_f64: return false;
 	case ast_type_app:
-		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			if (type_occurs_in(var, type->as.app.args.elems[i]))
+		for (size_t i = 0; i < type->app.args.len; ++i) {
+			if (type_occurs_in(var, type->app.args.elems[i]))
 				return true;
 		}
 		return false;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		return type_occurs_in(var, type->as.ptr);
+		return type_occurs_in(var, type->ptr);
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		return type_occurs_in(var, type->as.slice);
+		return type_occurs_in(var, type->slice);
 	case ast_type_array:
-		return type_occurs_in(var, type->as.array.base);
+		return type_occurs_in(var, type->array.base);
 	case ast_type_istruct:
 	case ast_type_struct:
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			if (type_occurs_in(var, type->as.struct_t.elems[i].type))
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			if (type_occurs_in(var, type->struct_t.elems[i].type))
 				return true;
 		}
 		return false;
 	case ast_type_union:
-		for (size_t i = 0; i < type->as.union_t.len; ++i) {
-			if (type_occurs_in(var, type->as.union_t.elems[i].type))
+		for (size_t i = 0; i < type->union_t.len; ++i) {
+			if (type_occurs_in(var, type->union_t.elems[i].type))
 				return true;
 		}
 		return false;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc:
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			if (type_occurs_in(var, type->as.proc.args.elems[i]))
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			if (type_occurs_in(var, type->proc.args.elems[i]))
 				return true;
 		}
-		return type_occurs_in(var, type->as.proc.ret);
+		return type_occurs_in(var, type->proc.ret);
 	case ast_type_var:
 		return type == var;
 	default: FAILWITH("Unreachable");
@@ -1349,35 +1349,35 @@ build_type_scheme(struct typing_context *ctx, KCType *type, struct type_scheme *
 	case ast_type_f32:
 	case ast_type_f64: return;
 	case ast_type_app:
-		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			build_type_scheme(ctx, type->as.app.args.elems[i], scm);
+		for (size_t i = 0; i < type->app.args.len; ++i) {
+			build_type_scheme(ctx, type->app.args.elems[i], scm);
 		}
 		return;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		return build_type_scheme(ctx, type->as.ptr, scm);
+		return build_type_scheme(ctx, type->ptr, scm);
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		return build_type_scheme(ctx, type->as.slice, scm);
+		return build_type_scheme(ctx, type->slice, scm);
 	case ast_type_array:
-		return build_type_scheme(ctx, type->as.array.base, scm);
+		return build_type_scheme(ctx, type->array.base, scm);
 	case ast_type_istruct:
 	case ast_type_struct:
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			build_type_scheme(ctx, type->as.struct_t.elems[i].type, scm);
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			build_type_scheme(ctx, type->struct_t.elems[i].type, scm);
 		}
 		return;
 	case ast_type_union:
-		for (size_t i = 0; i < type->as.union_t.len; ++i) {
-			build_type_scheme(ctx, type->as.union_t.elems[i].type, scm);
+		for (size_t i = 0; i < type->union_t.len; ++i) {
+			build_type_scheme(ctx, type->union_t.elems[i].type, scm);
 		}
 		return;
 	case ast_type_vector:	 FAILWITH("TODO: ast_type_vector");	   break;
 	case ast_type_proc:
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			build_type_scheme(ctx, type->as.proc.args.elems[i], scm);
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			build_type_scheme(ctx, type->proc.args.elems[i], scm);
 		}
-		return build_type_scheme(ctx, type->as.proc.ret, scm);
+		return build_type_scheme(ctx, type->proc.ret, scm);
 	case ast_type_var:
 		if (type_var_is_free(ctx, type))
 			da_append(&scm->args, type);
@@ -1399,7 +1399,7 @@ fresh_type_var(enum type_class c)
 {
 	KCType *t = MEM_ALLOC(KCType);
 	t->tag = ast_type_var;
-	t->as.var.class = c;
+	t->var.class = c;
 	return t;
 }
 
@@ -1407,7 +1407,7 @@ KC_PRIVATE KCType *
 fresh_type_var_from(KCType *type)
 {
 	assert(type->tag == ast_type_var);
-	KCType *t = fresh_type_var(type->as.var.class);
+	KCType *t = fresh_type_var(type->var.class);
 	return t;
 }
 
@@ -1431,8 +1431,8 @@ instantiate_type_scheme(struct type_scheme *scm)
 KC_PUBLIC KCType *
 type_find(KCType *type)
 {
-	for (; type->tag == ast_type_var; type = type->as.var.forward) {
-		if (type->as.var.forward == NULL)
+	for (; type->tag == ast_type_var; type = type->var.forward) {
+		if (type->var.forward == NULL)
 			return type;
 	}
 	return type;
@@ -1463,37 +1463,37 @@ type_recursive_find(KCType *type)
 	case ast_type_mut_ptr:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.ptr = type_recursive_find(type->as.ptr);
+		newtype->ptr = type_recursive_find(type->ptr);
 		return newtype;
 	case ast_type_slice:
 	case ast_type_mut_slice:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.slice = type_recursive_find(type->as.slice);
+		newtype->slice = type_recursive_find(type->slice);
 		return newtype;
 	case ast_type_array:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.array.is_sized = type->as.array.is_sized;
-		newtype->as.array.size = type->as.array.size;
-		newtype->as.array.base = type_recursive_find(type->as.array.base);
+		newtype->array.is_sized = type->array.is_sized;
+		newtype->array.size = type->array.size;
+		newtype->array.base = type_recursive_find(type->array.base);
 		return newtype;
 	case ast_type_app:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		newtype->as.app.cons = type->as.app.cons;
-		for (size_t i = 0; i < type->as.app.args.len; ++i) {
-			da_append(&newtype->as.app.args, type_recursive_find(type->as.app.args.elems[i]));
+		newtype->app.cons = type->app.cons;
+		for (size_t i = 0; i < type->app.args.len; ++i) {
+			da_append(&newtype->app.args, type_recursive_find(type->app.args.elems[i]));
 		}
 		return newtype;
 	case ast_type_struct:
 	case ast_type_istruct:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-			da_append(&newtype->as.struct_t, (struct struct_member) {
-					.name = type->as.struct_t.elems[i].name,
-					.type = type_recursive_find(type->as.struct_t.elems[i].type),
+		for (size_t i = 0; i < type->struct_t.len; ++i) {
+			da_append(&newtype->struct_t, (struct struct_member) {
+					.name = type->struct_t.elems[i].name,
+					.type = type_recursive_find(type->struct_t.elems[i].type),
 				});
 		}
 		return newtype;
@@ -1502,10 +1502,10 @@ type_recursive_find(KCType *type)
 	case ast_type_proc:
 		newtype = MEM_ALLOC(KCType);
 		newtype->tag = type->tag;
-		for (size_t i = 0; i < type->as.proc.args.len; ++i) {
-			da_append(&newtype->as.proc.args, type_recursive_find(type->as.proc.args.elems[i]));
+		for (size_t i = 0; i < type->proc.args.len; ++i) {
+			da_append(&newtype->proc.args, type_recursive_find(type->proc.args.elems[i]));
 		}
-		newtype->as.proc.ret = type_recursive_find(type->as.proc.ret);
+		newtype->proc.ret = type_recursive_find(type->proc.ret);
 		return newtype;
 	default: FAILWITH("Unreachable");
 	}
@@ -1516,7 +1516,7 @@ type_var_set_equal_to(KCType *t, KCType *u)
 {
 	t = type_find(t);
 	assert(t->tag == ast_type_var);
-	t->as.var.forward = u;
+	t->var.forward = u;
 }
 
 KC_PRIVATE bool
@@ -1552,16 +1552,16 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		if ((u->tag == ast_type_union
 			 || u->tag == ast_type_istruct
 			 || u->tag == ast_type_array)
-			&& unify(p, ctx, type_application(p, &t->as.app, ctx.scope), u)) {
+			&& unify(p, ctx, type_application(p, &t->app, ctx.scope), u)) {
 			return true;
 		}
 		if (u->tag != ast_type_app) return false;
-		if (!sv_is_equal(token_to_strview(t->as.app.cons), token_to_strview(u->as.app.cons)))
+		if (!sv_is_equal(token_to_strview(t->app.cons), token_to_strview(u->app.cons)))
 			return false;
-		assert(t->as.app.args.len == u->as.app.args.len);
-		for (size_t i = 0; i < t->as.app.args.len; ++i) {
-			KCType *tm = t->as.app.args.elems[i];
-			KCType *um = u->as.app.args.elems[i];
+		assert(t->app.args.len == u->app.args.len);
+		for (size_t i = 0; i < t->app.args.len; ++i) {
+			KCType *tm = t->app.args.elems[i];
+			KCType *um = u->app.args.elems[i];
 			if (!unify(p, ctx, tm, um)) {
 				return false;
 			}
@@ -1569,44 +1569,44 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		return true;
 	} break;
 	case ast_type_ptr: {
-		if (type_is_pointer(u)) return unify(p, ctx, t->as.ptr, u->as.ptr);
+		if (type_is_pointer(u)) return unify(p, ctx, t->ptr, u->ptr);
 		return false;
 	} break;
 	case ast_type_mut_ptr: FAILWITH("TODO: ast_type_mut_ptr"); break;
 	case ast_type_slice: {
 		if (type_is_slice(u))
-			return unify(p, ctx, t->as.slice, u->as.slice);
+			return unify(p, ctx, t->slice, u->slice);
 		return false;
 	} break;
 	case ast_type_mut_slice: FAILWITH("TODO: ast_type_mut_slice"); break;
 	case ast_type_array: {
 		if (type_is_array(u)) {
-			if (!unify(p, ctx, t->as.array.base, u->as.array.base)) return false;
-			if (t->as.array.is_sized && u->as.array.is_sized)
-				return t->as.array.size == u->as.array.size;
-			if (t->as.array.is_sized) {
-				u->as.array.is_sized = true;
-				u->as.array.size = t->as.array.size;
+			if (!unify(p, ctx, t->array.base, u->array.base)) return false;
+			if (t->array.is_sized && u->array.is_sized)
+				return t->array.size == u->array.size;
+			if (t->array.is_sized) {
+				u->array.is_sized = true;
+				u->array.size = t->array.size;
 				return true;
 			}
-			t->as.array.is_sized = true;
-			t->as.array.size = u->as.array.size;
+			t->array.is_sized = true;
+			t->array.size = u->array.size;
 			return true;
 		}
 		return false;
 	} break;
 	case ast_type_union: {
 		if (u->tag == ast_type_union) {
-			if (t->as.union_t.len != u->as.union_t.len) return false;
-			for (size_t i = 0; i < t->as.union_t.len; ++i) {
-				if (!sv_is_equal(token_to_strview(t->as.union_t.elems[i].name),
-								 token_to_strview(u->as.union_t.elems[i].name)))
+			if (t->union_t.len != u->union_t.len) return false;
+			for (size_t i = 0; i < t->union_t.len; ++i) {
+				if (!sv_is_equal(token_to_strview(t->union_t.elems[i].name),
+								 token_to_strview(u->union_t.elems[i].name)))
 					return false;
-				if (t->as.union_t.elems[i].tag_value != u->as.union_t.elems[i].tag_value)
+				if (t->union_t.elems[i].tag_value != u->union_t.elems[i].tag_value)
 					return false;
-				if (!unify(p, ctx, t->as.union_t.elems[i].type, u->as.union_t.elems[i].type)) {
-					KCType *tm = t->as.union_t.elems[i].type;
-					KCType *um = u->as.union_t.elems[i].type;
+				if (!unify(p, ctx, t->union_t.elems[i].type, u->union_t.elems[i].type)) {
+					KCType *tm = t->union_t.elems[i].type;
+					KCType *um = u->union_t.elems[i].type;
 					printf("tm = ");
 					ast_type_fprint(tm, stdout);
 					printf("\n");
@@ -1623,17 +1623,17 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	} break;
 	case ast_type_istruct: {
 		if (u->tag == ast_type_app)
-			u = type_application(p, &u->as.app, ctx.scope);
+			u = type_application(p, &u->app, ctx.scope);
 		if (u->tag == ast_type_struct) {
-			if (t->as.struct_t.len != u->as.struct_t.len) return false;
-			for (size_t i = 0; i < t->as.struct_t.len; ++i) {
-				if (t->as.struct_t.elems[i].name) {
-					if (u->as.struct_t.elems[i].name
-						&& !sv_is_equal(token_to_strview(t->as.struct_t.elems[i].name),
-										token_to_strview(u->as.struct_t.elems[i].name)))
+			if (t->struct_t.len != u->struct_t.len) return false;
+			for (size_t i = 0; i < t->struct_t.len; ++i) {
+				if (t->struct_t.elems[i].name) {
+					if (u->struct_t.elems[i].name
+						&& !sv_is_equal(token_to_strview(t->struct_t.elems[i].name),
+										token_to_strview(u->struct_t.elems[i].name)))
 						return false;
 				}
-				if (!unify(p, ctx, t->as.struct_t.elems[i].type, u->as.struct_t.elems[i].type))
+				if (!unify(p, ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
 					return false;
 			}
 			t->tag = ast_type_struct;
@@ -1643,13 +1643,13 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	} break;
 	case ast_type_struct: {
 		if (u->tag == ast_type_struct) {
-			if (t->as.struct_t.len != u->as.struct_t.len) return false;
-			for (size_t i = 0; i < t->as.struct_t.len; ++i) {
-				if (t->as.struct_t.elems[i].name && u->as.struct_t.elems[i].name
-					&& !sv_is_equal(token_to_strview(t->as.struct_t.elems[i].name),
-									token_to_strview(u->as.struct_t.elems[i].name)))
+			if (t->struct_t.len != u->struct_t.len) return false;
+			for (size_t i = 0; i < t->struct_t.len; ++i) {
+				if (t->struct_t.elems[i].name && u->struct_t.elems[i].name
+					&& !sv_is_equal(token_to_strview(t->struct_t.elems[i].name),
+									token_to_strview(u->struct_t.elems[i].name)))
 					return false;
-				if (!unify(p, ctx, t->as.struct_t.elems[i].type, u->as.struct_t.elems[i].type))
+				if (!unify(p, ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
 					return false;
 			}
 			return true;
@@ -1659,16 +1659,16 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc: {
 		if (!type_is_procedure(u)) return false;
-		if (t->as.proc.args.len != u->as.proc.args.len) return false;
-		for (size_t i = 0; i < t->as.proc.args.len; ++i) {
-			if (!unify(p, ctx, t->as.proc.args.elems[i], u->as.proc.args.elems[i]))
+		if (t->proc.args.len != u->proc.args.len) return false;
+		for (size_t i = 0; i < t->proc.args.len; ++i) {
+			if (!unify(p, ctx, t->proc.args.elems[i], u->proc.args.elems[i]))
 				return false;
 		}
-		return unify(p, ctx, t->as.proc.ret, u->as.proc.ret);
+		return unify(p, ctx, t->proc.ret, u->proc.ret);
 	} break;
 	case ast_type_var: {
 		if (t == u) return true;
-		switch (t->as.var.class) {
+		switch (t->var.class) {
 		case type_class_any:
 			type_var_set_equal_to(t, u);
 			return true;
@@ -1694,11 +1694,11 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 				return true;
 			}
 			if (type_is_var(u)) {
-				switch (u->as.var.class) {
+				switch (u->var.class) {
 				case type_class_any:
 				case type_class_scalar:
 				case type_class_numeric:
-					u->as.var.class = t->as.var.class;
+					u->var.class = t->var.class;
 					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_signed_integer:
@@ -1728,9 +1728,9 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 			return false;
 		case type_class_numeric:
 			if (type_is_var(u)) {
-				switch (u->as.var.class) {
+				switch (u->var.class) {
 				case type_class_any:
-					u->as.var.class = t->as.var.class;
+					u->var.class = t->var.class;
 					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_numeric:
@@ -1757,9 +1757,9 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		case type_class_scalar: {
 			KCType *v = NULL;
 			if (type_is_var(u)) {
-				switch (u->as.var.class) {
+				switch (u->var.class) {
 				case type_class_any:
-					u->as.var.class = t->as.var.class;
+					u->var.class = t->var.class;
 					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_numeric:
@@ -1799,10 +1799,10 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 			return false;
 		case type_class_indexable: {
 			if (type_is_var(u)) {
-				switch (u->as.var.class) {
+				switch (u->var.class) {
 				case type_class_any:
 				case type_class_indexable:
-					u->as.var.class = t->as.var.class;
+					u->var.class = t->var.class;
 					type_var_set_equal_to(t, u);
 					return true;
 				case type_class_length:
@@ -1822,7 +1822,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 			}
 			if (type_is_indexable(u)) {
 				type_var_set_equal_to(t, u);
-				return unify(p, ctx, t->as.var.contains, get_indexable_base_type(u));
+				return unify(p, ctx, t->var.contains, get_indexable_base_type(u));
 			} else {
 				return false;
 			}
@@ -1893,8 +1893,8 @@ get_valcons_entry_type(struct valcons_entry *e)
 {
 	KCType *u = MEM_ALLOC(KCType);
 	u->tag = ast_type_app;
-	u->as.app.cons = e->td->name;
-	u->as.app.args = e->td->args;
+	u->app.cons = e->td->name;
+	u->app.args = e->td->args;
 	return u;
 }
 
@@ -1913,27 +1913,27 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 {
 	switch (exp->tag) {
 	case ast_exp_definition: {
-		assert(exp->as.def.type != NULL);
-		if (exp->as.def.exp->tag == ast_exp_extern_symbol) {
-			exp->as.def.exp->type = exp->as.def.type;
+		assert(exp->def.type != NULL);
+		if (exp->def.exp->tag == ast_exp_extern_symbol) {
+			exp->def.exp->type = exp->def.type;
 		} else {
-			UNIFY_EXP(ctx, exp->as.def.exp, exp->as.def.type);
+			UNIFY_EXP(ctx, exp->def.exp, exp->def.type);
 		}
-		exp->as.def.is_typechecked = true;
+		exp->def.is_typechecked = true;
 		return exp->type = &AST_TYPE_VOID;
 	} break;
 	case ast_exp_let: {
-		struct definition *def = &exp->as.let.def;
-		UNIFY_EXP(ctx, def->exp, exp->as.def.type);
-		ctx.scope = &exp->as.let.scope;
+		struct definition *def = &exp->let.def;
+		UNIFY_EXP(ctx, def->exp, exp->def.type);
+		ctx.scope = &exp->let.scope;
 		KCType *type = fresh_type_var(type_class_any);
-		type_env_add(&ctx, exp->as.let.def.id, generalize_type(&ctx, type_recursive_find(exp->as.let.def.type)));
-		UNIFY_EXP(ctx, exp->as.let.body, type);
-		exp->as.let.def.is_typechecked = true;
+		type_env_add(&ctx, exp->let.def.id, generalize_type(&ctx, type_recursive_find(exp->let.def.type)));
+		UNIFY_EXP(ctx, exp->let.body, type);
+		exp->let.def.is_typechecked = true;
 		return exp->type = type;
 	} break;
 	case ast_exp_literal: {
-		struct literal *lit = &exp->as.lit;
+		struct literal *lit = &exp->lit;
 		KCType *type;
 		switch (lit->tag) {
 		case LITERAL_BOOL:   type = &AST_TYPE_BOOL;                     break;
@@ -1948,21 +1948,21 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		KCType *base = fresh_type_var(type_class_any);
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_array;
-		for (size_t i = 0; i < exp->as.init.len; ++i) {
-			UNIFY_EXP(ctx, exp->as.init.elems[i], base);
+		for (size_t i = 0; i < exp->init.len; ++i) {
+			UNIFY_EXP(ctx, exp->init.elems[i], base);
 		}
-		type->as.array.base = base;
-		type->as.array.is_sized = true;
-		type->as.array.size = exp->as.init.len;
+		type->array.base = base;
+		type->array.is_sized = true;
+		type->array.size = exp->init.len;
 		return exp->type = type;
 	} break;
 	case ast_exp_struct_initializer: {
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_istruct;
-		for (size_t i = 0; i < exp->as.init.len; ++i) {
+		for (size_t i = 0; i < exp->init.len; ++i) {
 			KCType *tv = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.init.elems[i], tv);
-			da_append(&type->as.struct_t, (struct struct_member) {
+			UNIFY_EXP(ctx, exp->init.elems[i], tv);
+			da_append(&type->struct_t, (struct struct_member) {
 					.type = tv,
 				});
 		}
@@ -1971,11 +1971,11 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	case ast_exp_named_struct_initializer: {
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_istruct;
-		for (size_t i = 0; i < exp->as.named_init.ids.len; ++i) {
+		for (size_t i = 0; i < exp->named_init.ids.len; ++i) {
 			KCType *tv = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.named_init.exps.elems[i], tv);
-			da_append(&type->as.struct_t, (struct struct_member) {
-					.name = exp->as.named_init.ids.elems[i],
+			UNIFY_EXP(ctx, exp->named_init.exps.elems[i], tv);
+			da_append(&type->struct_t, (struct struct_member) {
+					.name = exp->named_init.ids.elems[i],
 					.type = tv,
 				});
 		}
@@ -1983,15 +1983,15 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	} break;
 	case ast_exp_zero_struct_initializer: FAILWITH("TODO: infer_type (ast_exp_zero_struct_initializer)"); break;
 	case ast_exp_procedure_literal: {
-		struct procedure *proc = &exp->as.proc;
+		struct procedure *proc = &exp->proc;
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_proc;
-		type->as.proc = procedure_type(proc);
+		type->proc = procedure_type(proc);
 		ctx.scope = &proc->scope;
 		for (size_t i = 0; i < proc->formals.len; ++i) {
 			type_env_add(&ctx, proc->formals.elems[i].id, generalize_type(&ctx, proc->formals.elems[i].type));
 		}
-		UNIFY_EXP(ctx, proc->body, type->as.proc.ret);
+		UNIFY_EXP(ctx, proc->body, type->proc.ret);
 		return exp->type = type;
 	} break;
 	case ast_exp_undefined: FAILWITH("TODO: infer_type (ast_exp_undefined)"); break;
@@ -2000,7 +2000,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		if (entry == NULL) ERROR_UNDEFINED_IDENT(exp->tok);
 		switch (entry->tag) {
 		case SYMTBL_VARIABL: {
-			struct definition *def = entry->as.variable.def;
+			struct definition *def = entry->variable.def;
 			struct type_env *env = lookup_type_env(&ctx, exp->tok);
 			assert(env != NULL);
 			exp->is_mutable = def->is_mut;
@@ -2014,11 +2014,11 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		}
 	} break;
 	case ast_exp_binary: {
-		switch ((enum binop)exp->as.bin.op) {
+		switch ((enum binop)exp->bin.op) {
 		case binop_sequence: {
-			UNIFY_EXP(ctx, exp->as.bin.left, &AST_TYPE_VOID);
+			UNIFY_EXP(ctx, exp->bin.left, &AST_TYPE_VOID);
 			KCType *type = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
 			return exp->type = type;
 		} break;
 		case binop_add:
@@ -2026,8 +2026,8 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_mul:
 		case binop_div: {
 			KCType *type = fresh_type_var(type_class_numeric);
-			UNIFY_EXP(ctx, exp->as.bin.left, type);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			UNIFY_EXP(ctx, exp->bin.left, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
 			return exp->type = type;
 		} break;
 		case binop_mod:
@@ -2037,8 +2037,8 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_shift_left:
 		case binop_shift_right: {
 			KCType *type = fresh_type_var(type_class_integer);
-			UNIFY_EXP(ctx, exp->as.bin.left, type);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			UNIFY_EXP(ctx, exp->bin.left, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
 			return exp->type = type;
 		} break;
 		case binop_equal:
@@ -2048,25 +2048,25 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_less_equal:
 		case binop_more_equal: {
 			KCType *type = fresh_type_var(type_class_scalar);
-			UNIFY_EXP(ctx, exp->as.bin.left, type);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
+			UNIFY_EXP(ctx, exp->bin.left, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
 			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case binop_or:
 		case binop_and: {
-			UNIFY_EXP(ctx, exp->as.bin.left, &AST_TYPE_BOOL);
-			UNIFY_EXP(ctx, exp->as.bin.right, &AST_TYPE_BOOL);
+			UNIFY_EXP(ctx, exp->bin.left, &AST_TYPE_BOOL);
+			UNIFY_EXP(ctx, exp->bin.right, &AST_TYPE_BOOL);
 			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case binop_assign: {
 			KCType *type = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.bin.left, type);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
-			if (!exp->as.bin.left->is_lvalue)
-				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+			UNIFY_EXP(ctx, exp->bin.left, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
+			if (!exp->bin.left->is_lvalue)
+				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
 								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
-			if (!exp->as.bin.left->is_mutable)
-				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+			if (!exp->bin.left->is_mutable)
+				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
 								  "Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
@@ -2075,36 +2075,36 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		case binop_mul_assign:
 		case binop_div_assign: {
 			KCType *type = fresh_type_var(type_class_numeric);
-			UNIFY_EXP(ctx, exp->as.bin.left, type);
-			UNIFY_EXP(ctx, exp->as.bin.right, type);
-			if (!exp->as.bin.left->is_lvalue)
-				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+			UNIFY_EXP(ctx, exp->bin.left, type);
+			UNIFY_EXP(ctx, exp->bin.right, type);
+			if (!exp->bin.left->is_lvalue)
+				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
 								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
-			if (!exp->as.bin.left->is_mutable)
-				log_error_and_die(p->lexer.filename, exp->as.bin.left->tok,
+			if (!exp->bin.left->is_mutable)
+				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
 								  "Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
 		case binop_member: {
-			KCType *type, *infered = infer_type(p, ctx, exp->as.bin.left);
+			KCType *type, *infered = infer_type(p, ctx, exp->bin.left);
 			if (infered->tag == ast_type_app) {
-				type = type_application(p, &infered->as.app, ctx.scope);
+				type = type_application(p, &infered->app, ctx.scope);
 			} else {
 				type = infered;
 			}
 			if (type_is_struct_ptr(type, ctx.scope))
-				type = type->as.ptr;
+				type = type->ptr;
 			if (!type_is_struct(type, ctx.scope)) {
 				log_error_and_die(p->lexer.filename, exp->tok,
 								  "KCType error. `%s` is not a structure.",
 								  ast_type_to_str(infered));
 			}
-			if (exp->as.bin.right->tag == ast_exp_ident) {
-				struct strview sv_mem = token_to_strview(exp->as.bin.right->tok);
-				for (size_t i = 0; i < type->as.struct_t.len; ++i) {
-					if (type->as.struct_t.elems[i].name != NULL
-						&& sv_is_equal(token_to_strview(type->as.struct_t.elems[i].name), sv_mem)) {
-						return exp->type = type->as.struct_t.elems[i].type;
+			if (exp->bin.right->tag == ast_exp_ident) {
+				struct strview sv_mem = token_to_strview(exp->bin.right->tok);
+				for (size_t i = 0; i < type->struct_t.len; ++i) {
+					if (type->struct_t.elems[i].name != NULL
+						&& sv_is_equal(token_to_strview(type->struct_t.elems[i].name), sv_mem)) {
+						return exp->type = type->struct_t.elems[i].type;
 					}
 				}
 				log_error_and_die(p->lexer.filename, exp->tok,
@@ -2112,13 +2112,13 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 								  ast_type_to_str(infered),
 								  SV_ARGS(sv_mem));
 			}
-			if (exp_is_integer_literal(exp->as.bin.right)) {
-				int64_t i = exp->as.bin.right->as.lit.as.i;
-				if (i < 0 || i >= type->as.struct_t.len) {
+			if (exp_is_integer_literal(exp->bin.right)) {
+				int64_t i = exp->bin.right->lit.i;
+				if (i < 0 || i >= type->struct_t.len) {
 					FAILWITH("TODO: Invalid struct member accessor `%ld` for type %s.",
 							 i, ast_type_to_str(infered));
 				}
-				return exp->type = type->as.struct_t.elems[i].type;
+				return exp->type = type->struct_t.elems[i].type;
 			}
 			FAILWITH("Unreachable");
 		} break;
@@ -2133,62 +2133,62 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		FAILWITH("TODO: infer_type (ast_exp_binary)");
 	} break;
 	case ast_exp_value_cons: {
-		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(exp->as.valcons.cons));
-		if (entry == NULL) ERROR_UNDEFINED_IDENT(exp->as.valcons.cons);
+		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(exp->valcons.cons));
+		if (entry == NULL) ERROR_UNDEFINED_IDENT(exp->valcons.cons);
 		assert(entry->tag == SYMTBL_VALCONS);
-		int64_t tag_val = entry->as.valcons.elems[0].tag_val;
-		exp->as.valcons.tag_val = tag_val;
-		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->as.valcons.elems[0]);
-		KCType *I = type_application(p, &U->as.app, ctx.scope);
-		KCType *T = I->as.union_t.elems[tag_val].type;
-		if (exp->as.valcons.exp == NULL) {
+		int64_t tag_val = entry->valcons.elems[0].tag_val;
+		exp->valcons.tag_val = tag_val;
+		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->valcons.elems[0]);
+		KCType *I = type_application(p, &U->app, ctx.scope);
+		KCType *T = I->union_t.elems[tag_val].type;
+		if (exp->valcons.exp == NULL) {
 			if (!type_is_void(T))
 				FAILWITH("TODO: union cons type mismatch.");
 		} else {
-			UNIFY_EXP(ctx, exp->as.valcons.exp, T);
+			UNIFY_EXP(ctx, exp->valcons.exp, T);
 		}
 		free(I);
 		return exp->type = U;
 	} break;
 	case ast_exp_unary: {
-		switch ((enum unaop)exp->as.una.op) {
+		switch ((enum unaop)exp->una.op) {
 		case unaop_not: {
-			UNIFY_EXP(ctx, exp->as.una.exp, &AST_TYPE_BOOL);
+			UNIFY_EXP(ctx, exp->una.exp, &AST_TYPE_BOOL);
 			return exp->type = &AST_TYPE_BOOL;
 		} break;
 		case unaop_lnot: FAILWITH("TODO: ast_exp_unary"); break;
 		case unaop_neg:
 		case unaop_pos: {
 			KCType *type = fresh_type_var(type_class_numeric);
-			UNIFY_EXP(ctx, exp->as.una.exp, type);
+			UNIFY_EXP(ctx, exp->una.exp, type);
 			return exp->type = type;
 		} break;
 		case unaop_address_of: {
 			KCType *type = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.una.exp, type);
-			if (!exp->as.una.exp->is_lvalue)
+			UNIFY_EXP(ctx, exp->una.exp, type);
+			if (!exp->una.exp->is_lvalue)
 				log_error_and_die(p->lexer.filename, exp->tok, "Error. Expression is not an lvalue.");
 			KCType *ptr = MEM_ALLOC(KCType);
-			ptr->tag = exp->as.una.exp->is_mutable ? ast_type_mut_ptr : ast_type_ptr;
-			ptr->as.ptr = type;
+			ptr->tag = exp->una.exp->is_mutable ? ast_type_mut_ptr : ast_type_ptr;
+			ptr->ptr = type;
 			return exp->type = ptr;
 		} break;
 		case unaop_dereference: {
 			KCType *type = MEM_ALLOC(KCType);
 			type->tag = ast_type_ptr;
-			type->as.ptr = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.una.exp, type);
+			type->ptr = fresh_type_var(type_class_any);
+			UNIFY_EXP(ctx, exp->una.exp, type);
 			exp->is_lvalue = true;
-			return exp->type = type->as.ptr;
+			return exp->type = type->ptr;
 		} break;
 		case unaop_index: {
 			KCType *arr_type = fresh_type_var(type_class_indexable);
 			KCType *idx_type = fresh_type_var(type_class_integer);
 			KCType *type = fresh_type_var(type_class_any);
-			arr_type->as.var.contains = type;
-			UNIFY_EXP(ctx, exp->as.idx.exp, arr_type);
-			UNIFY_EXP(ctx, exp->as.idx.idx, idx_type);
-			exp->is_lvalue = exp->as.idx.exp->is_lvalue;
+			arr_type->var.contains = type;
+			UNIFY_EXP(ctx, exp->idx.exp, arr_type);
+			UNIFY_EXP(ctx, exp->idx.idx, idx_type);
+			exp->is_lvalue = exp->idx.exp->is_lvalue;
 			return exp->type = type;
 		} break;
 		case unaop_slice: {
@@ -2196,23 +2196,23 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			KCType *idx_type = fresh_type_var(type_class_integer);
 			KCType *len_type = fresh_type_var(type_class_integer);
 			KCType *base_type = fresh_type_var(type_class_any);
-			arr_type->as.var.contains = base_type;
-			UNIFY_EXP(ctx, exp->as.slice.exp, arr_type);
-			UNIFY_EXP(ctx, exp->as.slice.idx, idx_type);
-			UNIFY_EXP(ctx, exp->as.slice.len, len_type);
-			if (!exp->as.slice.exp->is_lvalue) {
-				log_error_and_die(p->lexer.filename, exp->as.slice.exp->tok,
+			arr_type->var.contains = base_type;
+			UNIFY_EXP(ctx, exp->slice.exp, arr_type);
+			UNIFY_EXP(ctx, exp->slice.idx, idx_type);
+			UNIFY_EXP(ctx, exp->slice.len, len_type);
+			if (!exp->slice.exp->is_lvalue) {
+				log_error_and_die(p->lexer.filename, exp->slice.exp->tok,
 								  "Error. Expression is not an lvalue.");
 			}
-			exp->is_lvalue = exp->as.slice.exp->is_lvalue;
+			exp->is_lvalue = exp->slice.exp->is_lvalue;
 			assert(exp->is_lvalue);
 			KCType *res_type = MEM_ALLOC(KCType);
 			res_type->tag = ast_type_slice;
-			res_type->as.slice = base_type;
+			res_type->slice = base_type;
 			return exp->type = res_type;
 		} break;
 		case unaop_call: {
-			struct call *call = &exp->as.call;
+			struct call *call = &exp->call;
 			KCType *proc_type = infer_type(p, ctx, call->proc);
 			KCType *ret_type = fresh_type_var(type_class_any);
 			KCType *infered = MEM_ALLOC(KCType);
@@ -2220,9 +2220,9 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			for (size_t i = 0; i < call->args.len; ++i) {
 				KCType *arg = fresh_type_var(type_class_any);
 				UNIFY_EXP(ctx, call->args.elems[i], arg);
-				da_append(&infered->as.proc.args, arg);
+				da_append(&infered->proc.args, arg);
 			}
-			infered->as.proc.ret = ret_type;
+			infered->proc.ret = ret_type;
 			UNIFY(ctx, proc_type, infered, exp);
 			if (call->proc->tag == ast_exp_ident) {
 				struct type_env *env = lookup_type_env(&ctx, call->proc->tok);
@@ -2231,7 +2231,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 					struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(call->proc->tok));
 					assert(entry != NULL);
 					assert(entry->tag == SYMTBL_VARIABL);
-					struct definition *def = entry->as.variable.def;
+					struct definition *def = entry->variable.def;
 					if (lookup_poly_proc_spec(p, def, proc_type, ctx.scope) == NULL) {
 						da_append(&def->specs, (struct type_spec) {
 								.type = proc_type,
@@ -2242,61 +2242,61 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			return exp->type = ret_type;
 		} break;
 		case unaop_cast: {
-			if (exp_is_integer_literal(exp->as.cast.exp)
-				&& type_is_integer(exp->as.cast.type)) {
-				KCType *type = exp->as.cast.type;
-				*exp = *exp->as.cast.exp;
+			if (exp_is_integer_literal(exp->cast.exp)
+				&& type_is_integer(exp->cast.type)) {
+				KCType *type = exp->cast.type;
+				*exp = *exp->cast.exp;
 				return exp->type = type;
 			}
 			KCType *type = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->as.cast.exp, type);
-			if (!unify_cast(p, ctx, type, exp->as.cast.type))
-				type_mismatch_error(p, ctx, type, exp->as.cast.type, exp->tok, __FILE__, __LINE__);
-			return exp->type = exp->as.cast.type;
+			UNIFY_EXP(ctx, exp->cast.exp, type);
+			if (!unify_cast(p, ctx, type, exp->cast.type))
+				type_mismatch_error(p, ctx, type, exp->cast.type, exp->tok, __FILE__, __LINE__);
+			return exp->type = exp->cast.type;
 		} break;
 		}
 		FAILWITH("TODO: ast_exp_unary");
 	} break;
 	case ast_exp_while: {
-		UNIFY_EXP(ctx, exp->as.wloop.cond, &AST_TYPE_BOOL);
-		UNIFY_EXP(ctx, exp->as.wloop.body, &AST_TYPE_VOID);
+		UNIFY_EXP(ctx, exp->wloop.cond, &AST_TYPE_BOOL);
+		UNIFY_EXP(ctx, exp->wloop.body, &AST_TYPE_VOID);
 		return exp->type = &AST_TYPE_VOID;
 	} break;
 	case ast_exp_if: {
-		UNIFY_EXP(ctx, exp->as.iff.cond, &AST_TYPE_BOOL);
+		UNIFY_EXP(ctx, exp->iff.cond, &AST_TYPE_BOOL);
 		KCType *type = fresh_type_var(type_class_any);
-		UNIFY_EXP(ctx, exp->as.iff.tb, type);
-		if (exp->as.iff.fb != NULL)
-			UNIFY_EXP(ctx, exp->as.iff.fb, type);
+		UNIFY_EXP(ctx, exp->iff.tb, type);
+		if (exp->iff.fb != NULL)
+			UNIFY_EXP(ctx, exp->iff.fb, type);
 		return exp->type = type;
 	} break;
 	case ast_exp_case: {
 		KCType *type = fresh_type_var(type_class_any);
-		struct case_branches *branches = &exp->as.ccase.branches;
+		struct case_branches *branches = &exp->ccase.branches;
 		assert(branches->len > 0);
 		struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(branches->elems[0].cons));
 		if (entry == NULL) ERROR_UNDEFINED_IDENT(branches->elems[0].cons);
 		assert(entry->tag == SYMTBL_VALCONS);
-		struct type_definition *td = entry->as.valcons.elems[0].td;
-		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->as.valcons.elems[0]);
-		KCType *I = type_application(p, &U->as.app, ctx.scope);
-		UNIFY_EXP(ctx, exp->as.ccase.cexp, U);
+		struct type_definition *td = entry->valcons.elems[0].td;
+		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->valcons.elems[0]);
+		KCType *I = type_application(p, &U->app, ctx.scope);
+		UNIFY_EXP(ctx, exp->ccase.cexp, U);
 		for (size_t i = 0; i < branches->len; ++i) {
 			struct case_branch *br = &branches->elems[i];
 			struct symtbl_entry *entry = lookup_entry(ctx.scope, token_to_strview(br->cons));
 			if (entry == NULL) ERROR_UNDEFINED_IDENT(br->cons);
 			assert(entry->tag == SYMTBL_VALCONS);
-			if (entry->as.valcons.elems[0].td != td)
+			if (entry->valcons.elems[0].td != td)
 				FAILWITH("TODO: KCType error");
-			br->tag_val = entry->as.valcons.elems[0].tag_val;
+			br->tag_val = entry->valcons.elems[0].tag_val;
 			struct typing_context br_ctx = ctx;
 			br_ctx.scope = &br->scope;
 			if (br->binds_value) {
-				KCType *t = I->as.union_t.elems[br->tag_val].type;
+				KCType *t = I->union_t.elems[br->tag_val].type;
 				if (br->binding_is_ref) {
 					KCType *tmp = MEM_ALLOC(KCType);
 					tmp->tag = ast_type_ptr;
-					tmp->as.ptr = t;
+					tmp->ptr = t;
 					t = tmp;
 				}
 				br->binding.type = t;
@@ -2315,20 +2315,20 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	case ast_exp_get_ptr: {
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_slice;
-		type->as.slice = fresh_type_var(type_class_any);
-		UNIFY_EXP(ctx, exp->as.get_ptr, type);
+		type->slice = fresh_type_var(type_class_any);
+		UNIFY_EXP(ctx, exp->get_ptr, type);
 		return exp->type = get_slice_pointer(type);
 	} break;
 	case ast_exp_get_len: {
 		KCType *type = fresh_type_var(type_class_length);
-		UNIFY_EXP(ctx, exp->as.get_len, type);
+		UNIFY_EXP(ctx, exp->get_len, type);
 		return exp->type = &AST_TYPE_U64;
 	} break;
 	case ast_exp_size_of: {
-		if (exp->as.size_of.exp) {
-			exp->as.size_of.type = infer_type(p, ctx, exp->as.size_of.exp);
+		if (exp->size_of.exp) {
+			exp->size_of.type = infer_type(p, ctx, exp->size_of.exp);
 		}
-		assert(exp->as.size_of.type);
+		assert(exp->size_of.type);
 		return exp->type = &AST_TYPE_U64;
 	} break;
 	default: FAILWITH("Unreachable"); break;
@@ -2356,7 +2356,7 @@ type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
 {
 	for (size_t i = 0; i < exps->len; ++i) {
 		if (exps->elems[i]->tag == ast_exp_definition) {
-			struct definition *def = &exps->elems[i]->as.def;
+			struct definition *def = &exps->elems[i]->def;
 			Forall spec = generalize_type(ctx, type_recursive_find(def->type));
 			type_env_add(ctx, def->id, spec);
 		}
@@ -2369,7 +2369,7 @@ type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
 		loop = false;
 		for (size_t i = 0; i < exps->len; ++i) {
 			if (exps->elems[i]->tag == ast_exp_definition) {
-				loop |= specialize(p, *ctx, &exps->elems[i]->as.def);
+				loop |= specialize(p, *ctx, &exps->elems[i]->def);
 			}
 		}
 	} while (loop);
@@ -2412,15 +2412,15 @@ type_size(KCType *t)
 	case ast_type_mut_slice:
 		return 16;
 	case ast_type_array:
-		if (t->as.array.is_sized) {
-			return type_size(t->as.array.base) * t->as.array.size;
+		if (t->array.is_sized) {
+			return type_size(t->array.base) * t->array.size;
 		} else {
 			FAILWITH("TODO: Error: Cannot determine size of type unsized array.");
 		}
 		break;
 	case ast_type_istruct: FAILWITH("TODO: ast_type_istruct"); break;
 	case ast_type_struct: {
-		struct struct_type *st = &t->as.struct_t;
+		struct struct_type *st = &t->struct_t;
 		size_t size = 0;
 		size_t alignment = 1;
 		for (size_t i = 0; i < st->len; ++i) {
@@ -2433,7 +2433,7 @@ type_size(KCType *t)
 		return align_adjust(size, alignment);
 	} break;
 	case ast_type_union: {
-		struct union_type *ut = &t->as.union_t;
+		struct union_type *ut = &t->union_t;
 		size_t size = 8;
 		size_t alignment = 8;
 		for (size_t i = 0; i < ut->len; ++i) {
@@ -2483,10 +2483,10 @@ type_alignment(KCType *t)
 	case ast_type_mut_slice:
 		return 8;
 	case ast_type_array:
-		return type_alignment(t->as.array.base);
+		return type_alignment(t->array.base);
 	case ast_type_istruct: FAILWITH("TODO: ast_type_istruct"); break;
 	case ast_type_struct: {
-		struct struct_type *st = &t->as.struct_t;
+		struct struct_type *st = &t->struct_t;
 		size_t alignment = 1;
 		for (size_t i = 0; i < st->len; ++i) {
 			size_t a = type_alignment(st->elems[i].type);
@@ -2520,9 +2520,9 @@ get_struct_member_idx(KCType *t, struct token *mem)
 {
 	assert(t->tag == ast_type_struct);
 	struct strview sv_mem = token_to_strview(mem);
-	for (size_t i = 0; i < t->as.struct_t.len; ++i) {
-		assert(t->as.struct_t.elems[i].name != NULL);
-		if (sv_is_equal(sv_mem, token_to_strview(t->as.struct_t.elems[i].name)))
+	for (size_t i = 0; i < t->struct_t.len; ++i) {
+		assert(t->struct_t.elems[i].name != NULL);
+		if (sv_is_equal(sv_mem, token_to_strview(t->struct_t.elems[i].name)))
 			return i;
 	}
 	FAILWITH("Unreachable struct type `%s` has no member `"SV_FMT"`",

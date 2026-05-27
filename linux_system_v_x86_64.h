@@ -78,7 +78,7 @@ struct asm_address {
 		float32_t f;
 		int32_t stack[2]; /* stack address */
 		int32_t wide[2];  /* two registers to hold value */
-	} as;
+	};
 	union {
 		size_t stack_size;
 		int64_t offset;
