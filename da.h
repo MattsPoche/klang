@@ -24,6 +24,20 @@
 #define da_pop(da)														\
 	(assert(da_len(da) > 0), da_len(da)--, da_elems(da)[da_len(da)])
 
+#define da_insert(da, idx, ...)											\
+	do {																\
+		if ((idx) >= da_len(da)) {										\
+			da_append(da, __VA_ARGS__);									\
+		} else {														\
+			size_t _DA_LENGTH = da_len(da);								\
+			da_append(da, (typeof(0[da_elems(da)])){0});				\
+			memmove(da_elems(da) + (idx) + 1,							\
+					da_elems(da) + (idx),								\
+					(_DA_LENGTH - (idx)) * sizeof(0[da_elems(da)]));	\
+			da_elems(da)[idx] = (__VA_ARGS__);							\
+		}																\
+	} while (0)
+
 #define da_clear(da) (da_len(da) = 0)
 
 #define da_init(da)								\
@@ -33,7 +47,7 @@
 		da_elems(da) = NULL;					\
 	} while (0)
 
-#define da_copy(da_dst, da_src)								\
+#define da_concat(da_dst, da_src)							\
 	do {													\
 		for (size_t __i = 0; __i < da_len(da_src); ++__i) {	\
 			da_append(da_dst, da_elems(da_src)[__i]);		\

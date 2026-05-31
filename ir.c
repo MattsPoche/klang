@@ -1,6 +1,6 @@
 #include "common.h"
 
-KC_PUBLIC union ir_object *
+KC_PUBLIC IR_object *
 get_toplevel_obj(struct ir_toplevel *tl, size_t id)
 {
 	assert(id < tl->len);
@@ -10,7 +10,7 @@ get_toplevel_obj(struct ir_toplevel *tl, size_t id)
 KC_PUBLIC struct ir_proc *
 get_toplevel_proc(struct ir_toplevel *tl, size_t id)
 {
-	union ir_object *obj = get_toplevel_obj(tl, id);
+	IR_object *obj = get_toplevel_obj(tl, id);
 	assert(obj->tag == IRO_PROC);
 	return &obj->proc;
 }
@@ -344,7 +344,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			char *str = exp->lit.s.ptr;
 			size_t length = exp->lit.s.len;
 			size_t id = tl->len;
-			union ir_object p = {
+			IR_object p = {
 				.data.is_static = true,
 				.data.tag  = IRO_DATA,
 				.data.size = length,
@@ -1611,7 +1611,7 @@ generate_mangled_name(struct strview ident, KCType *type)
 }
 
 KC_PRIVATE void
-ast_create_proc_object(union ir_object *p, struct definition *def, KCType *type, struct expression *exp)
+ast_create_proc_object(IR_object *p, struct definition *def, KCType *type, struct expression *exp)
 {
 	p->proc.tag = IRO_PROC;
 	struct strview id_name = token_to_strview(def->id);
@@ -1639,7 +1639,7 @@ ast_compile(struct scope *scope)
 		assert(st->elems[i].tag == SYMTBL_VARIABL);
 		struct definition *def = st->elems[i].variable.def;
 		struct expression *exp = def->exp;
-		union ir_object p = {0};
+		IR_object p = {0};
 		struct strview id_name = token_to_strview(def->id);
 		def->ir_symbol = tl.len;
 		def->is_global = true;

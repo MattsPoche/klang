@@ -1,45 +1,27 @@
 #pragma once
+#include "memas.h"
 
-enum asm_register {
-	/* caller save */
-	asm_reg_rax,
-	asm_reg_rdi,
-	asm_reg_rsi,
-	asm_reg_rdx,
-	asm_reg_rcx,
-	asm_reg_r8,
-	asm_reg_r9,
-	asm_reg_r10,  // static chain pointer
-	asm_reg_r11,
-	/* callee save */
-	asm_reg_rbx,
-	asm_reg_r12,
-	asm_reg_r13,
-	asm_reg_r14,
-	asm_reg_r15,
-	ASM_REG_COUNT,
+#define CG_REG_COUNT     14
+#define CG_ARG_REG_COUNT 6
+
+enum cg_register_bits {
+	BIT_RAX = 1u << RAX,
+	BIT_RDI = 1u << RDI,
+	BIT_RSI = 1u << RSI,
+	BIT_RDX = 1u << RDX,
+	BIT_RCX = 1u << RCX,
+	BIT_R8  = 1u << R8,
+	BIT_R9  = 1u << R9,
+	BIT_R10 = 1u << R10,
+	BIT_R11 = 1u << R11,
+	BIT_RBX = 1u << RBX,
+	BIT_R12 = 1u << R12,
+	BIT_R13 = 1u << R13,
+	BIT_R14 = 1u << R14,
+	BIT_R15 = 1u << R15,
 };
 
-#define ASM_ARG_REG_COUNT 6
-
-enum asm_register_bits {
-	BIT_RAX = 1u << asm_reg_rax,
-	BIT_RDI = 1u << asm_reg_rdi,
-	BIT_RSI = 1u << asm_reg_rsi,
-	BIT_RDX = 1u << asm_reg_rdx,
-	BIT_RCX = 1u << asm_reg_rcx,
-	BIT_R8  = 1u << asm_reg_r8,
-	BIT_R9  = 1u << asm_reg_r9,
-	BIT_R10 = 1u << asm_reg_r10,
-	BIT_R11 = 1u << asm_reg_r11,
-	BIT_RBX = 1u << asm_reg_rbx,
-	BIT_R12 = 1u << asm_reg_r12,
-	BIT_R13 = 1u << asm_reg_r13,
-	BIT_R14 = 1u << asm_reg_r14,
-	BIT_R15 = 1u << asm_reg_r15,
-};
-
-enum asm_register_class {
+enum cg_register_class {
 	REGC_ARG          = BIT_RDI|BIT_RSI|BIT_RDX|BIT_RCX|BIT_R8|BIT_R9,
 	REGC_RET          = BIT_RAX|BIT_RDX,
 	REGC_CALLEE_SAVED = BIT_RBX|BIT_R12|BIT_R13|BIT_R14|BIT_R15,
@@ -47,7 +29,7 @@ enum asm_register_class {
 	REGC_STATIC_CHAIN = BIT_R10,
 };
 
-enum asm_addr_tag {
+enum cg_addr_tag {
 	ADDR_NONE,
 	ADDR_ARGUMENT,
 	ADDR_WIDE_ARG,
@@ -67,10 +49,10 @@ enum asm_addr_tag {
 };
 
 struct ir_ins;
-struct asm_procedure;
+struct cg_procedure;
 
-struct asm_address {
-	enum asm_addr_tag tag;
+struct cg_address {
+	enum cg_addr_tag tag;
 	KCType *type;
 	union {
 		int64_t i;
@@ -83,61 +65,54 @@ struct asm_address {
 		size_t stack_size;
 		int64_t offset;
 		struct defer_closure {
-			void (*fun)(struct ir_ins *, void *, struct asm_procedure *);
+			void (*fun)(struct ir_ins *, void *, struct cg_procedure *);
 			struct ir_ins *ins;
 			void *dat;
 		} defered;
 	} extra;
 };
 
-struct asm_context {
+struct cg_context {
 	size_t stack_size;
 	size_t arg_stack_size;
-	struct asm_addresses {
+	struct cg_addresses {
 		uint32_t len, cap;
-		struct asm_address **elems;
+		struct cg_address **elems;
 	} funargs;
 	size_t varc;
-	struct asm_address *vars;
-	int assigned[ASM_REG_COUNT];
+	struct cg_address *vars;
+	int assigned[CG_REG_COUNT];
 	int rv_addr;
 	uint32_t clobbered;
+	asm_label_id proc_lbl;
+	asm_label_id ret_lbl;
 	bool has_large_retval;
 	bool setup_frame;
 	bool is_leaf;
 };
 
-struct asm_procedure {
-	struct lines prologue;
-	struct lines body;
-	struct lines epilogue;
-	struct asm_context ctx;
+struct cg_procedure {
+	Asm_module *m;
+	struct cg_context ctx;
 };
 
-struct asm_datum {
-	struct lines body;
-};
-
-struct asm_module {
-	struct asm_procedures {
+typedef struct cg_module {
+	struct cg_procedures {
 		uint32_t len, cap;
-		struct asm_procedure *elems;
+		struct cg_procedure *elems;
 	} procs;
-	struct asm_data {
-		uint32_t len, cap;
-		struct asm_datum *elems;
-	} data;
-};
+	Asm_module asm_mod;
+} CG_module;
 
-struct asm_modules {
+typedef struct cg_modules {
 	uint32_t len, cap;
-	struct asm_module *elems;
-};
+	CG_module *elems;
+} CG_modules;
 
 #define REG_FREE -1
 #define RED_ZONE_SIZE 128
 
-KC_PUBLIC void asm_emit_procedure(struct ir_proc *proc, struct ir_toplevel *tl, struct asm_procedure *code);
-KC_PUBLIC void asm_dump_procedure(struct asm_procedure *proc, FILE *file);
-KC_PUBLIC void asm_emit_datum(struct ir_data *data, struct asm_datum *asm_data);
-KC_PUBLIC void asm_dump_module(struct asm_module *mod, FILE *file);
+KC_PUBLIC void cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit);
+KC_PUBLIC void cg_emit_procedure(CG_module *mod, struct ir_proc *proc, struct ir_toplevel *tl);
+KC_PUBLIC void cg_dump_procedure(struct cg_procedure *proc, FILE *file);
+KC_PUBLIC void cg_emit_data(CG_module *mod, struct ir_data *data);

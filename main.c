@@ -22,8 +22,10 @@ TODOS:
 - [ ] Closures?
 **/
 
-#include <dlfcn.h>
+#include <setjmp.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
@@ -50,8 +52,8 @@ TODOS:
 
 #endif
 
-KC_PRIVATE struct asm_module *
-compile_file(const char *filename, struct asm_module *asm_mod, bool is_dll)
+KC_PRIVATE CG_module
+compile_file(const char *filename, bool is_jit)
 {
 	struct strview sv = {0};
 	if (sv_open_file(filename, &sv) == false) {
@@ -96,25 +98,13 @@ compile_file(const char *filename, struct asm_module *asm_mod, bool is_dll)
 	}
 #endif
 	/* IR => ASM */
-	ir.is_dll = is_dll;
-	for (size_t i = 0; i < ir.len; ++i) {
-		switch (ir.elems[i].tag) {
-		case IRO_PROC:
-			asm_emit_procedure(&ir.elems[i].proc, &ir, da_allot(&asm_mod->procs));
-			break;
-		case IRO_DATA:
-			asm_emit_datum(&ir.elems[i].data, da_allot(&asm_mod->data));
-			break;
-		case IRO_EXTERN_DATA: /* Do nothing */ break;
-		case IRO_EXTERN_PROC: /* Do nothing */ break;
-		default: FAILWITH("Unreachable"); break;
-		}
-	}
-	return asm_mod;
+	CG_module cg_mod = {0};
+	cg_emit_module_code(&cg_mod, &ir, is_jit);
+	return cg_mod;
 }
 
 KC_PRIVATE int
-run_cmd(struct lines *args)
+exec_cmd(struct lines *args)
 {
 	char *cmd_str = concat_lines(args, " ");
 	printf("[Info] %s\n", cmd_str);
@@ -123,45 +113,7 @@ run_cmd(struct lines *args)
 	return c;
 }
 
-// as --gdwarf-5 --64 syntax.s -o syntax.o
 // ld -dynamic-linker /lib/ld-linux-x86-64.so.2 /usr/lib/crt1.o /usr/lib/crti.o -lc syntax.o /usr/lib/crtn.o
-KC_PRIVATE int
-assemble_module(struct asm_module *mod, char *target, bool debug)
-{
-	struct lines cmd = {0};
-	da_append(&cmd, "as");
-	if (debug) da_append(&cmd, "--gdwarf-5");
-	da_append(&cmd, "--64");
-	da_append(&cmd, "-o");
-	da_append(&cmd, target);
-	char *cmd_str = concat_lines(&cmd, " ");
-	printf("[Info] %s\n", cmd_str);
-	FILE *assembler = popen(cmd_str, "w");
-	assert(assembler != NULL);
-	asm_dump_module(mod, assembler);
-	int c = pclose(assembler);
-	free(cmd_str);
-	da_free(&cmd);
-	return c;
-}
-
-KC_PRIVATE int
-assemble_file(char *filename, char *target, bool debug)
-{
-	struct lines cmd = {0};
-	da_append(&cmd, "as");
-	if (debug) da_append(&cmd, "--gdwarf-5");
-	da_append(&cmd, "--64");
-	da_append(&cmd, "-o");
-	da_append(&cmd, target);
-	da_append(&cmd, filename);
-	char *cmd_str = concat_lines(&cmd, " ");
-	int c = run_cmd(&cmd);
-	free(cmd_str);
-	da_free(&cmd);
-	return c;
-}
-
 KC_PRIVATE int
 link_object_files(struct lines *obj_files, char *target, bool is_dll)
 {
@@ -172,31 +124,12 @@ link_object_files(struct lines *obj_files, char *target, bool is_dll)
 	da_append(&cmd, "/usr/lib/crt1.o");
 	da_append(&cmd, "/usr/lib/crti.o");
 	da_append(&cmd, "-lc");
-	da_copy(&cmd, obj_files);
+	da_concat(&cmd, obj_files);
 	da_append(&cmd, "/usr/lib/crtn.o");
 	da_append(&cmd, "-o");
 	da_append(&cmd, target);
-	int c = run_cmd(&cmd);
+	int c = exec_cmd(&cmd);
 	da_free(&cmd);
-	return c;
-}
-
-KC_PRIVATE int
-run(char *source_file, const char *dll_file)
-{
-	void *handle = dlopen(dll_file, RTLD_NOW);
-	if (handle == NULL) {
-		fprintf(stderr, "[Error] %s\n", dlerror());
-		return -1;
-	}
-	int(*fn)(int, char**) = dlsym(handle, "main");
-	if (fn == NULL) {
-		fprintf(stderr, "[Error] %s\n", dlerror());
-		return -1;
-	}
-	char *args[] = {source_file, NULL};
-	int c = fn(1, args);
-	dlclose(handle);
 	return c;
 }
 
@@ -227,13 +160,85 @@ fh_default_handler(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args ar
 	return cmd_args_next(args);
 }
 
+void
+list_asm(Asm_module *m)
+{
+	for (size_t i = 0; i < m->code.len; ++i) {
+		if (m->code.elems[i].op == DIR_LABEL) {
+			printf("[%zu] %s %s \"%s\"\n", i,
+				   asm_op_code_to_str(m->code.elems[i].op),
+				   asm_arg_desc_to_str(m->code.elems[i].dsc),
+				   m->labels.elems[m->code.elems[i].disp].name);
+		} else if (m->code.elems[i].op == OP_CALL) {
+			printf("[%zu] %s %s \"%s\"\n", i,
+				   asm_op_code_to_str(m->code.elems[i].op),
+				   asm_arg_desc_to_str(m->code.elems[i].dsc),
+				   m->labels.elems[m->code.elems[i].disp].name);
+		} else {
+			printf("[%zu] %s %s\n", i,
+				   asm_op_code_to_str(m->code.elems[i].op),
+				   asm_arg_desc_to_str(m->code.elems[i].dsc));
+		}
+	}
+}
+
+static bool recover_from_handler = false;
+static jmp_buf recover_exec;
+
+void
+handler(int sig, siginfo_t *info, UNUSED void *ucontext)
+{
+	if (sig == SIGSEGV) {
+		fprintf(stderr, "[ERROR] %s (0x%lx)\n", strsignal(sig), (uintptr_t)info->si_addr);
+	}
+	if (recover_from_handler) longjmp(recover_exec, sig);
+	exit(sig);
+}
+
+void
+fprint_disassembly(Asm_module *m, FILE *f)
+{
+	char line[0x1000];
+	char temp_name[] = "XXXXXX";
+	int fd = mkstemp(temp_name);
+	write(fd, m->buff.data, m->buff.len);
+	close(fd);
+	FILE *pipe = popen(fmt_str("objdump -D -b binary -m i386:x64-32 %s", temp_name), "r");
+	fgets(line, sizeof(line), pipe);
+	fgets(line, sizeof(line), pipe);
+	fgets(line, sizeof(line), pipe);
+	for (; fgets(line, sizeof(line), pipe); fputs(line, f));
+	pclose(pipe);
+	remove(temp_name);
+}
+
+void
+run_code_from_entry_point(Asm_module *m, int(*entry_point)(int argc, char *argv[]), int argc, char *argv[])
+{
+	struct sigaction act = {0};
+	act.sa_sigaction = handler;
+	act.sa_flags = SA_SIGINFO;
+	sigaction(SIGSEGV, &act, NULL);
+	printf("[Info] Running program...\n");
+	recover_from_handler = true;
+	int ec;
+	if ((ec = setjmp(recover_exec)) == 0) {
+		ec = entry_point(argc, argv);
+		printf("[Info] Program exited with error code: %d\n", ec);
+	} else {
+		printf("[Info] Program encountered fatal error and crashed\n");
+		printf("[Info] Disassembly of compiled code:\n");
+		fprint_disassembly(m, stderr);
+	}
+	recover_from_handler = false;
+}
+
 int main(int argc, char **argv)
 {
 	static char cwd[PATH_MAX] = {0};
 	struct lines input_files = {0};
-	struct lines asm_files = {0};
 	struct lines obj_files = {0};
-	struct asm_modules asm_modules = {0};
+	CG_modules cg_modules = {0};
 	char *target_file = "a.out";
 	bool output_asm_p = false;
 	bool run_p = false;
@@ -261,32 +266,34 @@ int main(int argc, char **argv)
 	cmd_parse_flags(&flags, argc, argv);
 	if (input_files.len == 0) return 0;
 	for (size_t i = 0; i < input_files.len; ++i) {
-		compile_file(input_files.elems[i], da_allot(&asm_modules), run_p);
-		da_append(&asm_files, subst_file_suffix(input_files.elems[i], "s"));
+		da_append(&cg_modules, compile_file(input_files.elems[i], run_p));
+		da_append(&obj_files, subst_file_suffix(input_files.elems[i], "o"));
+	}
+	int(*entry_point)(int, char**) = NULL;
+	for (size_t i = 0; i < cg_modules.len; ++i) {
+		Asm_module *m = &cg_modules.elems[i].asm_mod;
+		list_asm(m);
+		asm_assemble(m);
+		asm_set_executable(m);
+		if (run_p && entry_point == NULL)
+			asm_lookup_label_address(m, "main", (void *)&entry_point);
 	}
 	if (output_asm_p) {
-		for (size_t i = 0; i < asm_files.len; ++i) {
-			FILE *file = fopen(asm_files.elems[i], "w");
-			assert(file != NULL);
-			asm_dump_module(&asm_modules.elems[i], file);
-			fclose(file);
+		for (size_t i = 0; i < cg_modules.len; ++i) {
+			Asm_module *m = &cg_modules.elems[i].asm_mod;
+			fprint_disassembly(m, stdout);
 		}
-	}
-	for (size_t i = 0; i < input_files.len; ++i) {
-		char *obj_file = subst_file_suffix(input_files.elems[i], "o");
-		if (output_asm_p) {
-			assemble_file(asm_files.elems[i], obj_file, true);
-		} else {
-			assemble_module(&asm_modules.elems[i], obj_file, true);
-		}
-		da_append(&obj_files, obj_file);
 	}
 	if (run_p) {
-		char *dlname = strjoin(cwd, "dlrun.so", "/");
-		link_object_files(&obj_files, dlname, true);
-		printf("[Info] Running program...\n");
-		printf("[Info] Program exited with error code: %d\n", run(input_files.elems[0], dlname));
+		if (entry_point == NULL)
+			FAILWITH("[ERROR] Unable to run compiled code. No `main` procedure found.");
+		char *argv[] = {input_files.elems[0], NULL};
+		run_code_from_entry_point(&cg_modules.elems[0].asm_mod, entry_point, 1, argv);
 	} else {
+		for (size_t i = 0; i < cg_modules.len; ++i) {
+			Asm_module *m = &cg_modules.elems[i].asm_mod;
+			asm_output_object_file(m, obj_files.elems[i]);
+		}
 		link_object_files(&obj_files, target_file, false);
 	}
 	return 0;

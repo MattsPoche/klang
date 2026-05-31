@@ -84,6 +84,7 @@ struct ir_blk {
 	struct ir_args args;
 	struct ir_code code;
 	struct ir_blk_terminal term;
+	int64_t asm_label;
 };
 
 enum ir_obj_tag {
@@ -95,8 +96,9 @@ enum ir_obj_tag {
 
 #define IR_OBJ_HDDR_MEMBERS						\
 	enum ir_obj_tag tag;						\
-	char *link;									\
 	struct ir_proc *init_proc;					\
+	char *link;									\
+	int64_t asm_label;							\
 	bool is_static
 
 struct ir_obj_hddr {
@@ -114,10 +116,6 @@ struct ir_proc {
 	uint16_t retc;
 };
 
-struct ir_extern {
-	IR_OBJ_HDDR_MEMBERS;
-};
-
 struct ir_data {
 	IR_OBJ_HDDR_MEMBERS;
 	size_t size;
@@ -125,24 +123,18 @@ struct ir_data {
 	KCType *type;
 };
 
-union ir_object {
+typedef union ir_object {
 	struct ir_obj_hddr hddr;
 	enum ir_obj_tag tag;
 	struct ir_proc proc;
-	struct ir_extern ext;
 	struct ir_data data;
-};
+} IR_object;
 
-struct ir_objects {
-	uint32_t len, cap;
-	union ir_object *elems;
-};
 
-struct ir_toplevel {
+typedef struct ir_toplevel {
 	uint32_t len, cap;
-	union ir_object *elems;
-	bool is_dll;
-};
+	IR_object *elems;
+} IR_toplevel;
 
 #if 0 /* TODO: Unused */
 enum sysv_x64_class {
