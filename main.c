@@ -201,7 +201,7 @@ fprint_disassembly(Asm_module *m, FILE *f)
 	char line[0x1000];
 	char temp_name[] = "XXXXXX";
 	int fd = mkstemp(temp_name);
-	write(fd, m->buff.data, m->buff.len);
+	write(fd, m->buf.data, m->buf.len);
 	close(fd);
 	FILE *pipe = popen(fmt_str("objdump -D -b binary -m i386:x64-32 %s", temp_name), "r");
 	fgets(line, sizeof(line), pipe);
