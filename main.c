@@ -163,21 +163,23 @@ fh_default_handler(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args ar
 void
 list_asm(Asm_module *m)
 {
-	for (size_t i = 0; i < m->code.len; ++i) {
-		if (m->code.elems[i].op == DIR_LABEL) {
+	Asm_inst *ins = asm_get_instruction_array(m);
+	size_t count = asm_get_instruction_count(m);
+	for (size_t i = 0; i < count; ++i) {
+		if (ins[i].op == DIR_LABEL) {
 			printf("[%zu] %s %s \"%s\"\n", i,
-				   asm_op_code_to_str(m->code.elems[i].op),
-				   asm_arg_desc_to_str(m->code.elems[i].dsc),
-				   m->labels.elems[m->code.elems[i].disp].name);
-		} else if (m->code.elems[i].op == OP_CALL) {
+				   asm_op_code_to_str(ins[i].op),
+				   asm_arg_desc_to_str(ins[i].dsc),
+				   m->labels.elems[ins[i].disp].name);
+		} else if (ins[i].op == OP_CALL) {
 			printf("[%zu] %s %s \"%s\"\n", i,
-				   asm_op_code_to_str(m->code.elems[i].op),
-				   asm_arg_desc_to_str(m->code.elems[i].dsc),
-				   m->labels.elems[m->code.elems[i].disp].name);
+				   asm_op_code_to_str(ins[i].op),
+				   asm_arg_desc_to_str(ins[i].dsc),
+				   m->labels.elems[ins[i].disp].name);
 		} else {
 			printf("[%zu] %s %s\n", i,
-				   asm_op_code_to_str(m->code.elems[i].op),
-				   asm_arg_desc_to_str(m->code.elems[i].dsc));
+				   asm_op_code_to_str(ins[i].op),
+				   asm_arg_desc_to_str(ins[i].dsc));
 		}
 	}
 }
@@ -201,7 +203,7 @@ fprint_disassembly(Asm_module *m, FILE *f)
 	char line[0x1000];
 	char temp_name[] = "XXXXXX";
 	int fd = mkstemp(temp_name);
-	write(fd, m->buf.data, m->buf.len);
+	write(fd, m->mc.data, m->mc.len);
 	close(fd);
 	FILE *pipe = popen(fmt_str("objdump -D -b binary -m i386:x64-32 %s", temp_name), "r");
 	fgets(line, sizeof(line), pipe);
@@ -250,12 +252,12 @@ int main(int argc, char **argv)
 	Cmd_flags flags = cmd_flags_make(&input_files, fh_default_handler, "Usage kc [options] file...");
 	cmd_flags_add(&flags,
 				  .name    = "-run",
-				  .desc    = "Compile program to dll then call its `main` procedure.",
+				  .desc    = "Run compiled program from memory. Do not produce an output file.",
 				  .data    = &run_p,
 				  .handler = fh_set_bool_flag);
 	cmd_flags_add(&flags,
 				  .name    = "-S",
-				  .desc    = "Produce assembly files as a by-product of compilation.",
+				  .desc    = "Print out disassembly.",
 				  .data    = &output_asm_p,
 				  .handler = fh_set_bool_flag);
 	cmd_flags_add(&flags,

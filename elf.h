@@ -1,5 +1,6 @@
 #pragma once
 
+#ifndef NO_STD_HEADERS
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#endif
 
 #ifndef UNUSED
 #define UNUSED __attribute__((unused))

@@ -1,5 +1,15 @@
 #pragma once
 
+#ifndef MALLOC
+#define MALLOC malloc
+#endif
+#ifndef REALLOC
+#define REALLOC realloc
+#endif
+#ifndef FREE
+#define FREE free
+#endif
+
 #define DA_INIT_CAP    16
 #define da_len(da)     ((da)->len)
 #define da_cap(da)     ((da)->cap)
@@ -8,8 +18,8 @@
 
 #define da_grow(da)														\
 	(da_cap(da) == 0													\
-	 ? (da_cap(da) = DA_INIT_CAP, da_elems(da) = malloc(DA_INIT_CAP * DA_ELEM_SZ(da))) \
-	 : (da_cap(da) *= 2, da_elems(da) = realloc(da_elems(da), da_cap(da) * DA_ELEM_SZ(da))))
+	 ? (da_cap(da) = DA_INIT_CAP, da_elems(da) = MALLOC(DA_INIT_CAP * DA_ELEM_SZ(da))) \
+	 : (da_cap(da) *= 2, da_elems(da) = REALLOC(da_elems(da), da_cap(da) * DA_ELEM_SZ(da))))
 
 #define da_append(da, ...)									\
 	((da_len(da) >= da_cap(da) ? da_grow(da) : (void)0),	\
@@ -70,6 +80,6 @@
 
 #define da_free(da)								\
 	do {										\
-		if (da_elems(da)) free(da_elems(da));	\
+		if (da_elems(da)) FREE(da_elems(da));	\
 		da_init(da);							\
 	} while (0)

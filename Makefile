@@ -7,7 +7,7 @@ OFILES=$(CFILES:%.c=%.o)
 OPT=0
 DEBUG=1
 
-.PHONEY: test unity
+.PHONEY: test clean
 
 $(TARGET): $(OFILES)
 	$(CC) $(OFILES) -o $@
@@ -15,8 +15,8 @@ $(TARGET): $(OFILES)
 %.o: %.c $(HFILES)
 	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -O$(OPT) -c -o $@ $<
 
-unity:
-	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -DUNITY_BUILD -O$(OPT) -o $(TARGET) main.c
-
 test: $(TARGET)
 	./run_tests.py
+
+clean:
+	rm -f $(shell find -type f -name '*.o') $(TARGET) a.out

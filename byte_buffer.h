@@ -2,11 +2,13 @@
 #ifndef BYTE_BUFFER_H_
 #define BYTE_BUFFER_H_
 
+#ifndef NO_STD_HEADERS
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#endif
 
 typedef unsigned char ubyte;
 typedef struct byte_buffer Byte_buffer;
@@ -27,10 +29,13 @@ Byte_buffer *byte_buffer_init(Byte_buffer *buf,
 							  byte_buffer_malloc_fn malloc_fn,
 							  byte_buffer_malloc_fn realloc_fn,
 							  byte_buffer_free_fn   free_fn);
+Byte_buffer *byte_buffer_init_default(Byte_buffer *buf);
 Byte_buffer byte_buffer_create(size_t init_capacity,
 							   byte_buffer_malloc_fn malloc_fn,
 							   byte_buffer_malloc_fn realloc_fn,
 							   byte_buffer_free_fn   free_fn);
+Byte_buffer byte_buffer_create_default(void);
+size_t byte_buffer_get_cursor_offset(Byte_buffer *buf);
 void byte_buffer_set_cursor_offset(Byte_buffer *buf, size_t offset);
 void byte_buffer_set_cursor_start(Byte_buffer *buf);
 void byte_buffer_set_cursor_end(Byte_buffer *buf);
@@ -43,11 +48,44 @@ void byte_buffer_insert_padding(Byte_buffer *buf, int c, size_t size);
 void byte_buffer_put_byte(Byte_buffer *buf, int b);
 void byte_buffer_put_str(Byte_buffer *buf, const char *str);
 void byte_buffer_free(Byte_buffer *buf);
+#ifndef NO_STD_HEADERS
 ssize_t byte_buffer_write_data_to_file(Byte_buffer *buf, int fileno);
+#endif
 
 #endif /* BYTE_BUFFER_H_ */
 
 #ifdef BYTE_BUFFER_IMPLEMENTATION
+
+#ifndef MALLOC
+#define MALLOC malloc
+#endif
+#ifndef REALLOC
+#define REALLOC realloc
+#endif
+#ifndef FREE
+#define FREE free
+#endif
+
+#ifndef INIT_BUFFER_SIZE
+#define INIT_BUFFER_SIZE PAGE_SIZE
+#endif
+
+#ifndef FAILWITH
+#define FAILWITH(_fmt_msg, ...)										\
+	do {															\
+		fflush(stdout);												\
+		fflush(stderr);												\
+		fprintf(stderr, "%s: %d: [FAILWITH] ", __FILE__, __LINE__); \
+		fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);		\
+		fputc('\n', stderr);										\
+		__asm__("int3");											\
+		exit(1);													\
+	} while (0)
+#endif
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096LU
+#endif
 
 static inline size_t
 maxzu(size_t x, size_t y)
@@ -66,11 +104,49 @@ resize_buffer(Byte_buffer *buf, size_t offset, size_t size)
 	if (offset + size > buf->len) buf->len = offset + size;
 }
 
-Byte_buffer *byte_buffer_init(Byte_buffer *buf,
-							  size_t init_capacity,
-							  byte_buffer_malloc_fn malloc_fn,
-							  byte_buffer_malloc_fn realloc_fn,
-							  byte_buffer_free_fn   free_fn)
+static void
+malloc_mem_buffer(Byte_buffer *buff, size_t size)
+{
+	if ((buff->data = MALLOC(size)) == NULL) {
+#ifndef NO_STD_HEADERS
+		FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+		FAILWITH(ERROR_MSG("malloc failed"));
+#endif
+	}
+	buff->cap = size;
+	buff->len = 0;
+}
+
+static void
+realloc_mem_buffer(Byte_buffer *buff, size_t size)
+{
+	if ((buff->data = REALLOC(buff->data, size)) == NULL) {
+#ifndef NO_STD_HEADERS
+		FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+		FAILWITH(ERROR_MSG("realloc failed"));
+#endif
+	}
+	buff->cap = size;
+	buff->len = 0;
+}
+
+static void
+free_mem_buffer(Byte_buffer *buff)
+{
+	FREE(buff->data);
+	buff->cap = 0;
+	buff->len = 0;
+	buff->data = NULL;
+}
+
+Byte_buffer *
+byte_buffer_init(Byte_buffer *buf,
+				 size_t init_capacity,
+				 byte_buffer_malloc_fn malloc_fn,
+				 byte_buffer_malloc_fn realloc_fn,
+				 byte_buffer_free_fn   free_fn)
 {
 	buf->malloc  = malloc_fn;
 	buf->realloc = realloc_fn;
@@ -83,6 +159,12 @@ Byte_buffer *byte_buffer_init(Byte_buffer *buf,
 	return buf;
 }
 
+Byte_buffer *
+byte_buffer_init_default(Byte_buffer *buf)
+{
+	return byte_buffer_init(buf, INIT_BUFFER_SIZE, malloc_mem_buffer, realloc_mem_buffer, free_mem_buffer);
+}
+
 Byte_buffer
 byte_buffer_create(size_t init_capacity,
 				   byte_buffer_malloc_fn malloc_fn,
@@ -92,6 +174,20 @@ byte_buffer_create(size_t init_capacity,
 	Byte_buffer buf;
 	byte_buffer_init(&buf, init_capacity, malloc_fn, realloc_fn, free_fn);
 	return buf;
+}
+
+Byte_buffer
+byte_buffer_create_default(void)
+{
+	Byte_buffer buf;
+	byte_buffer_init_default(&buf);
+	return buf;
+}
+
+size_t
+byte_buffer_get_cursor_offset(Byte_buffer *buf)
+{
+	return buf->cur + buf->ioff;
 }
 
 void
@@ -199,10 +295,14 @@ byte_buffer_free(Byte_buffer *buf)
 }
 
 
+#ifndef NO_STD_HEADERS
+
 ssize_t
 byte_buffer_write_data_to_file(Byte_buffer *buf, int fileno)
 {
 	return write(fileno, buf->data, buf->len);
 }
+
+#endif
 
 #endif /* BYTE_BUFFER_IMPLEMENTATION */

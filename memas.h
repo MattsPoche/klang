@@ -2,6 +2,7 @@
 #ifndef MEMAS_H_
 #define MEMAS_H_
 
+#ifndef NO_STD_HEADERS
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -13,32 +14,17 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <syscall.h>
-#include "da.h"
+#endif
 
 #ifdef  MEMAS_IMPLEMENTATION
 #define BYTE_BUFFER_IMPLEMENTATION
 #endif
+
+#include "da.h"
 #include "byte_buffer.h"
 
 #ifndef UNUSED
 #define UNUSED __attribute__((unused))
-#endif
-
-#ifndef FAILWITH
-#define FAILWITH(_fmt_msg, ...)										\
-	do {															\
-		fflush(stdout);												\
-		fflush(stderr);												\
-		fprintf(stderr, "%s: %d: [FAILWITH] ", __FILE__, __LINE__); \
-		fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);		\
-		fputc('\n', stderr);										\
-		__asm__("int3");											\
-		exit(1);													\
-	} while (0)
-#endif
-
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096LU
 #endif
 
 typedef signed   char sbyte;
@@ -308,13 +294,8 @@ typedef struct asm_module {
 		uint32_t len, cap;
 		Asm_label *elems;
 	} labels;
-	struct {
-		uint32_t len, cap;
-		Asm_inst *elems;
-	} code;
-	Byte_buffer buf;
-	uint32_t ioff;
-	uint32_t indx;
+	Byte_buffer as;
+	Byte_buffer mc;
 	bool is_jit;
 } Asm_module;
 
@@ -326,12 +307,7 @@ typedef struct asm_arg {
 	} addr;
 } Asm_arg;
 
-/* Asembler api */
-const char *asm_op_code_to_str(enum asm_op_code e);
-const char *asm_op_size_to_str(enum asm_op_size e);
-const char *asm_scale_to_str(enum asm_scale e);
-const char *asm_arg_desc_to_str(enum asm_arg_desc e);
-const char *asm_arg_tag_to_str(enum asm_arg_tag e);
+/* Assembler api */
 void asm_inst0(Asm_module *m, enum asm_op_code op, enum asm_op_size size);
 void asm_inst1(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src);
 void asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src, Asm_arg dst);
@@ -352,10 +328,17 @@ void *asm_get_label_address(Asm_module *m, asm_label_id lbl);
 bool asm_lookup_label_id(Asm_module *m, const char *name, asm_label_id *id_out);
 bool asm_lookup_label_address(Asm_module *m, const char *name, void **addr_out);
 void asm_dump_bytes(Asm_module *m);
+Asm_inst *asm_get_instruction_array(Asm_module *m);
+size_t asm_get_instruction_count(Asm_module *m);
 uint32_t asm_get_insertion_point(Asm_module *m);
 void asm_set_insertion_point(Asm_module *m, uint32_t index);
 void asm_set_insertion_at_start(Asm_module *m);
 void asm_set_insertion_at_end(Asm_module *m);
+const char *asm_op_code_to_str(enum asm_op_code e);
+const char *asm_op_size_to_str(enum asm_op_size e);
+const char *asm_scale_to_str(enum asm_scale e);
+const char *asm_arg_desc_to_str(enum asm_arg_desc e);
+const char *asm_arg_tag_to_str(enum asm_arg_tag e);
 
 struct _asm_init_args { bool is_jit; };
 Asm_module *asm_init_module_impl(Asm_module *m, struct _asm_init_args opt);
@@ -374,7 +357,13 @@ Asm_module *asm_init_module_impl(Asm_module *m, struct _asm_init_args opt);
 #define asm_add(module, size, src, dst) asm_inst2(module, OP_ADD, size, src, dst)
 #define asm_sub(module, size, src, dst) asm_inst2(module, OP_SUB, size, src, dst)
 #define asm_cmp(module, size, src, dst) asm_inst2(module, OP_CMP, size, src, dst)
+#define asm_and(module, size, src, dst) asm_inst2(module, OP_AND, size, src, dst)
+#define asm_or(module, size, src, dst)  asm_inst2(module, OP_OR, size, src, dst)
 #define asm_xor(module, size, src, dst) asm_inst2(module, OP_XOR, size, src, dst)
+#define asm_sal(module, size, src, dst) asm_inst2(module, OP_SAL, size, src, dst)
+#define asm_sar(module, size, src, dst) asm_inst2(module, OP_SAR, size, src, dst)
+#define asm_shl(module, size, src, dst) asm_inst2(module, OP_SHL, size, src, dst)
+#define asm_shr(module, size, src, dst) asm_inst2(module, OP_SHR, size, src, dst)
 #define asm_lea(module, size, src, dst) asm_inst2(module, OP_LEA, size, src, dst)
 #define asm_ret(module)                 asm_inst0(module, OP_RET, 0)
 #define asm_syscall(module)             asm_inst0(module, OP_SYSCALL, 0)
@@ -388,7 +377,7 @@ Asm_module *asm_init_module_impl(Asm_module *m, struct _asm_init_args opt);
 #define asm_div(module, size, dst)		asm_inst1(module, OP_DIV, size, dst)
 #define asm_idiv(module, size, dst)		asm_inst1(module, OP_IDIV, size, dst)
 #define asm_neg(module, size, dst)		asm_inst1(module, OP_NEG, size, dst)
-#define asm_NOT(module, size, dst)		asm_inst1(module, OP_NOT, size, dst)
+#define asm_not(module, size, dst)		asm_inst1(module, OP_NOT, size, dst)
 #define asm_jo(module, dst)             asm_inst1(module, OP_JO,  0, dst)
 #define asm_jno(module, dst) 			asm_inst1(module, OP_JNO, 0, dst)
 #define asm_jb(module, dst) 			asm_inst1(module, OP_JB,  0, dst)
@@ -488,10 +477,43 @@ elf64_word asm_elf_add_symbol(Asm_elf_builder *eb,
 void asm_output_object_file(Asm_module *m, const char *filename);
 void asm_output_static_executable(Asm_module *m, asm_label_id entry_lbl, const char *filename);
 
-
 #endif /* MEMAS_H_ */
 
 #ifdef MEMAS_IMPLEMENTATION
+
+#ifndef MALLOC
+#define MALLOC malloc
+#endif
+#ifndef REALLOC
+#define REALLOC realloc
+#endif
+#ifndef FREE
+#define FREE free
+#endif
+#ifndef ASSERT
+#define ASSERT assert
+#endif
+
+#ifndef INIT_BUFFER_SIZE
+#define INIT_BUFFER_SIZE PAGE_SIZE
+#endif
+
+#ifndef FAILWITH
+#define FAILWITH(_fmt_msg, ...)										\
+	do {															\
+		fflush(stdout);												\
+		fflush(stderr);												\
+		fprintf(stderr, "%s: %d: [FAILWITH] ", __FILE__, __LINE__); \
+		fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);		\
+		fputc('\n', stderr);										\
+		__asm__("int3");											\
+		exit(1);													\
+	} while (0)
+#endif
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096LU
+#endif
 
 #define ARG_MATCH1(dtag)       (dst.tag == (dtag))
 #define ARG_MATCH2(stag, dtag) ((((stag) & 0x0f) << 4) | ((dtag) & 0x0f))
@@ -528,8 +550,8 @@ void asm_output_static_executable(Asm_module *m, asm_label_id entry_lbl, const c
 
 #define ASM_APPEND(M, ...)											\
 	do {															\
-		da_insert(&(M)->code, (M)->ioff + (M)->indx, __VA_ARGS__);	\
-		(M)->indx++;												\
+		auto _VAR = __VA_ARGS__;									\
+		byte_buffer_insert_bytes(&(M)->as, &_VAR, sizeof(_VAR));	\
 	} while (0)
 
 #if ASM_USE_STATIC_BUFFER
@@ -576,6 +598,7 @@ asm_arg_tag_to_str(enum asm_arg_tag e)
 #undef SWITCH_TO_STR
 #undef X
 
+#ifndef popcnt
 static inline int
 popcnt(uint64_t n)
 {
@@ -583,39 +606,52 @@ popcnt(uint64_t n)
 	for (c = 0; n; ++c) n &= n - 1;
 	return c;
 }
+#endif
 
 static inline uint64_t
 align_next(uint64_t n, uint64_t alignment)
 {
-	assert(popcnt(alignment) == 1); /* alignment must be a power of 2 */
+	ASSERT(popcnt(alignment) == 1); /* alignment must be a power of 2 */
 	uint64_t mask = alignment - 1;
 	return (n + mask) & ~mask;
+}
+
+Asm_inst *
+asm_get_instruction_array(Asm_module *m)
+{
+	return (Asm_inst *)m->as.data;
+}
+
+size_t
+asm_get_instruction_count(Asm_module *m)
+{
+	return m->as.len / sizeof(Asm_inst);
 }
 
 uint32_t
 asm_get_insertion_point(Asm_module *m)
 {
-	return m->ioff + m->indx;
+	return byte_buffer_get_cursor_offset(&m->as) / sizeof(Asm_inst);
 }
 
 void
 asm_set_insertion_point(Asm_module *m, uint32_t index)
 {
-	assert(index <= m->code.len);
-	m->ioff = index;
-	m->indx = 0;
+	size_t offset = index * sizeof(Asm_inst);
+	ASSERT(offset <= m->as.len);
+	byte_buffer_set_cursor_offset(&m->as, offset);
 }
 
 void
 asm_set_insertion_at_start(Asm_module *m)
 {
-	asm_set_insertion_point(m, 0);
+	byte_buffer_set_cursor_start(&m->as);
 }
 
 void
 asm_set_insertion_at_end(Asm_module *m)
 {
-	asm_set_insertion_point(m, m->code.len);
+	byte_buffer_set_cursor_end(&m->as);
 }
 
 
@@ -694,7 +730,7 @@ asm_inst1(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg dst
 
 			});
 	} else if (ARG_MATCH1(ARG_REG)) {
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		ASM_APPEND(m, (Asm_inst){
 				.op	   = op,
 				.dsc   = RR,
@@ -702,10 +738,14 @@ asm_inst1(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg dst
 				.r1    = dst.i,
 			});
 	} else {
+#ifndef NO_STD_HEADERS
 		FAILWITH("TODO: asm_inst1 %s, %s, %s",
 				 asm_op_code_to_str(op),
 				 asm_op_size_to_str(size),
 				 asm_arg_tag_to_str(dst.tag));
+#else
+		FAILWITH(DEBUG_MSG("TODO: asm_inst1"));
+#endif
 	}
 }
 
@@ -714,8 +754,8 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 {
 	switch (ARG_MATCH2(src.tag, dst.tag)) {
 	case ARG_MATCH2(ARG_REG, ARG_REG):
-		assert(src.i != RIP);
-		assert(dst.i != RIP);
+		ASSERT(src.i != RIP);
+		ASSERT(dst.i != RIP);
 		ASM_APPEND(m, (Asm_inst){
 				.op  = op,
 				.dsc = RR,
@@ -725,7 +765,7 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 			});
 		break;
 	case ARG_MATCH2(ARG_LABEL, ARG_REG):
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		ASM_APPEND(m, (Asm_inst){
 				.op  = op,
 				.dsc = IR,
@@ -738,7 +778,7 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 			});
 		break;
 	case ARG_MATCH2(ARG_IMM, ARG_REG):
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		ASM_APPEND(m, (Asm_inst){
 				.op  = op,
 				.dsc = IR,
@@ -748,7 +788,7 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 			});
 		break;
 	case ARG_MATCH2(ARG_MEM_LR, ARG_REG):
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		if (src.addr.base == RIP) {
 			ASM_APPEND(m, (Asm_inst){
 					.op	   = op,
@@ -776,7 +816,7 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 		}
 		break;
 	case ARG_MATCH2(ARG_MEM_DR, ARG_REG):
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		if (src.addr.base == RIP) {
 			ASM_APPEND(m, (Asm_inst){
 					.op	   = op,
@@ -800,8 +840,8 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 		}
 		break;
 	case ARG_MATCH2(ARG_MEM_DRXS, ARG_REG):
-		assert(dst.i != RIP);
-		assert(src.addr.base != RIP);
+		ASSERT(dst.i != RIP);
+		ASSERT(src.addr.base != RIP);
 		ASM_APPEND(m, (Asm_inst){
 				.op	  = op,
 				.dsc  = MR,
@@ -814,7 +854,7 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 			});
 		break;
 	case ARG_MATCH2(ARG_REG, ARG_MEM_DR):
-		assert(dst.i != RIP);
+		ASSERT(dst.i != RIP);
 		if (src.addr.base == RIP) {
 			ASM_APPEND(m, (Asm_inst){
 					.op	   = op,
@@ -861,9 +901,13 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 		}
 		break;
 	default:
+#ifndef NO_STD_HEADERS
 		FAILWITH("TODO: ARG_MATCH2(%s, %s) asm_inst2",
 				 asm_arg_tag_to_str(src.tag),
 				 asm_arg_tag_to_str(dst.tag));
+#else
+		FAILWITH(DEBUG_MSG("TODO: asm_inst2"));
+#endif
 	}
 }
 
@@ -944,38 +988,16 @@ asm_dir_int(Asm_module *m, enum asm_op_size sz, Asm_arg x)
 				.imm   = x.i,
 			});
 		break;
-	default: FAILWITH("[ERROR] Invalid arg %s", asm_arg_tag_to_str(x.tag));
+	default:
+#ifndef NO_STD_HEADERS
+		FAILWITH("[ERROR] Invalid arg %s", asm_arg_tag_to_str(x.tag));
+#else
+		FAILWITH(DEBUG_MSG("Invalid arg"));
+#endif
 	}
 }
 
-#if ASM_USE_STATIC_BUFFER
-
-static void
-asm_alloc_static_code_buffer(Byte_buffer *buff, UNUSED size_t _size)
-{
-	uint64_t buffer_start  = align_next((uint64_t)jit_buffer, PAGE_SIZE);
-	uint64_t buffer_offset = buffer_start - (uint64_t)jit_buffer;
-	uint64_t buffer_length = sizeof(jit_buffer) - buffer_offset;
-	buff->cap  = buffer_length;
-	buff->len  = 0;
-	buff->data = (void *)buffer_start;
-}
-
-static void
-asm_realloc_static_code_buffer(UNUSED Byte_buffer *buff, UNUSED size_t size)
-{
-	FAILWITH("[ERROR] (asm_realloc_static_code_buffer) Unable to reallocate statically allocated buffer.");
-}
-
-static void
-asm_free_static_code_buffer(Byte_buffer *buff)
-{
-	buff->cap = 0;
-	buff->len = 0;
-	buff->data = NULL;
-}
-
-#endif
+#ifndef IMPLEMENTATION_ALLOCATORS
 
 static void
 asm_alloc_code_buffer(Byte_buffer *buff, size_t size)
@@ -984,8 +1006,13 @@ asm_alloc_code_buffer(Byte_buffer *buff, size_t size)
 					 PROT_READ|PROT_WRITE,
 					 MAP_PRIVATE|MAP_ANONYMOUS,
 					 -1, 0);
-	if (ptr == MAP_FAILED)
+	if (ptr == MAP_FAILED) {
+#ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+		FAILWITH(DEBUG_MSG("mmap failed"));
+#endif
+	}
 	buff->cap = size;
 	buff->len = 0;
 	buff->data = ptr;
@@ -995,8 +1022,13 @@ static void
 asm_realloc_code_buffer(Byte_buffer *buff, size_t size)
 {
 	void *ptr = mremap(buff->data, buff->cap, size, MREMAP_MAYMOVE);
-	if (ptr == MAP_FAILED)
+	if (ptr == MAP_FAILED) {
+#ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+		FAILWITH(DEBUG_MSG("mmap failed"));
+#endif
+	}
 	buff->cap = size;
 	buff->data = ptr;
 }
@@ -1004,61 +1036,41 @@ asm_realloc_code_buffer(Byte_buffer *buff, size_t size)
 static void
 asm_free_code_buffer(Byte_buffer *buff)
 {
-	if (munmap(buff->data, buff->cap) == -1)
+	if (munmap(buff->data, buff->cap) == -1) {
+#ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
-	buff->cap = 0;
+#else
+		FAILWITH(DEBUG_MSG("munmap failed"));
+#endif
+	}
+		buff->cap = 0;
 	buff->len = 0;
 	buff->data = NULL;
-}
-
-static void
-asm_alloc_mem_buffer(Byte_buffer *buff, size_t size)
-{
-	if ((buff->data = malloc(size)) == NULL)
-		FAILWITH("[ERROR] %s\n", strerror(errno));
-	buff->cap = size;
-	buff->len = 0;
-}
-
-static void
-asm_realloc_mem_buffer(Byte_buffer *buff, size_t size)
-{
-	if ((buff->data = realloc(buff->data, size)) == NULL)
-		FAILWITH("[ERROR] %s\n", strerror(errno));
-	buff->cap = size;
-	buff->len = 0;
-}
-
-static void
-asm_free_mem_buffer(Byte_buffer *buff)
-{
-	free(buff->data);
-	buff->cap = 0;
-	buff->len = 0;
-	buff->data = NULL;
-}
-
-static inline Byte_buffer
-asm_make_mem_buffer(void)
-{
-	return byte_buffer_create(PAGE_SIZE,
-							  asm_alloc_mem_buffer,
-							  asm_realloc_mem_buffer,
-							  asm_free_mem_buffer);
 }
 
 void
 asm_set_executable(Asm_module *m)
 {
-	if (mprotect(m->buf.data, m->buf.cap, PROT_READ|PROT_EXEC) == -1)
+	if (mprotect(m->mc.data, m->mc.cap, PROT_READ|PROT_EXEC) == -1) {
+#ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+		FAILWITH(DEBUG_MSG("mprotect failed"));
+#endif
+	}
 }
+#endif
 
 Asm_module *
 asm_init_module_impl(Asm_module *m, struct _asm_init_args opt)
 {
 	memset(m, 0, sizeof(*m));
-	byte_buffer_init(&m->buf, PAGE_SIZE, asm_alloc_code_buffer, asm_realloc_code_buffer, asm_free_code_buffer);
+	byte_buffer_init(&m->mc,
+					 INIT_BUFFER_SIZE,
+					 asm_alloc_code_buffer,
+					 asm_realloc_code_buffer,
+					 asm_free_code_buffer);
+	byte_buffer_init_default(&m->as);
 	m->is_jit = opt.is_jit;
 	return m;
 }
@@ -1068,7 +1080,7 @@ asm_init_module_impl(Asm_module *m, struct _asm_init_args opt)
 		int _R = ((r) >> 3) & 1;										\
 		int _X = ((x) >> 3) & 1;										\
 		int _B = ((b) >> 3) & 1;										\
-		if (opt.force_rex|(_W)|(_R)|(_X)|(_B)) byte_buffer_put_byte(&m->buf, REX(_W, _R, _X, _B)); \
+		if (opt.force_rex|(_W)|(_R)|(_X)|(_B)) byte_buffer_put_byte(&m->mc, REX(_W, _R, _X, _B)); \
 	} while (0)
 
 #define IS_RIP_REL(inst)  ((inst).t_x && (inst).rx == 1)
@@ -1116,7 +1128,7 @@ get_disp(Asm_module *m, Asm_inst inst, size_t *sz_out)
 			*sz_out = sizeof(int8_t);
 			return disp;
 		}
-		assert(IS_INT32_SIZED(disp));
+		ASSERT(IS_INT32_SIZED(disp));
 		if (sz_out) *sz_out = sizeof(int32_t);
 		return disp;
 	}
@@ -1132,18 +1144,23 @@ get_disp(Asm_module *m, Asm_inst inst, size_t *sz_out)
 				if (sz_out) *sz_out = sizeof(int8_t);
 				return disp;
 			}
-			assert(IS_INT32_SIZED(disp));
+			ASSERT(IS_INT32_SIZED(disp));
 			if (sz_out) *sz_out = sizeof(int32_t);
 			return disp;
 		}
 		da_append(&m->labels.elems[disp].patches, (struct asm_lbl_back_patch){
 				.offset = 0,
-				.loc    = m->buf.len,
+				.loc    = byte_buffer_get_cursor_offset(&m->mc),
 				.size   = sizeof(int32_t),
 			});
 		if (sz_out) *sz_out = sizeof(int32_t);
 		return disp;
-	default: FAILWITH("Unreachable label: %s", lbl->name);
+	default:
+#ifndef NO_STD_HEADERS
+		FAILWITH("Unreachable label: %s", lbl->name);
+#else
+		FAILWITH(DEBUG_MSG("Unreachable label"));
+#endif
 	}
 }
 
@@ -1155,15 +1172,15 @@ calc_rip_rel_disp_impl(Asm_module *m, Asm_inst inst, struct _calc_rip_rel_disp_o
 {
 	int64_t disp = inst.disp;
 	if (!inst.t_lbl) {
-		int64_t d8  = disp - (m->buf.len + opt.off8  + sizeof(int8_t));
-		int64_t d32 = disp - (m->buf.len + opt.off32 + sizeof(int32_t));
+		int64_t d8  = disp - (byte_buffer_get_cursor_offset(&m->mc) + opt.off8  + sizeof(int8_t));
+		int64_t d32 = disp - (byte_buffer_get_cursor_offset(&m->mc) + opt.off32 + sizeof(int32_t));
 		if (opt.disp8_out) *opt.disp8_out = d8;
 		if (opt.disp32_out) *opt.disp32_out = d32;
 		if (IS_INT8_SIZED(d8)) {
 			if (opt.sz_out) *opt.sz_out = sizeof(int8_t);
 			return d8;
 		} else {
-			assert(IS_INT32_SIZED(d32));
+			ASSERT(IS_INT32_SIZED(d32));
 			if (opt.sz_out) *opt.sz_out = sizeof(int32_t);
 			return d32;
 		}
@@ -1176,29 +1193,34 @@ calc_rip_rel_disp_impl(Asm_module *m, Asm_inst inst, struct _calc_rip_rel_disp_o
 	case ASM_LBL_T_FUNC:
 		if (lbl->is_resolved) {
 			disp = lbl->offset + inst.imm;
-			int64_t d8  = disp - (m->buf.len + opt.off8  + sizeof(int8_t));
-			int64_t d32 = disp - (m->buf.len + opt.off32 + sizeof(int32_t));
+			int64_t d8  = disp - (byte_buffer_get_cursor_offset(&m->mc) + opt.off8  + sizeof(int8_t));
+			int64_t d32 = disp - (byte_buffer_get_cursor_offset(&m->mc) + opt.off32 + sizeof(int32_t));
 			if (opt.disp8_out) *opt.disp8_out = d8;
 			if (opt.disp32_out) *opt.disp32_out = d32;
 			if (IS_INT8_SIZED(d8)) {
 				if (opt.sz_out) *opt.sz_out = sizeof(int8_t);
 				return d8;
 			} else {
-				assert(IS_INT32_SIZED(d32));
+				ASSERT(IS_INT32_SIZED(d32));
 				if (opt.sz_out) *opt.sz_out = sizeof(int32_t);
 				return d32;
 			}
 		}
 		da_append(&m->labels.elems[disp].patches, (struct asm_lbl_back_patch){
-				.offset = inst.imm - (m->buf.len + opt.off32 + sizeof(int32_t)),
-				.loc    = m->buf.len + opt.off32,
+				.offset = inst.imm - (byte_buffer_get_cursor_offset(&m->mc) + opt.off32 + sizeof(int32_t)),
+				.loc    = byte_buffer_get_cursor_offset(&m->mc) + opt.off32,
 				.size   = sizeof(int32_t),
 			});
 		if (opt.sz_out)     *opt.sz_out = sizeof(int32_t);
 		if (opt.disp8_out)  *opt.disp8_out = 0;
 		if (opt.disp32_out) *opt.disp32_out = 0;
 		return 0;
-	default: FAILWITH("Unreachable label: %s", lbl->name);
+	default:
+#ifndef NO_STD_HEADERS
+		FAILWITH("Unreachable label: %s", lbl->name);
+#else
+		FAILWITH(DEBUG_MSG("Unreachable label"));
+#endif
 	}
 }
 
@@ -1206,17 +1228,17 @@ static void
 emit_indirect_addressing(Asm_module *m, struct opcode_bytes opcode, Asm_inst inst, struct _dispatch_options opt)
 {
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	if (IS_RIP_REL(inst)) {
 		/* RIP relative */
 		EMIT_OPT_REX(opt.rex_w, inst.r0, 0, 0);
-		byte_buffer_insert_bytes(&m->buf, opcode.code, opcode.len);
-		byte_buffer_put_byte(&m->buf, MODRM(0, inst.r0, RBP));
+		byte_buffer_insert_bytes(&m->mc, opcode.code, opcode.len);
+		byte_buffer_put_byte(&m->mc, MODRM(0, inst.r0, RBP));
 		int64_t disp;
 		calc_rip_rel_disp(m, inst, .disp32_out = &disp);
-		byte_buffer_insert_bytes(&m->buf, &disp, sizeof(int32_t));
+		byte_buffer_insert_bytes(&m->mc, &disp, sizeof(int32_t));
 		return;
 	}
 	int mod;
@@ -1239,28 +1261,28 @@ emit_indirect_addressing(Asm_module *m, struct opcode_bytes opcode, Asm_inst ins
 	if (inst.t_x) {
 		/* no index register used */
 		EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
-		byte_buffer_insert_bytes(&m->buf, opcode.code, opcode.len);
-		byte_buffer_put_byte(&m->buf, MODRM(mod, inst.r0, inst.r1));
+		byte_buffer_insert_bytes(&m->mc, opcode.code, opcode.len);
+		byte_buffer_put_byte(&m->mc, MODRM(mod, inst.r0, inst.r1));
 		/* special case where base is RSP or R12; SIB byte must be used */
 		if (inst.r1 == RSP || inst.r1 == R12)
-			byte_buffer_put_byte(&m->buf, SIB(0, RSP, inst.r1));
-		byte_buffer_insert_bytes(&m->buf, &disp, sz);
+			byte_buffer_put_byte(&m->mc, SIB(0, RSP, inst.r1));
+		byte_buffer_insert_bytes(&m->mc, &disp, sz);
 		return;
 	}
 	/* index register used */
-	assert(inst.rx != RSP);
-	assert(inst.r1 != RBP);
+	ASSERT(inst.rx != RSP);
+	ASSERT(inst.r1 != RBP);
 	EMIT_OPT_REX(opt.rex_w, inst.r0, inst.rx, inst.r1);
-	byte_buffer_insert_bytes(&m->buf, opcode.code, opcode.len);
-	byte_buffer_put_byte(&m->buf, MODRM(mod, inst.r0, RSP)); /* use SIB byte */
-	byte_buffer_put_byte(&m->buf, SIB(inst.sc, inst.rx, inst.r1));
-	byte_buffer_insert_bytes(&m->buf, &disp, sz);
+	byte_buffer_insert_bytes(&m->mc, opcode.code, opcode.len);
+	byte_buffer_put_byte(&m->mc, MODRM(mod, inst.r0, RSP)); /* use SIB byte */
+	byte_buffer_put_byte(&m->mc, SIB(inst.sc, inst.rx, inst.r1));
+	byte_buffer_insert_bytes(&m->mc, &disp, sz);
 }
 
 static void
 emit_mov_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* 8B /r | MOV r32, r/m32 | Move r/m32 to r32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x8b), inst, opt);
 }
@@ -1278,7 +1300,7 @@ emit_mov_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_mov_zb_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* 8A /r | MOV r81, r/m81 | Move r8 to r/m8.
 	 * NOTE:
 	 * 1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
@@ -1294,7 +1316,7 @@ emit_mov_zb_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_mov_zb_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* 88 /r | MOV r/m81, r81 | Move r8 to r/m8.
 	 * NOTE:
 	 * 1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
@@ -1310,7 +1332,7 @@ emit_mov_zb_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_mov_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* 89 /r | MOV r/m32, r32 | Move r32 to r/m32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x89), inst, opt);
 }
@@ -1318,31 +1340,31 @@ emit_mov_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_mov_zw_im(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* C7 /0 id | MOV r/m32, imm32 | Move imm32 to r/m32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0xc7), inst, opt);
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int16_t));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int16_t));
 }
 
 static void
 emit_mov_zdq_im(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* C7 /0 id | MOV r/m32, imm32 | Move imm32 to r/m32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0xc7), inst, opt);
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int32_t));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int32_t));
 }
 
 static void
 emit_mov_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	size_t sz = sizeof(int32_t);
 	int64_t imm = inst.t_lbl ? asm_get_label_offset(m, inst.disp) + inst.imm : inst.imm;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		assert(imm <= INT16_MAX && imm >= INT16_MIN);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		ASSERT(imm <= INT16_MAX && imm >= INT16_MIN);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 		sz = sizeof(int16_t);
 	}
 	if (imm <= INT32_MAX && imm >= INT32_MIN) {
@@ -1350,58 +1372,58 @@ emit_mov_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 		/* C7 /0 id | MOV r/m32, imm32 | Move imm32 to r/m32 */
 		EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
 		/* op code */
-		byte_buffer_put_byte(&m->buf, opcode);
+		byte_buffer_put_byte(&m->mc, opcode);
 		/* mod r/m */
-		byte_buffer_put_byte(&m->buf, MODRM(3, 0, inst.r1));
+		byte_buffer_put_byte(&m->mc, MODRM(3, 0, inst.r1));
 		/* imm32 */
-		byte_buffer_insert_bytes(&m->buf, &imm, sz);
+		byte_buffer_insert_bytes(&m->mc, &imm, sz);
 		return;
 	}
 	/* REX.W + B8+ rd io | MOV r64, imm64 | Move imm64 to r64 */
 	int opcode = 0xb8;
-	assert(opt.rex_w);
-	EMIT_OPT_REX(opt.rex_w, inst.r1, 0, 0);
-	byte_buffer_put_byte(&m->buf, opcode + (inst.r1 & 7));		/* op code */
-	byte_buffer_insert_bytes(&m->buf, &imm, sizeof(int64_t));	/* imm64 */
+	ASSERT(opt.rex_w);
+	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
+	byte_buffer_put_byte(&m->mc, opcode + (inst.r1 & 7));		/* op code */
+	byte_buffer_insert_bytes(&m->mc, &imm, sizeof(int64_t));	/* imm64 */
 }
 
 static void
 emit_mov_zb_ir(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	int64_t imm = inst.t_lbl ? asm_get_label_offset(m, inst.disp) + inst.imm : inst.imm;
-	assert(imm <= INT8_MAX && imm >= INT8_MIN);
+	ASSERT(imm <= INT8_MAX && imm >= INT8_MIN);
 	/* B0+ rb ib | MOV r8, imm8 | Move imm8 to r8. */
 	switch ((int)inst.r1) {
 	case RSP: case RBP: case RDI: case RSI:
 		opt.force_rex = true;
 	default:
 	}
-	EMIT_OPT_REX(0, inst.r1, 0, 0);
-	byte_buffer_put_byte(&m->buf, 0xb0 + (inst.r1 & 7));		/* op code */
-	byte_buffer_insert_bytes(&m->buf, &imm, sizeof(int8_t));
+	EMIT_OPT_REX(0, 0, 0, inst.r1);
+	byte_buffer_put_byte(&m->mc, 0xb0 + (inst.r1 & 7));		/* op code */
+	byte_buffer_insert_bytes(&m->mc, &imm, sizeof(int8_t));
 }
 
 
 static void
 emit_mov_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	int opcode = 0x89;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	/* 89 /r | MOV r/m32, r32 | Move r32 to r/m32. */
 	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, opcode);                        	/* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1));      /* mod r/m */
+	byte_buffer_put_byte(&m->mc, opcode);                        	/* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));      /* mod r/m */
 }
 
 static void
 emit_mov_zb_rr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOV);
+	ASSERT(inst.op == OP_MOV);
 	/* 88 /r | MOV r/m81, r81 | Move r8 to r/m8. */
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
@@ -1417,17 +1439,17 @@ emit_mov_zb_rr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt
 	default:
 	}
 	EMIT_OPT_REX(0, inst.r0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0x88);                        	/* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1));      /* mod r/m */
+	byte_buffer_put_byte(&m->mc, 0x88);                        	/* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));      /* mod r/m */
 }
 
 /* EMIT MOVSDQ */
 static void
 emit_movsdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOVSDQ);
+	ASSERT(inst.op == OP_MOVSDQ);
 	/* REX.W + 63 /r | MOVSXD r64, r/m32 | Move doubleword to quadword with sign-extension. */
-	assert(opt.rex_w);
+	ASSERT(opt.rex_w);
 	emit_indirect_addressing(m, OPCODE_BYTES(0x63), inst, opt);
 }
 
@@ -1435,7 +1457,7 @@ emit_movsdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_movsbd_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOVSBD);
+	ASSERT(inst.op == OP_MOVSBD);
 	/* 0F BE /r | MOVSX r32, r/m8 | Move byte to doubleword with sign-extension. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x0f, 0xbe), inst, opt);
 }
@@ -1444,7 +1466,7 @@ emit_movsbd_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_movzwd_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_MOVZWD);
+	ASSERT(inst.op == OP_MOVZWD);
 	/* 0F B7 /r | MOVZX r32, r/m16 | Move word to doubleword, zero-extension. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x0f, 0xb7), inst, opt);
 }
@@ -1453,74 +1475,74 @@ emit_movzwd_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_push_zwdq_i(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_PUSH);
+	ASSERT(inst.op == OP_PUSH);
 	size_t sz = sizeof(int32_t);
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		assert(inst.imm <= INT16_MAX && inst.imm >= INT16_MIN);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		ASSERT(inst.imm <= INT16_MAX && inst.imm >= INT16_MIN);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 		sz = sizeof(int16_t);
 	}
 	EMIT_OPT_REX(opt.rex_w, 0, 0, 0);
 	if (inst.imm <= INT8_MAX && inst.imm >= INT8_MIN) {
 		/* 6A ib | PUSH imm8 */
-		byte_buffer_put_byte(&m->buf, 0x6a);
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+		byte_buffer_put_byte(&m->mc, 0x6a);
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 		return;
 	}
 	/* 68 id | PUSH imm32 */
-	assert(inst.imm <= INT32_MAX && inst.imm >= INT32_MIN);
-	byte_buffer_put_byte(&m->buf, 0x68);
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, sz);
+	ASSERT(inst.imm <= INT32_MAX && inst.imm >= INT32_MIN);
+	byte_buffer_put_byte(&m->mc, 0x68);
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, sz);
 }
 
 static void
 emit_push_zwdq_r(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_PUSH);
+	ASSERT(inst.op == OP_PUSH);
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
-	EMIT_OPT_REX(opt.rex_w, inst.r1, 0, 0);
+	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
 	/* 50+rd | PUSH r32 */
-	byte_buffer_put_byte(&m->buf, 0x50 + (inst.r1 & 7));
+	byte_buffer_put_byte(&m->mc, 0x50 + (inst.r1 & 7));
 }
 
 /* EMIT POP */
 static void
 emit_pop_zwdq_r(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_POP);
+	ASSERT(inst.op == OP_POP);
 	/* 58+rd | PUSH r32 */
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
-	EMIT_OPT_REX(opt.rex_w, inst.r1, 0, 0);
+	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
 	/* 50+rd | PUSH r32 */
-	byte_buffer_put_byte(&m->buf, 0x58 + (inst.r1 & 7));
+	byte_buffer_put_byte(&m->mc, 0x58 + (inst.r1 & 7));
 }
 
 /* EMIT NEG */
 static void
 emit_neg_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_NEG);
+	ASSERT(inst.op == OP_NEG);
 	/* F7 /3 | NEG r/m32 | Two's complement negate r/m32. */
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0xf7);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 3, inst.r1));
+	byte_buffer_put_byte(&m->mc, 0xf7);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 3, inst.r1));
 }
 
 static void
 emit_neg_zb_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_NEG);
+	ASSERT(inst.op == OP_NEG);
 	/* F6 /3 | NEG r/m81 | Two's complement negate r/m8. */
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
@@ -1531,20 +1553,20 @@ emit_neg_zb_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	default:
 	}
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0xf6);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 3, inst.r1));
+	byte_buffer_put_byte(&m->mc, 0xf6);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 3, inst.r1));
 }
 
 /* EMIT ADD */
 static void
 emit_add_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_ADD);
+	ASSERT(inst.op == OP_ADD);
 	int opcode = 0x81;
 	size_t imm_size = sizeof(int32_t);
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 		imm_size = sizeof(int16_t);
 	}
 	if (inst.imm <= INT8_MAX && inst.imm >= INT8_MIN) {
@@ -1554,26 +1576,26 @@ emit_add_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	} else if (inst.r1 == RAX) {
 		/* 05 id | ADD EAX, imm32 | Add imm32 to EAX. */
 		EMIT_OPT_REX(opt.rex_w, 0, 0, 0);
-		byte_buffer_put_byte(&m->buf, 0x05);
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+		byte_buffer_put_byte(&m->mc, 0x05);
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 		return;
 	}
 	/* 81 /0 id | ADD r/m32, imm32 | Add imm32 to r/m32. */
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, opcode);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 0, inst.r1));
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 0, inst.r1));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 }
 
 static void
 emit_add_zb_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_ADD);
-	assert(IS_INT8_SIZED(inst.imm));
+	ASSERT(inst.op == OP_ADD);
+	ASSERT(IS_INT8_SIZED(inst.imm));
 	if (inst.r1 == RAX) {
 		/* 04 ib | ADD AL, imm8 | Add imm8 to AL. */
-		byte_buffer_put_byte(&m->buf, 0x04);
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+		byte_buffer_put_byte(&m->mc, 0x04);
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 	} else {
 		/* 80 /0 ib | ADD r/m81, imm8 | Add imm8 to r/m8. */
 		switch ((int)inst.r1) {
@@ -1582,34 +1604,34 @@ emit_add_zb_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 		default:
 		}
 		EMIT_OPT_REX(0, 0, 0, inst.r1);
-		byte_buffer_put_byte(&m->buf, 0x80);
-		byte_buffer_put_byte(&m->buf, MODRM(3, 0, inst.r1));
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+		byte_buffer_put_byte(&m->mc, 0x80);
+		byte_buffer_put_byte(&m->mc, MODRM(3, 0, inst.r1));
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 	}
 }
 
 static void
 emit_add_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_ADD);
+	ASSERT(inst.op == OP_ADD);
 	/* 01 /r | ADD r/m32, r32 | Add r32 to r/m32. */
 	int opcode = 0x01;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	/* optional rex prefix */
 	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
 	/* op code */
-	byte_buffer_put_byte(&m->buf, opcode);
+	byte_buffer_put_byte(&m->mc, opcode);
 	/* mod r/m */
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1));
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));
 }
 
 static void
 emit_add_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_ADD);
+	ASSERT(inst.op == OP_ADD);
 	/* 03 /r | ADD r32, r/m32 | Add r/m32 to r32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x03), inst, opt);
 }
@@ -1617,7 +1639,7 @@ emit_add_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_add_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_ADD);
+	ASSERT(inst.op == OP_ADD);
 	/* 01 /r | ADD r/m32, r32 | Add r32 to r/m32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x01), inst, opt);
 }
@@ -1626,12 +1648,12 @@ emit_add_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_sub_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SUB);
+	ASSERT(inst.op == OP_SUB);
 	int opcode = 0x81;
 	size_t imm_size = sizeof(int32_t);
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 		imm_size = sizeof(int16_t);
 	}
 	if (inst.imm <= INT8_MAX && inst.imm >= INT8_MIN) {
@@ -1641,36 +1663,36 @@ emit_sub_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	} else if (inst.r1 == RAX) {
 		/* 2D id | SUB EAX, imm32 | Subtract imm32 to EAX. */
 		EMIT_OPT_REX(opt.rex_w, 0, 0, 0);
-		byte_buffer_put_byte(&m->buf, 0x2D);
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+		byte_buffer_put_byte(&m->mc, 0x2D);
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 		return;
 	}
 	/* 81 /5 id | SUB r/m32, imm32 | Subtract imm32 to r/m32. */
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, opcode);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 5, inst.r1));
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 5, inst.r1));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 }
 
 static void
 emit_sub_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SUB);
+	ASSERT(inst.op == OP_SUB);
 	/* 29 /r | SUB r/m32, r32 | Subtract r32 from r/m32. */
 	int opcode = 0x29;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);	   /* optional rex prefix */
-	byte_buffer_put_byte(&m->buf, opcode);					   /* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1)); /* mod r/m */
+	byte_buffer_put_byte(&m->mc, opcode);					   /* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1)); /* mod r/m */
 }
 
 static void
 emit_sub_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SUB);
+	ASSERT(inst.op == OP_SUB);
 	/* 2B /r | SUB r32, r/m32 | Subtract r/m32 from r32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x2b), inst, opt);
 }
@@ -1678,7 +1700,7 @@ emit_sub_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_sub_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SUB);
+	ASSERT(inst.op == OP_SUB);
 	/* 29 /r | SUB r/m32, r32 | Subtract r32 from r/m32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x29), inst, opt);
 }
@@ -1687,49 +1709,67 @@ emit_sub_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_idiv_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_IDIV);
+	ASSERT(inst.op == OP_IDIV);
 	/* F7 /7 | IDIV r/m32 | Signed divide EDX:EAX by r/m32,
 	                        with result stored in EAX := Quotient, EDX := Remainder. */
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);   	   /* optional rex prefix */
-	byte_buffer_put_byte(&m->buf, 0xf7);					   /* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, 7, inst.r1));       /* mod r/m */
+	byte_buffer_put_byte(&m->mc, 0xf7);					   /* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, 7, inst.r1));       /* mod r/m */
 }
 
 /* EMIT DIV */
 static void
 emit_div_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_DIV);
+	ASSERT(inst.op == OP_DIV);
 	/* F7 /6 | DIV r/m32 | Unsigned divide EDX:EAX by r/m32,
 	                       with result stored in EAX := Quotient, EDX := Remainder. */
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);   	   /* optional rex prefix */
-	byte_buffer_put_byte(&m->buf, 0xf7);					   /* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, 6, inst.r1));       /* mod r/m */
+	byte_buffer_put_byte(&m->mc, 0xf7);					   /* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, 6, inst.r1));       /* mod r/m */
+}
+
+/* EMIT SAR */
+static void
+emit_sar_zdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_SAR);
+	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
+	if (inst.imm == 1) {
+		/* D1 /7 | SHL r/m82, 1 | Multiply r/m32 by 2, once. */
+		byte_buffer_put_byte(&m->mc, 0xd1);
+		byte_buffer_put_byte(&m->mc, MODRM(3, 7, inst.r1));
+	} else {
+		/* C1 /7 ib | SHL r/m32, imm8 | Multiply r/m32 by 2, imm8 times. */
+		byte_buffer_put_byte(&m->mc, 0xc1);
+		byte_buffer_put_byte(&m->mc, MODRM(3, 7, inst.r1));
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
+	}
 }
 
 /* EMIT SHL */
 static void
 emit_shl_zdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SHL);
+	ASSERT(inst.op == OP_SHL);
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
 	if (inst.imm == 1) {
 		/* D1 /4 | SHL r/m82, 1 | Multiply r/m32 by 2, once. */
-		byte_buffer_put_byte(&m->buf, 0xd1);
-		byte_buffer_put_byte(&m->buf, MODRM(3, 4, inst.r1));
+		byte_buffer_put_byte(&m->mc, 0xd1);
+		byte_buffer_put_byte(&m->mc, MODRM(3, 4, inst.r1));
 	} else {
 		/* C1 /4 ib | SHL r/m32, imm8 | Multiply r/m32 by 2, imm8 times. */
-		byte_buffer_put_byte(&m->buf, 0xd1);
-		byte_buffer_put_byte(&m->buf, MODRM(3, 4, inst.r1));
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+		byte_buffer_put_byte(&m->mc, 0xc1);
+		byte_buffer_put_byte(&m->mc, MODRM(3, 4, inst.r1));
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 	}
 }
 
@@ -1737,23 +1777,23 @@ static void
 emit_shl_zdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
 	/* D3 /4 | SHL r/m32, CL | Multiply r/m32 by 2, CL times. */
-	assert(inst.op == OP_SHL);
-	assert(inst.r0 == RCX);
+	ASSERT(inst.op == OP_SHL);
+	ASSERT(inst.r0 == RCX);
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0xd3);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 4, inst.r1));
+	byte_buffer_put_byte(&m->mc, 0xd3);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 4, inst.r1));
 }
 
 /* EMIT CMP */
 static void
 emit_cmp_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CMP);
+	ASSERT(inst.op == OP_CMP);
 	int opcode = 0x81;
 	size_t imm_size = sizeof(int32_t);
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 		imm_size = sizeof(int16_t);
 	}
 	if (inst.imm <= INT8_MAX && inst.imm >= INT8_MIN) {
@@ -1763,85 +1803,118 @@ emit_cmp_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	} else if (inst.r1 == RAX) {
 		/* 3D id | CMP EAX, imm32 | Compare imm32 to EAX. */
 		EMIT_OPT_REX(opt.rex_w, 0, 0, 0);
-		byte_buffer_put_byte(&m->buf, 0x3D);
-		byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+		byte_buffer_put_byte(&m->mc, 0x3D);
+		byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 		return;
 	}
 	/* 81 /7 id | CMP r/m32, imm32 | Compare imm32 to r/m32. */
 	EMIT_OPT_REX(opt.rex_w, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, opcode);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 7, inst.r1));
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, imm_size);
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 7, inst.r1));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, imm_size);
 }
 
 static void
 emit_cmp_zb_ir(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CMP);
+	ASSERT(inst.op == OP_CMP);
 	/* 80 /7 ib | CMP r/m81, imm8 | Compare imm8 with r/m8. */
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	   will instead access SPL, DIL, BPL, or SIL, respectively. */
-	assert(IS_INT8_SIZED(inst.imm));
+	ASSERT(IS_INT8_SIZED(inst.imm));
 	switch ((int)inst.r1) {
 	case RSP: case RBP: case RDI: case RSI:
 		opt.force_rex = true;
 	default:
 	}
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0x80);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 7, inst.r1));
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+	byte_buffer_put_byte(&m->mc, 0x80);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 7, inst.r1));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 }
 
 static void
 emit_cmp_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CMP);
+	ASSERT(inst.op == OP_CMP);
 	/* 39 /r | CMP r/m32, r32 | Compare r32 from r/m32. */
 	int opcode = 0x39;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);	   /* optional rex prefix */
-	byte_buffer_put_byte(&m->buf, opcode); 	                   /* op code */
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1)); /* mod r/m */
+	byte_buffer_put_byte(&m->mc, opcode); 	                   /* op code */
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1)); /* mod r/m */
 }
 
 static void
 emit_cmp_zb_im(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CMP);
+	ASSERT(inst.op == OP_CMP);
 	/* 80 /7 ib | CMP r/m81, imm8 | Compare imm8 with r/m8. */
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	   will instead access SPL, DIL, BPL, or SIL, respectively. */
-	assert(IS_INT8_SIZED(inst.imm));
+	ASSERT(IS_INT8_SIZED(inst.imm));
 	inst.r0 = 7;
 	emit_indirect_addressing(m, OPCODE_BYTES(0x80), inst, opt);
-	byte_buffer_insert_bytes(&m->buf, &inst.imm, sizeof(int8_t));
+	byte_buffer_insert_bytes(&m->mc, &inst.imm, sizeof(int8_t));
 }
 
+/* EMIT AND */
+static void
+emit_and_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_AND);
+	/* 21 /r | AND r/m32, r32 | r/m32 AND r32. */
+	int opcode = 0x21;
+	if (opt.opor) {
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
+	}
+	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));
+}
+
+/* EMIT OR */
+static void
+emit_or_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_OR);
+	/* 09 /r | OR r/m32, r32 | r/m32 OR r32. */
+	int opcode = 0x09;
+	if (opt.opor) {
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
+	}
+	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));
+}
+
+/* EMIT XOR */
 static void
 emit_xor_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_XOR);
+	ASSERT(inst.op == OP_XOR);
 	/* 31 /r | XOR r/m32, r32 | r/m32 XOR r32. */
 	int opcode = 0x31;
 	if (opt.opor) {
-		assert(!opt.rex_w);
-		byte_buffer_put_byte(&m->buf, OPOR_BYTE);
+		ASSERT(!opt.rex_w);
+		byte_buffer_put_byte(&m->mc, OPOR_BYTE);
 	}
 	EMIT_OPT_REX(opt.rex_w, inst.r0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, opcode);
-	byte_buffer_put_byte(&m->buf, MODRM(3, inst.r0, inst.r1));
+	byte_buffer_put_byte(&m->mc, opcode);
+	byte_buffer_put_byte(&m->mc, MODRM(3, inst.r0, inst.r1));
 }
 
 static void
 emit_lea_zwdq(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_LEA);
+	ASSERT(inst.op == OP_LEA);
 	/* 8D /r | LEA r32,m | Store effective address for m in register r32. */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x8d), inst, opt);
 }
@@ -1850,27 +1923,27 @@ emit_lea_zwdq(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 static void
 emit_jcc(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op < 0x10);
+	ASSERT(inst.op < 0x10);
 	size_t sz;
 	int64_t disp = calc_rip_rel_disp(m, inst, .off8 = 1, .off32 = 2, .sz_out = &sz);
 	switch (sz) {
 	case sizeof(int8_t): {
-		byte_buffer_put_byte(&m->buf, 0x70|(inst.op & 0x0f));
+		byte_buffer_put_byte(&m->mc, 0x70|(inst.op & 0x0f));
 	} break;
 	case sizeof(int32_t): {
-		byte_buffer_put_byte(&m->buf, 0x0f);
-		byte_buffer_put_byte(&m->buf, 0x80|(inst.op & 0x0f));
+		byte_buffer_put_byte(&m->mc, 0x0f);
+		byte_buffer_put_byte(&m->mc, 0x80|(inst.op & 0x0f));
 	} break;
 	default: FAILWITH("Unreachable");
 	}
-	byte_buffer_insert_bytes(&m->buf, &disp, sz);
+	byte_buffer_insert_bytes(&m->mc, &disp, sz);
 }
 
 /* EMIT SETcc */
 static void
 emit_setcc_mr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op < 0x20 && inst.op > 0x10);
+	ASSERT(inst.op < 0x20 && inst.op > 0x10);
 	/* 0F 90 | SETcc r/m8 */
 	emit_indirect_addressing(m, OPCODE_BYTES(0x0f, 0x90|(inst.op & 0x0f)), inst, opt);
 }
@@ -1880,28 +1953,28 @@ emit_setcc_mr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 static void
 emit_jmp(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_JMP);
+	ASSERT(inst.op == OP_JMP);
 	/* E9 cd | JMP rel32 | Jump near, relative, RIP = RIP + 32-bit displacement sign extended to 64-bits. */
 	size_t sz;
 	int64_t disp = calc_rip_rel_disp(m, inst, .off8 = 1, .off32 = 1, .sz_out = &sz);
 	switch (sz) {
 	case sizeof(int8_t):
 		/* jmp short */
-		byte_buffer_put_byte(&m->buf, 0xeb);
+		byte_buffer_put_byte(&m->mc, 0xeb);
 		break;
 	case sizeof(int32_t):
 		/* jmp near */
-		byte_buffer_put_byte(&m->buf, 0xe9);
+		byte_buffer_put_byte(&m->mc, 0xe9);
 		break;
 	default: FAILWITH("Unreachable");
 	}
-	byte_buffer_insert_bytes(&m->buf, &disp, sz);
+	byte_buffer_insert_bytes(&m->mc, &disp, sz);
 }
 
 static void
 emit_jmp_indirect(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_JMP);
+	ASSERT(inst.op == OP_JMP);
 	/* FF /4 | JMP r/m64 | Jump near, absolute indirect, RIP = 64-Bit offset from register or memory. */
 	if (opt.is_mem) {
 		inst.r0 = 4;
@@ -1909,29 +1982,29 @@ emit_jmp_indirect(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 		return;
 	}
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0xff);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 4, inst.r1));
+	byte_buffer_put_byte(&m->mc, 0xff);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 4, inst.r1));
 }
 
 /* Emit CALL */
 static void
 emit_call(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CALL);
+	ASSERT(inst.op == OP_CALL);
 	/* E8 cd | CALL rel32 |
 	   Call near, relative, displacement relative to next
 	   instruction. 32-bit displacement sign extended to
 	   64-bits in 64-bit mode. */
-	byte_buffer_put_byte(&m->buf, 0xe8);
+	byte_buffer_put_byte(&m->mc, 0xe8);
 	int64_t disp;
 	calc_rip_rel_disp(m, inst, .disp32_out = &disp);
-	byte_buffer_insert_bytes(&m->buf, &disp, sizeof(int32_t));
+	byte_buffer_insert_bytes(&m->mc, &disp, sizeof(int32_t));
 }
 
 static void
 emit_call_indirect(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
-	assert(inst.op == OP_CALL);
+	ASSERT(inst.op == OP_CALL);
 	/* FF /2 | CALL r/m64 | Call near, absolute indirect, address given in r/m64. */
 	if (opt.is_mem) {
 		inst.r0 = 2;
@@ -1939,22 +2012,22 @@ emit_call_indirect(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 		return;
 	}
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
-	byte_buffer_put_byte(&m->buf, 0xff);
-	byte_buffer_put_byte(&m->buf, MODRM(3, 2, inst.r1));
+	byte_buffer_put_byte(&m->mc, 0xff);
+	byte_buffer_put_byte(&m->mc, MODRM(3, 2, inst.r1));
 }
 
 static void
 emit_ret(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_RET);
-	byte_buffer_put_byte(&m->buf, 0xc3);
+	ASSERT(inst.op == OP_RET);
+	byte_buffer_put_byte(&m->mc, 0xc3);
 }
 
 static void
 emit_syscall(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
-	assert(inst.op == OP_SYSCALL);
-	byte_buffer_insert_bytes(&m->buf, (ubyte[]){0x0f, 0x05}, 2);
+	ASSERT(inst.op == OP_SYSCALL);
+	byte_buffer_insert_bytes(&m->mc, (ubyte[]){0x0f, 0x05}, 2);
 }
 
 static void
@@ -1962,12 +2035,12 @@ emit_cdq(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
 {
 	/* 99 | CDQ | EDX:EAX := sign-extend of EAX. */
 	switch ((int)inst.op) {
-	case OP_CWD: byte_buffer_put_byte(&m->buf, OPOR_BYTE); break;
+	case OP_CWD: byte_buffer_put_byte(&m->mc, OPOR_BYTE); break;
 	case OP_CDQ: /* do nothing */ break;
-	case OP_CQO: byte_buffer_put_byte(&m->buf, REX(1, 0, 0, 0)); break;
+	case OP_CQO: byte_buffer_put_byte(&m->mc, REX(1, 0, 0, 0)); break;
 	default: FAILWITH("Unreachable"); break;
 	}
-	byte_buffer_put_byte(&m->buf, 0x99);
+	byte_buffer_put_byte(&m->mc, 0x99);
 }
 
 static void
@@ -1981,7 +2054,7 @@ emit_int(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 			FAILWITH("TODO: back-patch");
 		}
 	}
-	byte_buffer_insert_bytes(&m->buf, &x, opt.sz);
+	byte_buffer_insert_bytes(&m->mc, &x, opt.sz);
 }
 
 static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
@@ -2118,6 +2191,10 @@ static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
 		[SZDSC(ZD, RR)] = {emit_div_zwdq_rr},
 		[SZDSC(ZQ, RR)] = {emit_div_zwdq_rr, {.rex_w = true}},
 	},
+	[OP_SAR] = {
+		[SZDSC(ZD, IR)] = {emit_sar_zdq_ir},
+		[SZDSC(ZQ, IR)] = {emit_sar_zdq_ir, {.rex_w = true}},
+	},
 	[OP_SHL] = {
 		[SZDSC(ZD, RR)] = {emit_shl_zdq_rr},
 		[SZDSC(ZQ, RR)] = {emit_shl_zdq_rr, {.rex_w = true}},
@@ -2133,6 +2210,16 @@ static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
 		[SZDSC(ZD, RR)] = {emit_cmp_zwdq_rr},
 		[SZDSC(ZQ, RR)] = {emit_cmp_zwdq_rr, {.rex_w = true}},
 		[SZDSC(ZB, IM)] = {emit_cmp_zb_im},
+	},
+	[OP_AND] = {
+		[SZDSC(ZW, RR)] = {emit_and_zwdq_rr, {.opor = true}},
+		[SZDSC(ZD, RR)] = {emit_and_zwdq_rr},
+		[SZDSC(ZQ, RR)] = {emit_and_zwdq_rr, {.rex_w = true}},
+	},
+	[OP_OR] = {
+		[SZDSC(ZW, RR)] = {emit_or_zwdq_rr, {.opor = true}},
+		[SZDSC(ZD, RR)] = {emit_or_zwdq_rr},
+		[SZDSC(ZQ, RR)] = {emit_or_zwdq_rr, {.rex_w = true}},
 	},
 	[OP_XOR] = {
 		[SZDSC(ZW, RR)] = {emit_xor_zwdq_rr, {.opor = true}},
@@ -2161,26 +2248,26 @@ static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
 static void
 emit_alignment_bytes(Asm_module *m, uint64_t alignment)
 {
-	alignment = align_next(m->buf.len, alignment);
-	while (m->buf.len < alignment)
-		byte_buffer_put_byte(&m->buf, NOP_BYTE);
+	alignment = align_next(m->mc.len, alignment);
+	while (m->mc.len < alignment)
+		byte_buffer_put_byte(&m->mc, NOP_BYTE);
 }
 
 static size_t
 emit_inst(Asm_module *m, size_t inst_idx)
 {
-	Asm_inst inst = m->code.elems[inst_idx];
+	Asm_inst inst = asm_get_instruction_array(m)[inst_idx];
 	switch ((int)inst.op) {
 	case DIR_IGNORE: break;
 	case DIR_LABEL: {
 		asm_label_id lbl = inst.disp;
 		if (m->labels.elems[lbl].is_resolved)
 			FAILWITH("[ERROR] label resolved before it is defined");
-		m->labels.elems[lbl].offset = m->buf.len;
+		m->labels.elems[lbl].offset = m->mc.len;
 		m->labels.elems[lbl].is_resolved = true;
 	} break;
 	case DIR_REP: {
-		assert(inst.imm >= 0);
+		ASSERT(inst.imm >= 0);
 		inst_idx++;
 		for (int64_t rep = inst.imm; rep--; emit_inst(m, inst_idx));
 	} break;
@@ -2188,16 +2275,20 @@ emit_inst(Asm_module *m, size_t inst_idx)
 		emit_alignment_bytes(m, inst.imm);
 	} break;
 	case DIR_STRING: {
-		byte_buffer_put_str(&m->buf, (const char *)inst.imm);
-		byte_buffer_put_byte(&m->buf, 0);
+		byte_buffer_put_str(&m->mc, (const char *)inst.imm);
+		byte_buffer_put_byte(&m->mc, 0);
 	} break;
 	default: {
 		const struct _dispatch *d = &dispatch_table[inst.op][SZDSC(inst.sz, inst.dsc)];
 		if (d->fn == NULL) {
+#ifndef NO_STD_HEADERS
 			FAILWITH("TODO: %s SZDSC(%s, %s)",
 					 asm_op_code_to_str(inst.op),
 					 asm_op_size_to_str(inst.sz),
 					 asm_arg_desc_to_str(inst.dsc));
+#else
+			FAILWITH(DEBUG_MSG("TODO: SZDSC"));
+#endif
 		}
 		d->fn(m, inst, d->opt);
 	} break;
@@ -2214,42 +2305,56 @@ asm_assemble(Asm_module *m)
 			if (!lbl->is_extern) continue;
 			switch (lbl->type) {
 			case ASM_LBL_T_BLOCK:
+#ifndef NO_STD_HEADERS
 				FAILWITH("[ERROR] External reference to block label `%s`.", lbl->name);
+#else
+				FAILWITH(DEBUG_MSG("External reference to block label"));
+#endif
 				break;
 			case ASM_LBL_T_FUNC: {
 				/* There's a good chance that the foreign function is more than
 				 * 2Gb away from the jitted code, so we roll our own plt.
 				 */
-				printf("label = %s\n", lbl->name);
 				emit_alignment_bytes(m, 16);
-				int64_t offset = m->buf.len;
+				int64_t offset = m->mc.len;
 				/* movq $"lbl->offset", %rax */
-				byte_buffer_put_byte(&m->buf, REX(1, 0, 0, 0));
-				byte_buffer_put_byte(&m->buf, 0xb8+RAX);
-				byte_buffer_insert_bytes(&m->buf, &lbl->offset, sizeof(int64_t));
+				byte_buffer_put_byte(&m->mc, REX(1, 0, 0, 0));
+				byte_buffer_put_byte(&m->mc, 0xb8+RAX);
+				byte_buffer_insert_bytes(&m->mc, &lbl->offset, sizeof(int64_t));
 				/* jmp *%rax */
-				byte_buffer_put_byte(&m->buf, 0xff);
-				byte_buffer_put_byte(&m->buf, MODRM(3, 4, RAX));
+				byte_buffer_put_byte(&m->mc, 0xff);
+				byte_buffer_put_byte(&m->mc, MODRM(3, 4, RAX));
 				lbl->offset = offset;
 				lbl->is_resolved = true;
 			} break;
 			case ASM_LBL_T_DATA:  lbl->is_resolved = true; break;
 			case ASM_LBL_T_CONST: FAILWITH("TODO ASM_LBL_T_CONST"); break;
-			default: FAILWITH("Unreachable");
+			default:
+#ifndef NO_STD_HEADERS
+				FAILWITH("Unreachable");
+#else
+				FAILWITH(DEBUG_MSG("Unreachable"));
+#endif
 			}
 		}
 	}
-	for (size_t i = 0; i < m->code.len; i = emit_inst(m, i));
+	size_t count = asm_get_instruction_count(m);
+	for (size_t i = 0; i < count; i = emit_inst(m, i));
 	/* patch labels */
 	for (size_t i = 0; i < m->labels.len; ++i) {
 		Asm_label *lbl = &m->labels.elems[i];
 		if (lbl->is_extern) continue; /* if assembled for elf, extern symbols get resolved at link-time */
-		if (!lbl->is_resolved)
+		if (!lbl->is_resolved) {
+#ifndef NO_STD_HEADERS
 			FAILWITH("[ERROR] memas label `%s` is unresolved", lbl->name);
+#else
+			FAILWITH(DEBUG_MSG("unresolved label"));
+#endif
+		}
 		for (size_t i = 0; i < lbl->patches.len; ++i) {
 			struct asm_lbl_back_patch *p = &lbl->patches.elems[i];
 			int64_t value = lbl->offset + p->offset;
-			byte_buffer_write_bytes_at_offset(&m->buf, p->loc, &value, p->size);
+			byte_buffer_write_bytes_at_offset(&m->mc, p->loc, &value, p->size);
 		}
 		da_free(&lbl->patches);
 	}
@@ -2272,7 +2377,7 @@ asm_assemble_for_object_file(Asm_module *m)
 int64_t
 asm_get_label_offset(Asm_module *m, asm_label_id lbl)
 {
-	assert(lbl < m->labels.len);
+	ASSERT(lbl < m->labels.len);
 	if (m->labels.elems[lbl].is_resolved)
 		return m->labels.elems[lbl].offset;
 	return 0;
@@ -2281,9 +2386,9 @@ asm_get_label_offset(Asm_module *m, asm_label_id lbl)
 void *
 asm_get_label_address(Asm_module *m, asm_label_id lbl)
 {
-	assert(lbl < m->labels.len);
+	ASSERT(lbl < m->labels.len);
 	if (m->labels.elems[lbl].is_resolved)
-		return (ubyte *)m->buf.data + m->labels.elems[lbl].offset;
+		return (ubyte *)m->mc.data + m->labels.elems[lbl].offset;
 	return NULL;
 }
 
@@ -2308,15 +2413,17 @@ asm_lookup_label_address(Asm_module *m, const char *name, void **addr_out)
 	return false;
 }
 
+#ifndef NO_STD_HEADERS
 void
 asm_dump_bytes(Asm_module *m)
 {
 	printf("{");
-	for (size_t i = 0; i < m->buf.len; ++i) {
-		printf("0x%02x, ", i[(ubyte *)m->buf.data]);
+	for (size_t i = 0; i < m->mc.len; ++i) {
+		printf("0x%02x, ", i[(ubyte *)m->mc.data]);
 	}
 	printf("}\n");
 }
+#endif
 
 Asm_elf_builder
 asm_make_elf_builder(enum elf_file_type e_type)
@@ -2339,8 +2446,9 @@ asm_make_elf_builder(enum elf_file_type e_type)
 		.hdr.e_shnum             = ASM_SH_COUNT,
 		.hdr.e_shstrndx          = ASM_SH_SHSTRTAB,
 	};
-	for (int i = 1; i < ASM_SH_COUNT; ++i)
-		eb.bufs[i] = asm_make_mem_buffer();
+	for (int i = 1; i < ASM_SH_COUNT; ++i) {
+		byte_buffer_init_default(&eb.bufs[i]);
+	}
 	/* Initialize section headers */
 	/* .shstrtab */
 	byte_buffer_put_byte(&eb.bufs[ASM_SH_SHSTRTAB], 0);
@@ -2495,6 +2603,7 @@ asm_elf_add_rela(Asm_elf_builder *eb, elf64_word symndx, enum elf_amd64_system_v
 }
 
 
+#ifndef NO_STD_HEADERS
 void
 asm_elf_dump_shstrtab(Asm_elf_builder *eb)
 {
@@ -2537,15 +2646,15 @@ asm_elf_resolve_symbols(Asm_module *m, Asm_elf_builder *eb)
 	for (size_t i = 0; i < m->labels.len; ++i) {
 		Asm_label *lbl = &m->labels.elems[i];
 		if (lbl->type == ASM_LBL_T_BLOCK) {
-			assert(!lbl->is_extern);
-			assert(lbl->is_resolved);
-			assert(lbl->patches.len == 0);
+			ASSERT(!lbl->is_extern);
+			ASSERT(lbl->is_resolved);
+			ASSERT(lbl->patches.len == 0);
 			continue;
 		}
 		elf64_word sym_num = asm_elf_find_symbol(eb, lbl->name);
-		assert(sym_num);
+		ASSERT(sym_num);
 		if (lbl->is_extern) {
-			assert(!lbl->is_resolved);
+			ASSERT(!lbl->is_resolved);
 			enum elf_amd64_system_v_rela_type type;
 			switch (lbl->type) {
 			case ASM_LBL_T_CONST: FAILWITH("TODO: ASM_LBL_CONST"); break;
@@ -2556,13 +2665,13 @@ asm_elf_resolve_symbols(Asm_module *m, Asm_elf_builder *eb)
 			}
 			for (size_t i = 0; i < lbl->patches.len; ++i) {
 				struct asm_lbl_back_patch *p = &lbl->patches.elems[i];
-				assert(p->size == sizeof(int32_t));
+				ASSERT(p->size == sizeof(int32_t));
 				asm_elf_add_rela(eb, sym_num, type, p->loc, -4);
 			}
 			lbl->is_resolved = true;
 			da_free(&lbl->patches);
 		} else {
-			assert(lbl->patches.len == 0);
+			ASSERT(lbl->patches.len == 0);
 		}
 	}
 }
@@ -2595,7 +2704,7 @@ asm_output_static_executable(Asm_module *m, asm_label_id entry_lbl, const char *
 	elf64_addr vaddr = PAGE_SIZE * 16;
 	elf64_off pg_offset = sizeof(Elf64_header) + sizeof(Elf64_program_header);
 	elf64_off entry_point = vaddr + pg_offset + asm_get_label_offset(m, entry_lbl);
-	Byte_buffer elf_buff = asm_make_mem_buffer();
+	Byte_buffer elf_buff = byte_buffer_create_default();
 	Elf64_header eh = {
 		.e_ident[EI_MAG0]	 = ELF_MAGIC[EI_MAG0],
 		.e_ident[EI_MAG1]	 = ELF_MAGIC[EI_MAG1],
@@ -2619,12 +2728,12 @@ asm_output_static_executable(Asm_module *m, asm_label_id entry_lbl, const char *
 		.p_flags  = PF_R|PF_W|PF_X,
 		.p_offset = 0,
 		.p_vaddr  = vaddr,
-		.p_filesz = pg_offset + m->buf.len,
-		.p_memsz  = pg_offset + m->buf.len,
+		.p_filesz = pg_offset + m->mc.len,
+		.p_memsz  = pg_offset + m->mc.len,
 	};
 	byte_buffer_insert_bytes(&elf_buff, &eh, sizeof(eh));
 	byte_buffer_insert_bytes(&elf_buff, &ph, sizeof(ph));
-	byte_buffer_insert_bytes(&elf_buff, m->buf.data, m->buf.len);
+	byte_buffer_insert_bytes(&elf_buff, m->mc.data, m->mc.len);
 	int out;
 	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY)) == -1)		goto fail0;
 	if (byte_buffer_write_data_to_file(&elf_buff, out) == -1)       goto fail1;
@@ -2636,7 +2745,11 @@ fail1:
 	close(out);
 fail0:
 	elf_buff.free(&elf_buff);
+#ifndef NO_STD_HEADERS
 	FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+	FAILWITH(DEBUG_MSG("Unable to write to output file"));
+#endif
 }
 
 /* NOTE:
@@ -2647,7 +2760,7 @@ void
 asm_output_object_file(Asm_module *m, const char *filename)
 {
 	Asm_elf_builder eb = asm_make_elf_builder(ET_REL);
-	byte_buffer_insert_bytes(&eb.bufs[ASM_SH_TEXT], m->buf.data, m->buf.len);
+	byte_buffer_insert_bytes(&eb.bufs[ASM_SH_TEXT], m->mc.data, m->mc.len);
 	asm_elf_resolve_symbols(m, &eb);
 	int out;
 	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY)) == -1)	goto fail0;
@@ -2658,7 +2771,14 @@ asm_output_object_file(Asm_module *m, const char *filename)
 fail1:
 	close(out);
 fail0:
+#ifndef NO_STD_HEADERS
 	FAILWITH("[ERROR] %s\n", strerror(errno));
+#else
+	FAILWITH(DEBUG_MSG("Unable to write to output file"));
+#endif
 }
+
+#endif /* NO_STD_HEADERS */
+
 
 #endif /* MEM_IMPLEMENTATION */

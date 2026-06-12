@@ -1,0 +1,45 @@
+* KC -- Compiler for the K Programing Language
+- K is a low level language of my own design. Compare to Rust or C++.
+- This project is still in early development. All features are subject to change.
+- Don't try to use this for anything serious.
+** Supported platforms
+- I only support GNU/Linux x86-64.
+- I try to keep external dependancies to a minimum however KC shells out to:
+  - `objdump` for disassembly
+  - `ld` for linking.
+- Programs must link against libc.
+** Building
+Just run make.
+** Usage
+*** Display Help information
+kc -h
+*** Compile executable
+kc input_file.k -o output_file
+*** Run from memory (jit)
+kc -run input_file.k
+** Examples
+*** Hello, World!
+#+NAME: 'Hello, World' example
+#+BEGIN_SRC
+  
+/* There's no standard library yet so you have to define an
+ * external interface to libc.
+ * This also demonstrates how simple ffi can be. Just define
+ * a variable as #extern(cname) with a compatible type signature and
+ * it should "Just Work".
+ */
+  
+// The stdout FILE*
+let stdout: void* = #extern(stdout)
+  
+// fwrite
+let fwrite: (void*, u64, u64, void*) -> u64 = #extern(fwrite)
+
+let print_string(str: &[i8]) =
+  fwrite(#ptr(str), 1, #len(str), stdout) as void
+
+let main() i32 =
+  print_string("Hello, World\n");
+  0
+  
+#+END_SRC 
