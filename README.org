@@ -21,17 +21,17 @@ kc -run input_file.k
 *** Hello, World!
 #+NAME: 'Hello, World' example
 #+BEGIN_SRC
-  
+
 /* There's no standard library yet so you have to define an
  * external interface to libc.
  * This also demonstrates how simple ffi can be. Just define
  * a variable as #extern(cname) with a compatible type signature and
  * it should "Just Work".
  */
-  
+
 // The stdout FILE*
 let stdout: void* = #extern(stdout)
-  
+
 // fwrite
 let fwrite: (void*, u64, u64, void*) -> u64 = #extern(fwrite)
 
@@ -41,5 +41,5 @@ let print_string(str: &[i8]) =
 let main() i32 =
   print_string("Hello, World\n");
   0
-  
-#+END_SRC 
+
+#+END_SRC
