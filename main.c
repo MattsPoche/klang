@@ -30,27 +30,7 @@ TODOS:
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
 #include "cmd_flags.h"
-
-#ifdef UNITY_BUILD
-
-#define KC_PUBLIC      static
-#define KC_PUBLIC_DATA static
-
 #include "common.h"
-#include "log.c"
-#include "lex.c"
-#include "scope.c"
-#include "parse.c"
-#include "type.c"
-#include "ir.c"
-#include "linux_system_v_x86_64.c"
-#include "cmd_flags.c"
-
-#else
-
-#include "common.h"
-
-#endif
 
 KC_PRIVATE CG_module
 compile_file(const char *filename, bool is_jit)
@@ -92,8 +72,9 @@ compile_file(const char *filename, bool is_jit)
 #if KC_DEBUG
 	puts("[Debug]");
 	for (size_t i = 0; i < ir.len; ++i) {
-		if (ir.elems[i].tag == IRO_PROC) {
+		if (ir.elems[i].tag == IRO_PROC || ir.elems[i].tag == IRO_INIT_THUNK) {
 			ir_proc_fprint(&ir.elems[i].proc, stdout);
+			fputc('\n', stdout);
 		}
 	}
 #endif
@@ -215,12 +196,17 @@ fprint_disassembly(Asm_module *m, FILE *f)
 }
 
 void
-run_code_from_entry_point(Asm_module *m, int(*entry_point)(int argc, char *argv[]), int argc, char *argv[])
+run_code_from_entry_point(CG_module *m, int(*entry_point)(int argc, char *argv[]), int argc, char *argv[])
 {
 	struct sigaction act = {0};
 	act.sa_sigaction = handler;
 	act.sa_flags = SA_SIGINFO;
 	sigaction(SIGSEGV, &act, NULL);
+	printf("[Info] Running initializers ...\n");
+	for (size_t i = 0; i < m->thunks.len; ++i) {
+		void (*thunk)(void) = asm_get_label_address(&m->asm_mod, m->thunks.elems[i]);
+		thunk();
+	}
 	printf("[Info] Running program...\n");
 	recover_from_handler = true;
 	int ec;
@@ -230,7 +216,7 @@ run_code_from_entry_point(Asm_module *m, int(*entry_point)(int argc, char *argv[
 	} else {
 		printf("[Info] Program encountered fatal error and crashed\n");
 		printf("[Info] Disassembly of compiled code:\n");
-		fprint_disassembly(m, stderr);
+		fprint_disassembly(&m->asm_mod, stderr);
 	}
 	recover_from_handler = false;
 }
@@ -274,10 +260,14 @@ int main(int argc, char **argv)
 	int(*entry_point)(int, char**) = NULL;
 	for (size_t i = 0; i < cg_modules.len; ++i) {
 		Asm_module *m = &cg_modules.elems[i].asm_mod;
+#ifdef KC_DEBUG
+		puts("[Debug]");
 		list_asm(m);
+#endif
 		asm_assemble(m);
-		asm_set_executable(m);
-		if (run_p && entry_point == NULL)
+		if (run_p)
+			asm_set_executable(m);
+		if (entry_point == NULL)
 			asm_lookup_label_address(m, "main", (void *)&entry_point);
 	}
 	if (output_asm_p) {
@@ -290,7 +280,7 @@ int main(int argc, char **argv)
 		if (entry_point == NULL)
 			FAILWITH("[ERROR] Unable to run compiled code. No `main` procedure found.");
 		char *argv[] = {input_files.elems[0], NULL};
-		run_code_from_entry_point(&cg_modules.elems[0].asm_mod, entry_point, 1, argv);
+		run_code_from_entry_point(&cg_modules.elems[0], entry_point, 1, argv);
 	} else {
 		for (size_t i = 0; i < cg_modules.len; ++i) {
 			Asm_module *m = &cg_modules.elems[i].asm_mod;

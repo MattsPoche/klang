@@ -1687,8 +1687,6 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 			}
 			return false;
 		case type_class_integer:
-//			printf("t = %s\n", ast_type_to_str(t));
-//			printf("u = %s\n", ast_type_to_str(u));
 			if (type_is_integer(u)) {
 				type_var_set_equal_to(t, u);
 				return true;

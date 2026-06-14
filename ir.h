@@ -92,11 +92,11 @@ enum ir_obj_tag {
 	IRO_DATA,
 	IRO_EXTERN_DATA,
 	IRO_EXTERN_PROC,
+	IRO_INIT_THUNK,
 };
 
 #define IR_OBJ_HDDR_MEMBERS						\
 	enum ir_obj_tag tag;						\
-	struct ir_proc *init_proc;					\
 	char *link;									\
 	int64_t asm_label;							\
 	bool is_static
@@ -108,26 +108,42 @@ struct ir_obj_hddr {
 struct ir_proc {
 	IR_OBJ_HDDR_MEMBERS;
 	struct definition *def;
-	struct procedure *node;
 	struct ir_blk *entry;
 	KCType *type;
 	uint16_t regc;
 	uint16_t argc;
 	uint16_t retc;
+	struct procedure *node;
 };
 
 struct ir_data {
 	IR_OBJ_HDDR_MEMBERS;
 	size_t size;
+	size_t alignment;
 	void *dat;
 	KCType *type;
 };
 
-typedef union ir_object {
-	struct ir_obj_hddr hddr;
-	enum ir_obj_tag tag;
-	struct ir_proc proc;
-	struct ir_data data;
+struct ir_thunk {
+	IR_OBJ_HDDR_MEMBERS;
+	struct definition *def;
+	struct ir_blk *entry;
+	KCType *type;
+	uint16_t regc;
+	uint16_t argc;
+	uint16_t retc;
+	size_t data_id;
+	struct scope *scope;
+};
+
+typedef struct ir_object {
+	union {
+		struct ir_obj_hddr hddr;
+		enum ir_obj_tag tag;
+		struct ir_proc proc;
+		struct ir_thunk thunk;
+		struct ir_data data;
+	};
 } IR_object;
 
 
@@ -170,7 +186,7 @@ KC_PUBLIC struct ir_toplevel ast_compile(struct scope *scope);
 KC_PUBLIC struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 											 struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl);
 KC_PUBLIC void ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl);
-KC_PUBLIC union ir_object *get_toplevel_obj(struct ir_toplevel *tl, size_t id);
+KC_PUBLIC IR_object *get_toplevel_obj(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct ir_proc *get_toplevel_proc(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct da_pointers ir_blk_reverse_post_order(struct ir_blk *root);
 KC_PUBLIC void ir_proc_fprint(struct ir_proc *proc, FILE *file);

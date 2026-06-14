@@ -97,10 +97,14 @@ struct cg_procedure {
 };
 
 typedef struct cg_module {
-	struct cg_procedures {
+	struct {
 		uint32_t len, cap;
 		struct cg_procedure *elems;
 	} procs;
+	struct {
+		uint32_t len, cap;
+		uint32_t *elems;
+	} thunks;
 	Asm_module asm_mod;
 } CG_module;
 
@@ -113,6 +117,5 @@ typedef struct cg_modules {
 #define RED_ZONE_SIZE 128
 
 KC_PUBLIC void cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit);
-KC_PUBLIC void cg_emit_procedure(CG_module *mod, struct ir_proc *proc, struct ir_toplevel *tl);
-KC_PUBLIC void cg_dump_procedure(struct cg_procedure *proc, FILE *file);
+KC_PUBLIC void cg_emit_procedure(CG_module *mod, IR_object *obj, struct ir_toplevel *tl);
 KC_PUBLIC void cg_emit_data(CG_module *mod, struct ir_data *data);

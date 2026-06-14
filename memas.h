@@ -285,6 +285,8 @@ typedef struct asm_label {
 	enum asm_label_binding binding;
 	bool is_resolved;
 	bool is_extern;
+	bool is_init;           // add to .init_array
+	bool is_fini;           // add to .fini_array
 } Asm_label;
 
 static_assert(sizeof(Asm_inst) == sizeof(int64_t)*2);
@@ -311,9 +313,22 @@ typedef struct asm_arg {
 void asm_inst0(Asm_module *m, enum asm_op_code op, enum asm_op_size size);
 void asm_inst1(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src);
 void asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src, Asm_arg dst);
-asm_label_id asm_make_label(Asm_module *m, const char *name,
-							enum asm_label_type type, enum asm_label_binding binding);
-asm_label_id asm_make_extern_label(Asm_module *m, const char *name, enum asm_label_type type, int64_t value);
+
+struct make_label_opt_args {
+	int64_t offset;
+	bool is_init;
+	bool is_fini;
+	bool is_extern;
+};
+
+#define asm_make_label(m, name, type, binding, ...)						\
+	asm_make_label_impl(m, name, type, binding, (struct make_label_opt_args){__VA_ARGS__})
+
+asm_label_id asm_make_label_impl(Asm_module *m,
+								 const char *name,
+								 enum asm_label_type type,
+								 enum asm_label_binding binding,
+								 struct make_label_opt_args opt);
 void asm_dir_label(Asm_module *m, asm_label_id label);
 void asm_dir_align(Asm_module *m, int64_t alignment);
 void asm_dir_rep(Asm_module *m, int64_t n);
@@ -443,11 +458,14 @@ Asm_module *asm_init_module_impl(Asm_module *m, struct _asm_init_args opt);
 enum asm_eb_section {
 	ASM_SH_NULL,
 	ASM_SH_INTERP,
+	ASM_SH_INIT_ARRAY,
+	ASM_SH_FINI_ARRAY,
 	ASM_SH_TEXT,
 	ASM_SH_DATA,
 	ASM_SH_RODATA,
 	ASM_SH_BSS,
 	ASM_SH_RELA_TEXT,
+	ASM_SH_RELA_INIT_ARRAY,
 	ASM_SH_SYMTAB,
 	ASM_SH_STRTAB,
 	ASM_SH_SHSTRTAB,
@@ -611,6 +629,9 @@ popcnt(uint64_t n)
 static inline uint64_t
 align_next(uint64_t n, uint64_t alignment)
 {
+	if (popcnt(alignment) != 1) {
+		printf("popcnt(alignment) = %d\n", popcnt(alignment));
+	}
 	ASSERT(popcnt(alignment) == 1); /* alignment must be a power of 2 */
 	uint64_t mask = alignment - 1;
 	return (n + mask) & ~mask;
@@ -815,6 +836,34 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 				});
 		}
 		break;
+	case ARG_MATCH2(ARG_REG, ARG_MEM_LR):
+		ASSERT(src.i != RIP);
+		if (dst.addr.base == RIP) {
+			ASM_APPEND(m, (Asm_inst){
+					.op	   = op,
+					.dsc   = RM,
+					.sz	   = size,
+					.t_lbl = true,
+					.t_x   = true,
+					.r0	   = src.i,
+					.rx    = 1,
+					.disp  = dst.addr.dsp,
+					.imm   = dst.i
+				});
+		} else {
+			ASM_APPEND(m, (Asm_inst){
+					.op	   = op,
+					.dsc   = RM,
+					.sz	   = size,
+					.t_lbl = true,
+					.t_x   = true,
+					.r0	   = src.i,
+					.r1	   = dst.addr.base,
+					.disp  = dst.addr.dsp,
+					.imm   = dst.i
+				});
+		}
+		break;
 	case ARG_MATCH2(ARG_MEM_DR, ARG_REG):
 		ASSERT(dst.i != RIP);
 		if (src.addr.base == RIP) {
@@ -912,29 +961,21 @@ asm_inst2(Asm_module *m, enum asm_op_code op, enum asm_op_size size, Asm_arg src
 }
 
 asm_label_id
-asm_make_label(Asm_module *m, const char *name,
-			   enum asm_label_type type,
-			   enum asm_label_binding binding)
+asm_make_label_impl(Asm_module *m,
+					const char *name,
+					enum asm_label_type type,
+					enum asm_label_binding binding,
+					struct make_label_opt_args opt)
 {
 	asm_label_id label_id = m->labels.len;
 	da_append(&m->labels, (Asm_label){
 			.name    = name,
 			.type    = type,
 			.binding = binding,
-		});
-	return label_id;
-}
-
-asm_label_id
-asm_make_extern_label(Asm_module *m, const char *name, enum asm_label_type type, int64_t value)
-{
-	asm_label_id label_id = m->labels.len;
-	da_append(&m->labels, (Asm_label){
-			.name      = name,
-			.offset    = value,
-			.type      = type,
-			.is_extern = true,
-			.binding   = ASM_LBL_B_GLOBAL,
+			.offset  = opt.offset,
+			.is_init = opt.is_init,
+			.is_fini = opt.is_fini,
+			.is_extern = opt.is_extern,
 		});
 	return label_id;
 }
@@ -1051,7 +1092,7 @@ asm_free_code_buffer(Byte_buffer *buff)
 void
 asm_set_executable(Asm_module *m)
 {
-	if (mprotect(m->mc.data, m->mc.cap, PROT_READ|PROT_EXEC) == -1) {
+	if (mprotect(m->mc.data, m->mc.cap, PROT_READ|PROT_WRITE|PROT_EXEC) == -1) {
 #ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
 #else
@@ -2471,6 +2512,16 @@ asm_make_elf_builder(enum elf_file_type e_type)
 	eb.shs[ASM_SH_INTERP].sh_type = SHT_PROGBITS;
 	byte_buffer_put_str(&eb.bufs[ASM_SH_INTERP], "/lib64/ld-linux-x86-64.so.2");
 	byte_buffer_put_byte(&eb.bufs[ASM_SH_INTERP], 0);
+	/* .init_array */
+	eb.shs[ASM_SH_INIT_ARRAY].sh_name = asm_elf_add_to_shstrtab(&eb, ".init_array");
+	eb.shs[ASM_SH_INIT_ARRAY].sh_type = SHT_INIT_ARRAY;
+	eb.shs[ASM_SH_INIT_ARRAY].sh_flags = SHF_WRITE|SHF_ALLOC;
+	asm_elf_add_symbol(&eb, ".init_array", STT_SECTION, STB_LOCAL, ASM_SH_INIT_ARRAY, 0, 0);
+	/* .fini_array */
+	eb.shs[ASM_SH_FINI_ARRAY].sh_name = asm_elf_add_to_shstrtab(&eb, ".fini_array");
+	eb.shs[ASM_SH_FINI_ARRAY].sh_type = SHT_FINI_ARRAY;
+	eb.shs[ASM_SH_FINI_ARRAY].sh_flags = SHF_WRITE|SHF_ALLOC;
+	asm_elf_add_symbol(&eb, ".fini_array", STT_SECTION, STB_LOCAL, ASM_SH_FINI_ARRAY, 0, 0);
 	/* .text */
 	eb.shs[ASM_SH_TEXT].sh_name = asm_elf_add_to_shstrtab(&eb, ".text");
 	eb.shs[ASM_SH_TEXT].sh_type = SHT_PROGBITS;
@@ -2497,6 +2548,14 @@ asm_make_elf_builder(enum elf_file_type e_type)
 	eb.shs[ASM_SH_RELA_TEXT].sh_link = ASM_SH_SYMTAB;
 	eb.shs[ASM_SH_RELA_TEXT].sh_info = ASM_SH_TEXT;
 	eb.shs[ASM_SH_RELA_TEXT].sh_entsize = sizeof(Elf64_rela);
+	asm_elf_add_symbol(&eb, ".rela.text", STT_SECTION, STB_LOCAL, ASM_SH_RELA_TEXT, 0, 0);
+	/* .rela.init_array */
+	eb.shs[ASM_SH_RELA_INIT_ARRAY].sh_name = asm_elf_add_to_shstrtab(&eb, ".rela.init_array");
+	eb.shs[ASM_SH_RELA_INIT_ARRAY].sh_type = SHT_RELA;
+	eb.shs[ASM_SH_RELA_INIT_ARRAY].sh_link = ASM_SH_SYMTAB;
+	eb.shs[ASM_SH_RELA_INIT_ARRAY].sh_info = ASM_SH_INIT_ARRAY;
+	eb.shs[ASM_SH_RELA_INIT_ARRAY].sh_entsize = sizeof(Elf64_rela);
+	asm_elf_add_symbol(&eb, ".rela.init_array", STT_SECTION, STB_LOCAL, ASM_SH_RELA_INIT_ARRAY, 0, 0);
 	return eb;
 }
 
@@ -2589,8 +2648,8 @@ asm_elf_find_symbol(Asm_elf_builder *eb, const char *name)
 
 
 elf64_word
-asm_elf_add_rela(Asm_elf_builder *eb, elf64_word symndx, enum elf_amd64_system_v_rela_type type,
-				 elf64_off offset, elf64_sxword addend)
+asm_elf_add_rela_text(Asm_elf_builder *eb, elf64_word symndx, enum elf_amd64_system_v_rela_type type,
+					  elf64_off offset, elf64_sxword addend)
 {
 	elf64_word s = eb->bufs[ASM_SH_SYMTAB].len / sizeof(Elf64_rela);
 	Elf64_rela rela = {
@@ -2600,6 +2659,28 @@ asm_elf_add_rela(Asm_elf_builder *eb, elf64_word symndx, enum elf_amd64_system_v
 	};
 	byte_buffer_insert_bytes(&eb->bufs[ASM_SH_RELA_TEXT], &rela, sizeof(rela));
 	return s;
+}
+
+elf64_word
+asm_elf_add_rela_init_array(Asm_elf_builder *eb, elf64_word symndx, enum elf_amd64_system_v_rela_type type,
+					  elf64_off offset, elf64_sxword addend)
+{
+	elf64_word s = eb->bufs[ASM_SH_SYMTAB].len / sizeof(Elf64_rela);
+	Elf64_rela rela = {
+		.r_info = ELF64_R_INFO(symndx, type),
+		.r_offset = offset,
+		.r_addend = addend,
+	};
+	byte_buffer_insert_bytes(&eb->bufs[ASM_SH_RELA_INIT_ARRAY], &rela, sizeof(rela));
+	return s;
+}
+
+void
+asm_elf_add_init_thunk(Asm_elf_builder *eb, elf64_word sym_num)
+{
+	elf64_off offset = byte_buffer_get_cursor_offset(&eb->bufs[ASM_SH_INIT_ARRAY]);
+	asm_elf_add_rela_init_array(eb, sym_num, R_X86_64_64, offset, 0);
+	byte_buffer_fill_bytes(&eb->bufs[ASM_SH_INIT_ARRAY], 0, sizeof(int64_t));
 }
 
 
@@ -2666,13 +2747,17 @@ asm_elf_resolve_symbols(Asm_module *m, Asm_elf_builder *eb)
 			for (size_t i = 0; i < lbl->patches.len; ++i) {
 				struct asm_lbl_back_patch *p = &lbl->patches.elems[i];
 				ASSERT(p->size == sizeof(int32_t));
-				asm_elf_add_rela(eb, sym_num, type, p->loc, -4);
+				asm_elf_add_rela_text(eb, sym_num, type, p->loc, -4);
 			}
 			lbl->is_resolved = true;
 			da_free(&lbl->patches);
 		} else {
 			ASSERT(lbl->patches.len == 0);
 		}
+		if (lbl->is_init)
+			asm_elf_add_init_thunk(eb, sym_num);
+		if (lbl->is_fini)
+			FAILWITH("TODO: fini");
 	}
 }
 

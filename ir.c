@@ -15,12 +15,29 @@ get_toplevel_proc(struct ir_toplevel *tl, size_t id)
 	return &obj->proc;
 }
 
+KC_PUBLIC struct ir_thunk *
+get_toplevel_thunk(struct ir_toplevel *tl, size_t id)
+{
+	IR_object *obj = get_toplevel_obj(tl, id);
+	assert(obj->tag == IRO_INIT_THUNK);
+	return &obj->thunk;
+}
+
 KC_PRIVATE int
 ir_proc_new_reg(struct ir_toplevel *tl, size_t proc_id)
 {
-	struct ir_proc *proc = get_toplevel_proc(tl, proc_id);
-	assert(proc->regc < UINT16_MAX);
-	return proc->regc++;
+
+	IR_object *obj = get_toplevel_obj(tl, proc_id);
+	switch ((int)obj->tag) {
+	case IRO_PROC:
+		assert(obj->proc.regc < UINT16_MAX);
+		return obj->proc.regc++;
+	case IRO_INIT_THUNK:
+		assert(obj->thunk.regc < UINT16_MAX);
+		return obj->thunk.regc++;
+	default:
+		FAILWITH("[Error] Invalid IR object");
+	}
 }
 
 KC_PUBLIC void
@@ -61,6 +78,25 @@ ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 	da_append(&res->term.args, reg);
 	res->term.op = ir_op_ret;
 }
+
+KC_PUBLIC void
+ast_compile_init_thunk(size_t thunk_id, struct ir_toplevel *tl)
+{
+	struct ir_thunk *thunk = get_toplevel_thunk(tl, thunk_id);
+	struct scope *scope = thunk->scope;
+	struct ir_blk *entry = MEM_ALLOC(struct ir_blk);
+	thunk->entry = entry;
+	int reg = ir_proc_new_reg(tl, thunk_id);
+	da_append(&entry->code, (IR_Ins){
+			.op   = ir_op_loadglobl,
+			.type = thunk->def->type,
+			.dst  = reg,
+			.arg.u32 = thunk->data_id,
+		});
+	struct ir_blk *res = ast_compile_expression(thunk->def->exp, DEST_CPY(reg), thunk_id, entry, scope, tl);
+	res->term.op = ir_op_ret;
+}
+
 
 KC_PRIVATE struct ir_blk *
 dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
@@ -348,6 +384,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				.data.is_static = true,
 				.data.tag  = IRO_DATA,
 				.data.size = length,
+				.data.alignment = 1,
 				.data.dat  = str,
 				.data.link = fmt_str(".LSTR%zu", id),
 			};
@@ -1640,10 +1677,12 @@ ast_compile(struct scope *scope)
 		struct definition *def = st->elems[i].variable.def;
 		struct expression *exp = def->exp;
 		IR_object p = {0};
+		int thunkc = 0;
 		struct strview id_name = token_to_strview(def->id);
 		def->ir_symbol = tl.len;
 		def->is_global = true;
-		if (exp->tag == ast_exp_procedure_literal) {
+		switch ((int)exp->tag) {
+		case ast_exp_procedure_literal: {
 			if (type_is_polymorphic(def->type)) {
 #if KC_DEBUG
 				printf("[Debug] Polymorphic Definition: "SV_FMT" spec count = %u\n",
@@ -1660,7 +1699,8 @@ ast_compile(struct scope *scope)
 				ast_create_proc_object(&p, def, def->type, def->exp);
 				da_append(&tl, p);
 			}
-		} else if (exp->tag == ast_exp_extern_symbol) {
+		} break;
+		case ast_exp_extern_symbol: {
 			if (type_is_procedure(def->type)) {
 				p.tag = IRO_EXTERN_PROC;
 			} else {
@@ -1669,7 +1709,8 @@ ast_compile(struct scope *scope)
 			struct strview name = token_to_strview(exp->tok);
 			p.hddr.link = strndup(name.ptr, name.len);
 			da_append(&tl, p);
-		} else if (exp->tag == ast_exp_literal) {
+		} break;
+		case ast_exp_literal:
 			p.tag = IRO_DATA;
 			p.hddr.is_static = true;
 			p.hddr.link = generate_mangled_name(id_name, def->type);
@@ -1677,6 +1718,7 @@ ast_compile(struct scope *scope)
 			case LITERAL_BOOL:   FAILWITH("TODO: LITERAL_BOOL"); break;
 			case LITERAL_INT:
 				p.data.size = type_size(def->type);
+				p.data.alignment = type_alignment(def->type);
 				p.data.type = def->type;
 				p.data.dat = malloc(p.data.size);
 				assert(p.data.dat != NULL);
@@ -1688,19 +1730,50 @@ ast_compile(struct scope *scope)
 			default:             FAILWITH("Unreachable"); break;
 			}
 			da_append(&tl, p);
-		} else {
-			FAILWITH("TODO: compile toplevel definitions.");
+			break;
+		default: {
+			size_t data_id = tl.len;
+			p.tag = IRO_DATA;
+			p.hddr.is_static = true;
+			p.hddr.link = generate_mangled_name(id_name, def->type);
+			p.data.size = type_size(def->type);
+			p.data.type = def->type;
+			p.data.alignment = type_alignment(def->type);
+			da_append(&tl, p);
+			KCType *type = MEM_ALLOC(KCType);
+			type->tag = ast_type_proc;
+			type->proc.ret = &AST_TYPE_VOID;
+			da_append(&tl, (IR_object){
+					.thunk.tag = IRO_INIT_THUNK,
+					.thunk.scope = scope,
+					.thunk.type = type,
+					.thunk.def = def,
+					.thunk.data_id = data_id,
+					.thunk.link = generate_mangled_name(sv_of_cstr(fmt_str("thunk%d", thunkc++)), type),
+				});
+		} break;
 		}
 	}
 	for (size_t i = 0; i < tl.len; ++i) {
-		if (tl.elems[i].tag == IRO_PROC) {
-			struct strview id_name = token_to_strview(tl.elems[i].proc.def->id);
+		switch ((int)tl.elems[i].tag) {
+		case IRO_PROC: {
 #if KC_DEBUG
+			struct strview id_name = token_to_strview(tl.elems[i].proc.def->id);
 			printf("[Debug] Compiling proc: "SV_FMT" : ", SV_ARGS(id_name));
 			ast_type_fprint(tl.elems[i].proc.def->type, stdout);
 			printf("\n");
 #endif
 			ast_compile_procedure(i, &tl);
+		} break;
+		case IRO_INIT_THUNK: {
+#if KC_DEBUG
+			struct strview id_name = token_to_strview(tl.elems[i].proc.def->id);
+			printf("[Debug] Compiling global initializer: "SV_FMT" : ", SV_ARGS(id_name));
+			ast_type_fprint(tl.elems[i].proc.def->type, stdout);
+			printf("\n");
+#endif
+			ast_compile_init_thunk(i, &tl);
+		} break;
 		}
 	}
 	return tl;

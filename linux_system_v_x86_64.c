@@ -336,7 +336,7 @@ cg_context_first_pass(struct ir_blk *blk, struct cg_context *ctx, CG_module *mod
 			struct cg_address *addr = &ctx->vars[ins->dst];
 			assert(addr->tag == ADDR_NONE);
 			addr->tag = ADDR_SYMBOL;
-			addr->i = ins->arg.i32;
+			addr->i = ins->arg.u32;
 			addr->type = ins->type;
 		} break;
 		case ir_op_loadconst: FAILWITH("TODO: ir_op_loadconst"); break;
@@ -453,6 +453,8 @@ cg_context_first_pass(struct ir_blk *blk, struct cg_context *ctx, CG_module *mod
 							 cg_reg_q_name[addr->wide[0]],
 							 cg_reg_q_name[addr->wide[1]]);
 				}
+			} else if (addr->tag == ADDR_SYMBOL) {
+				/* do nothing? */
 			} else {
 				FAILWITH("TODO: %%%d (addr->tag == %s)",
 						 term->args.elems[0],
@@ -492,11 +494,13 @@ cg_context_first_pass(struct ir_blk *blk, struct cg_context *ctx, CG_module *mod
 }
 
 KC_PRIVATE struct cg_context *
-cg_create_context(struct ir_proc *proc,
+cg_create_context(IR_object *obj,
 				  struct da_pointers *blocks,
 				  struct cg_context *ctx,
 				  CG_module *mod)
 {
+	assert(obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK);
+	struct ir_proc *proc = &obj->proc;
 	ctx->varc = proc->regc;
 	ctx->vars = calloc(proc->regc, sizeof(struct cg_address));
 	ctx->is_leaf = true;
@@ -506,37 +510,38 @@ cg_create_context(struct ir_proc *proc,
 								  ASM_LBL_T_BLOCK,
 								  ASM_LBL_B_LOCAL);
 	ctx->proc_lbl = proc->asm_label;
-	proc->asm_label = ctx->proc_lbl;
 	for (int i = 0; i < CG_REG_COUNT; ++i) {
 		ctx->assigned[i] = REG_FREE;
 	}
 	struct ir_blk *entry = proc->entry;
-	KCType *ret_type = proc->def->type->proc.ret;
-	size_t ret_type_size = type_size(ret_type);
-	int arg_reg = ret_type_size <= 16 ? 0 : 1;
-	for (size_t arg_num = 0; arg_num < entry->args.len; ++arg_num) {
-		KCType *type = proc->node->formals.elems[arg_num].type;
-		size_t ts = type_size(type);
-		size_t ta = type_alignment(type);
-		if (ta < 8) ta = 8;
-		int x = entry->args.elems[arg_num];
-		ctx->vars[x].type = type;
-		if (ts <= 8 && arg_reg < CG_ARG_REG_COUNT) {
-			ctx->vars[x].tag = ADDR_REGISTER;
-			ctx->vars[x].i = cg_arg_regs[arg_reg++];
-		} else if (ts <= 16 && arg_reg < CG_ARG_REG_COUNT - 1) {
-			ctx->vars[x].tag = ADDR_WIDE;
-			ctx->vars[x].wide[0] = cg_arg_regs[arg_reg++];
-			ctx->vars[x].wide[1] = cg_arg_regs[arg_reg++];
-		} else {
-			ctx->vars[x].tag = ADDR_STACK_ARG;
-			ctx->vars[x].i = ctx->arg_stack_size;
-			ctx->arg_stack_size += ts;
-			ctx->arg_stack_size = align_adjust(ctx->arg_stack_size, ta);
+	if (obj->tag == IRO_PROC) {
+		KCType *ret_type = proc->def->type->proc.ret;
+		size_t ret_type_size = type_size(ret_type);
+		int arg_reg = ret_type_size <= 16 ? 0 : 1;
+		for (size_t arg_num = 0; arg_num < entry->args.len; ++arg_num) {
+			KCType *type = proc->node->formals.elems[arg_num].type;
+			size_t ts = type_size(type);
+			size_t ta = type_alignment(type);
+			if (ta < 8) ta = 8;
+			int x = entry->args.elems[arg_num];
+			ctx->vars[x].type = type;
+			if (ts <= 8 && arg_reg < CG_ARG_REG_COUNT) {
+				ctx->vars[x].tag = ADDR_REGISTER;
+				ctx->vars[x].i = cg_arg_regs[arg_reg++];
+			} else if (ts <= 16 && arg_reg < CG_ARG_REG_COUNT - 1) {
+				ctx->vars[x].tag = ADDR_WIDE;
+				ctx->vars[x].wide[0] = cg_arg_regs[arg_reg++];
+				ctx->vars[x].wide[1] = cg_arg_regs[arg_reg++];
+			} else {
+				ctx->vars[x].tag = ADDR_STACK_ARG;
+				ctx->vars[x].i = ctx->arg_stack_size;
+				ctx->arg_stack_size += ts;
+				ctx->arg_stack_size = align_adjust(ctx->arg_stack_size, ta);
+			}
 		}
 	}
-	da_foreach(blk, blocks) {
-		cg_context_first_pass(*blk, ctx, mod);
+	for (size_t i = 0; i < blocks->len; ++i) {
+		cg_context_first_pass(blocks->elems[i], ctx, mod);
 	}
 	assert(ctx->funargs.len == 0);
 	return ctx;
@@ -803,7 +808,7 @@ emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct cg_procedure *code)
 	struct ir_toplevel *tl = dat;
 	struct cg_context *ctx = &code->ctx;
 	struct cg_address *dst = &ctx->vars[ins->dst];
-	union ir_object *obj = &tl->elems[ins->arg.u32];
+	IR_object *obj = &tl->elems[ins->arg.u32];
 	KCType *type = ins->type;
 	assert(dst->tag == ADDR_WIDE || dst->tag == ADDR_WIDE_ARG || dst->tag == ADDR_BLK_ARG);
 	assert(obj->tag == IRO_DATA);
@@ -823,6 +828,7 @@ emit_op_load_ADDR_WIDE__GLOBL(IR_Ins *ins, void *dat, struct cg_procedure *code)
 		break;
 	case IRO_EXTERN_DATA: FAILWITH("TODO: IRO_EXTERN_DATA"); break;
 	case IRO_EXTERN_PROC: FAILWITH("TODO: IRO_EXTERN_PROC"); break;
+	case IRO_INIT_THUNK:  FAILWITH("TODO: IRO_INIT_THUNK");  break;
 	default: FAILWITH("Unreachable"); break;
 	}
 	asm_mov(code->m, ZQ, INT(obj->data.size / type_size(base_type)), REG(dst->wide[1]));
@@ -835,14 +841,16 @@ emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct cg_procedure *c
 	struct ir_toplevel *tl = dat;
 	struct cg_context *ctx = &code->ctx;
 	struct cg_address *dst = &ctx->vars[ins->dst];
-	union ir_object *obj = &tl->elems[ins->arg.u32];
+	IR_object *obj = &tl->elems[ins->arg.u32];
 	KCType *type = ins->type;
 	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
 	assert(type->tag != ast_type_array);
 	cg_reserve_register(ctx, dst->i, ins->dst);
 	switch (obj->hddr.tag) {
 	case IRO_PROC: FAILWITH("TODO: IRO_PROC"); break;
-	case IRO_DATA: FAILWITH("TODO: IRO_DATA"); break;
+	case IRO_DATA: {
+		asm_mov(code->m, cg_suffix(type), MEM_LR(obj->hddr.asm_label, 0, RIP), REG(dst->i));
+	} break;
 	case IRO_EXTERN_DATA: {
 		if (code->m->is_jit) {
 			/* asm_mov(code->m, cg_suffix(type), MEM_LR(obj->hddr.asm_label, 0, RIP), REG(dst->i)); */
@@ -853,6 +861,7 @@ emit_op_load_ADDR_REGISTER__GLOBL(IR_Ins *ins, void *dat, struct cg_procedure *c
 		}
 	} break;
 	case IRO_EXTERN_PROC: FAILWITH("TODO: IRO_EXTERN_PROC"); break;
+	case IRO_INIT_THUNK:  FAILWITH("TODO: IRO_INIT_THUNK");  break;
 	default: FAILWITH("Unreachable"); break;
 	}
 }
@@ -1205,7 +1214,9 @@ defer_emit_div_mod(IR_Ins *ins, void *dat, struct cg_procedure *code)
 
 KC_PRIVATE void
 cg_emit_basic_op(enum asm_op_code op, IR_Ins *ins, struct cg_address *dst,
-				 struct cg_address *x, struct cg_address *y, struct cg_procedure *code)
+				 struct cg_address *x, struct cg_address *y,
+				 struct ir_toplevel *tl,
+				 struct cg_procedure *code)
 {
 	struct cg_context *ctx = &code->ctx;
 	KCType *type = ins->type;
@@ -1319,6 +1330,12 @@ cg_emit_basic_op(enum asm_op_code op, IR_Ins *ins, struct cg_address *dst,
 		cg_unassign_register(ctx, y->i);
 		dst->i = cg_reserve_register(ctx, x->i, ins->dst);
 		dst->tag = ADDR_REGISTER;
+	} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_SYMBOL, ADDR_IMM_INT)) {
+		dst->i = cg_assign_register(ctx, ins->dst);
+		dst->tag = ADDR_REGISTER;
+		IR_object *obj = &tl->elems[x->i];
+		asm_mov(code->m, cg_suffix(type), MEM_LR(obj->hddr.asm_label, 0, RIP), REG(dst->i));
+		asm_inst2(code->m, op, cg_suffix(type), INT(y->i), REG(dst->i));
 	} else {
 		FAILWITH("Unhandled case: `%s`; MATCH_ADDR3(%s, %s, %s)",
 				 asm_op_code_to_str(op),
@@ -1329,8 +1346,7 @@ cg_emit_basic_op(enum asm_op_code op, IR_Ins *ins, struct cg_address *dst,
 }
 
 KC_PRIVATE void
-cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *proc,
-			   struct ir_toplevel *tl, struct cg_procedure *code)
+cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl, struct cg_procedure *code)
 {
 	struct cg_context *ctx = &code->ctx;
 	struct ir_blk *blk = blocks->elems[blk_id];
@@ -1409,6 +1425,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 							 &ctx->vars[ins->dst],
 							 &ctx->vars[ins->arg.rx[0]],
 							 &ctx->vars[ins->arg.rx[1]],
+							 tl,
 							 code);
 			break;
 		case ir_op_cmpe:
@@ -1427,6 +1444,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 							 &dst,
 							 &ctx->vars[ins->arg.rx[0]],
 							 &ctx->vars[ins->arg.rx[1]],
+							 tl,
 							 code);
 			ctx->vars[ins->dst].tag = ADDR_FLAGS;
 			assert(dst.tag == ADDR_REGISTER);
@@ -1927,7 +1945,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 			} else if (MATCH_ADDR2(ADDR_STACK, ADDR_IMM_INT)) {
 				asm_mov(code->m, cg_suffix(ins->type), INT(x->i), MEM_DR(dst->i, RBP));
 			} else if (MATCH_ADDR2(ADDR_REGISTER, ADDR_SYMBOL)) {
-				union ir_object *obj = &tl->elems[x->i];
+				IR_object *obj = &tl->elems[x->i];
 				assert(obj->tag == IRO_DATA);
 				if (type_is_slice(ins->type)) {
 					KCType *base_type = ins->type->slice;
@@ -1945,7 +1963,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 					FAILWITH("TODO: MATCH_ADDR2(ADDR_REGISTER, ADDR_SYMBOL)");
 				}
 			} else if (MATCH_ADDR2(ADDR_STACK, ADDR_SYMBOL)) {
-				union ir_object *obj = &tl->elems[x->i];
+				IR_object *obj = &tl->elems[x->i];
 				assert(obj->tag == IRO_DATA);
 				if (type_is_slice(ins->type)) {
 					KCType *base_type = ins->type->slice;
@@ -1986,6 +2004,9 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 						MEM_DR(x->stack[0] + x->stack[1], RBP), REG(tmp));
 				asm_mov(code->m, cg_suffix(ins->type), REG(tmp), MEM_DR(dst->i, RBP));
 				cg_unassign_register(ctx, tmp);
+			} else if (MATCH_ADDR2(ADDR_SYMBOL, ADDR_REGISTER)) {
+				IR_object *obj = &tl->elems[dst->i];
+				asm_mov(code->m, cg_suffix(ins->type), REG(x->i), MEM_LR(obj->hddr.asm_label, 0, RIP));
 			} else {
 				printf("dst = %%%d\n", ins->dst);
 				printf("x   = %%%d\n", ins->arg.rx[0]);
@@ -2175,6 +2196,12 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, UNUSED struct ir_proc *
 				asm_mov(code->m, cg_suffix(ret->type), INT(ret->i), REG(cg_ret_regs[0]));
 			} else if (ret->tag == ADDR_NONE) {
 				/* do nothing */
+			} else if (ret->tag == ADDR_SYMBOL) {
+				/* do nothing */
+				size_t ts = type_size(ret->type);
+				assert(ts <= 8);
+				IR_object *obj = &tl->elems[ret->i];
+				asm_mov(code->m, cg_suffix(ret->type), MEM_LR(obj->hddr.asm_label, 0, RIP), REG(cg_ret_regs[0]));
 			} else {
 				FAILWITH("TODO: ret->tag == %s", cg_addr_tag_to_str(ret->tag));
 			}
@@ -2246,7 +2273,7 @@ cg_emit_callee_save_code(size_t offset, struct cg_procedure *code)
 }
 
 KC_PRIVATE void
-cg_emit_prologue_and_epilogue(UNUSED struct ir_proc *proc, struct cg_procedure *code, uint32_t proc_begin)
+cg_emit_prologue_and_epilogue(struct cg_procedure *code, uint32_t proc_begin)
 {
 	Asm_module *m = code->m;
 	struct cg_context *ctx = &code->ctx;
@@ -2293,17 +2320,20 @@ cg_emit_prologue_and_epilogue(UNUSED struct ir_proc *proc, struct cg_procedure *
 }
 
 KC_PUBLIC void
-cg_emit_procedure(CG_module *mod, struct ir_proc *proc, struct ir_toplevel *tl)
+cg_emit_procedure(CG_module *mod, IR_object *obj, struct ir_toplevel *tl)
 {
-	struct da_pointers blks = ir_blk_reverse_post_order(proc->entry);
+	assert(obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK);
+	struct da_pointers blks = ir_blk_reverse_post_order(obj->proc.entry);
 	struct cg_procedure *code = da_allot(&mod->procs);
+	if (obj->tag == IRO_INIT_THUNK)
+		da_append(&mod->thunks, obj->hddr.asm_label);
 	code->m = &mod->asm_mod;
-	cg_create_context(proc, &blks, &code->ctx, mod);
+	cg_create_context(obj, &blks, &code->ctx, mod);
 	uint32_t proc_begin = asm_get_insertion_point(&mod->asm_mod);
 	for (size_t i = 0; i < blks.len; ++i) {
-		cg_emit_block(&blks, i, proc, tl, code);
+		cg_emit_block(&blks, i, tl, code);
 	}
-	cg_emit_prologue_and_epilogue(proc, code, proc_begin);
+	cg_emit_prologue_and_epilogue(code, proc_begin);
 	da_free(&blks);
 }
 
@@ -2311,7 +2341,7 @@ KC_PUBLIC void
 cg_emit_data(CG_module *mod, struct ir_data *data)
 {
 	Asm_module *m = &mod->asm_mod;
-	asm_dir_align(m, 16);
+	asm_dir_align(m, data->alignment);
 	asm_dir_label(m, data->asm_label);
 	size_t size = data->size;
 	size_t q = size / 8;
@@ -2319,18 +2349,24 @@ cg_emit_data(CG_module *mod, struct ir_data *data)
 	size_t d = size / 4;
 	size %= 4;
 	size_t b = size;
-	uint8_t *ptr = data->dat;
-	while (q--) {
-		asm_dir_int(m, ZQ, INT(*(uint64_t *)ptr));
-		ptr += 8;
-	}
-	while (d--) {
-		asm_dir_int(m, ZD, INT(*(uint32_t *)ptr));
-		ptr += 4;
-	}
-	while (b--) {
-		asm_dir_int(m, ZB, INT(*(uint8_t *)ptr));
-		ptr += 1;
+	if (data->dat) {
+		uint8_t *ptr = data->dat;
+		while (q--) {
+			asm_dir_int(m, ZQ, INT(*(uint64_t *)ptr));
+			ptr += 8;
+		}
+		while (d--) {
+			asm_dir_int(m, ZD, INT(*(uint32_t *)ptr));
+			ptr += 4;
+		}
+		while (b--) {
+			asm_dir_int(m, ZB, INT(*(uint8_t *)ptr));
+			ptr += 1;
+		}
+	} else {
+		while (q--) asm_dir_int(m, ZQ, INT(0));
+		while (d--) asm_dir_int(m, ZD, INT(0));
+		while (b--) asm_dir_int(m, ZB, INT(0));
 	}
 }
 
@@ -2338,8 +2374,11 @@ KC_PUBLIC void
 cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit)
 {
 	asm_init_module(&mod->asm_mod, .is_jit = is_jit);
-	void *dl_handle = dlopen(NULL, RTLD_NOW);
-	if (dl_handle == NULL) FAILWITH("[ERROR] %s", dlerror());
+	void *dl_handle = NULL;
+	if (is_jit) {
+		dl_handle = dlopen(NULL, RTLD_NOW);
+		if (dl_handle == NULL) FAILWITH("[ERROR] %s", dlerror());
+	}
 	/* initialize asm labels */
 	for (size_t i = 0; i < ir->len; ++i) {
 		IR_object *obj = &ir->elems[i];
@@ -2348,27 +2387,43 @@ cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit)
 			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link, ASM_LBL_T_FUNC, ASM_LBL_B_GLOBAL);
 			break;
 		case IRO_EXTERN_PROC: {
-			uintptr_t ptr = (uintptr_t)dlsym(dl_handle, obj->hddr.link);
-			if (ptr == 0) FAILWITH("[ERROR] %s", dlerror());
-			obj->hddr.asm_label = asm_make_extern_label(&mod->asm_mod, obj->hddr.link, ASM_LBL_T_FUNC, ptr);
+			uintptr_t ptr = 0;
+			if (is_jit) {
+				ptr = (uintptr_t)dlsym(dl_handle, obj->hddr.link);
+				if (ptr == 0) FAILWITH("[ERROR] %s", dlerror());
+			}
+			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link,
+												 ASM_LBL_T_FUNC, ASM_LBL_B_GLOBAL,
+												 .offset = ptr, .is_extern = true);
 		} break;
 		case IRO_DATA:
-			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link, ASM_LBL_T_DATA, ASM_LBL_B_GLOBAL);
+			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link,
+												 ASM_LBL_T_DATA, ASM_LBL_B_GLOBAL);
 			cg_emit_data(mod, &obj->data);
 			break;
 		case IRO_EXTERN_DATA: {
-			uintptr_t ptr = (uintptr_t)dlsym(dl_handle, obj->hddr.link);
-			if (ptr == 0) FAILWITH("[ERROR] %s", dlerror());
-			obj->hddr.asm_label = asm_make_extern_label(&mod->asm_mod, obj->hddr.link, ASM_LBL_T_DATA, ptr);
+			uintptr_t ptr = 0;
+			if (is_jit) {
+				ptr = (uintptr_t)dlsym(dl_handle, obj->hddr.link);
+				if (ptr == 0) FAILWITH("[ERROR] %s", dlerror());
+			}
+			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link,
+												 ASM_LBL_T_DATA, ASM_LBL_B_GLOBAL,
+												 .offset = ptr, .is_extern = true);
 		} break;
+		case IRO_INIT_THUNK:
+			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link,
+												 ASM_LBL_T_FUNC, ASM_LBL_B_GLOBAL,
+												 .is_init = true);
+			break;
 		default: FAILWITH("Unreachable"); break;
 		}
 	}
-	dlclose(dl_handle);
+	if (is_jit) dlclose(dl_handle);
 	/* generate code */
 	for (size_t i = 0; i < ir->len; ++i) {
 		IR_object *obj = &ir->elems[i];
-		if (obj->tag == IRO_PROC)
-			cg_emit_procedure(mod, &obj->proc, ir);
+		if (obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK)
+			cg_emit_procedure(mod, obj, ir);
 	}
 }

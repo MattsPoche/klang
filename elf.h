@@ -103,24 +103,31 @@ enum elf_file_type {
 
 
 enum elf_section_type {
-	SHT_NULL	 = 0,			/* Marks an unused section header SHT_PROGBITS 1 Contains
-								   information defined by the program */
-	SHT_PROGBITS = 1,           /* Contains information defined by the program */
-	SHT_SYMTAB	 = 2,			/* Contains a linker symbol table */
-	SHT_STRTAB	 = 3,			/* Contains a string table */
-	SHT_RELA	 = 4,			/* Contains “Rela” type relocation entries */
-	SHT_HASH	 = 5,			/* Contains a symbol hash table */
-	SHT_DYNAMIC	 = 6,			/* Contains dynamic linking tables */
-	SHT_NOTE	 = 7,			/* Contains note information */
-	SHT_NOBITS	 = 8,			/* Contains uninitialized space; does not occupy any space
-								   in the file */
-	SHT_REL		 = 9,			/* Contains “Rel” type relocation entries */
-	SHT_SHLIB	 = 10,			/* Reserved */
-	SHT_DYNSYM	 = 11,			/* Contains a dynamic loader symbol table */
-	SHT_LOOS	 = 0x60000000,	/* Environment-specific use */
-	SHT_HIOS	 = 0x6FFFFFFF,
-	SHT_LOPROC	 = 0x70000000,	/* Processor-specific use */
-	SHT_HIPROC	 = 0x7FFFFFFF,
+	SHT_NULL		  = 0,			/* Marks an unused section header SHT_PROGBITS 1 Contains
+									   information defined by the program */
+	SHT_PROGBITS	  = 1,          /* Contains information defined by the program */
+	SHT_SYMTAB		  = 2,			/* Contains a linker symbol table */
+	SHT_STRTAB		  = 3,			/* Contains a string table */
+	SHT_RELA		  = 4,			/* Contains “Rela” type relocation entries */
+	SHT_HASH		  = 5,			/* Contains a symbol hash table */
+	SHT_DYNAMIC		  = 6,			/* Contains dynamic linking tables */
+	SHT_NOTE		  = 7,			/* Contains note information */
+	SHT_NOBITS		  = 8,			/* Contains uninitialized space; does not occupy any space
+									   in the file */
+	SHT_REL			  = 9,			/* Contains “Rel” type relocation entries */
+	SHT_SHLIB		  = 10,			/* Reserved */
+	SHT_DYNSYM		  = 11,			/* Contains a dynamic loader symbol table */
+	SHT_INIT_ARRAY	  = 14,  		/* Array of constructors */
+	SHT_FINI_ARRAY	  = 15,  		/* Array of destructors */
+	SHT_PREINIT_ARRAY = 16,  		/* Array of pre-constructors */
+	SHT_GROUP		  = 17,  		/* Section group */
+	SHT_SYMTAB_SHNDX  = 18,  		/* Extended section indices */
+	SHT_RELR		  = 19,         /* RELR relative relocations */
+	SHT_NUM			  = 20,         /* Number of defined types.  */
+	SHT_LOOS		  = 0x60000000,	/* Environment-specific use */
+	SHT_HIOS		  = 0x6FFFFFFF,
+	SHT_LOPROC		  = 0x70000000,	/* Processor-specific use */
+	SHT_HIPROC		  = 0x7FFFFFFF,
 };
 
 enum elf_section_attribute {

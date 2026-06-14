@@ -910,6 +910,12 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 	return exp;
 }
 
+#define CHK_OP_PREV(cond) if (op_prev != (cond)) UNEXPECTED_TOKEN(next_token(p, NULL))
+
+#pragma push_macro("ASSERT")
+#undef ASSERT
+#define ASSERT(...) FAILWITH("TODO: replace this assert with an actual error message.")
+
 KC_PRIVATE struct expression *
 parse_expression(Parser *p, struct scope *scope)
 {
@@ -923,8 +929,8 @@ parse_expression(Parser *p, struct scope *scope)
 		exp = MEM_ALLOC(struct expression);
 	repeat:
 		tok = NULL;
-		enum token_type tt = peek_token(p)->tt;
-		switch (tt) {
+		tok = peek_token(p);
+		switch (tok->tt) {
 		case tt_let:
 			if (op_prev == false) goto flush; // in this case let acts as a terminator
 			op_prev = false;
@@ -938,13 +944,13 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_if:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			da_append(&out, parse_if(p, exp, scope));
 			break;
 		case tt_while:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_while;
@@ -955,7 +961,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_case: {
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_case;
@@ -1009,7 +1015,9 @@ parse_expression(Parser *p, struct scope *scope)
 				}
 			} while (!ACCEPT(peek_token(p), tt_end));
 			next_token(p, NULL);
-			assert(c->branches.len > 0);
+			if (c->branches.len == 0) {
+				log_error_and_die(p->lexer.filename, tok, "Case expression has no branches.");
+			}
 			da_append(&out, exp);
 		} break;
 		case tt_underscore: FAILWITH("TODO: tt_underscore"); break;
@@ -1042,7 +1050,7 @@ parse_expression(Parser *p, struct scope *scope)
 		case tt_typevar: FAILWITH("TODO: tt_typevar"); break;
 		case tt_struct: FAILWITH("TODO: tt_struct"); break;
 		case tt_sizeof:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_size_of;
@@ -1057,7 +1065,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_return:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_return;
@@ -1073,7 +1081,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_extern:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, NULL);
 			EXPECT(next_token(p, NULL), tt_lparen);
@@ -1083,7 +1091,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_ptr:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_ptr;
@@ -1093,7 +1101,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_len:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_len;
@@ -1103,7 +1111,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_ident:
-			if (op_prev == false) UNEXPECTED_TOKEN(next_token(p, NULL));
+			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
@@ -1135,7 +1143,7 @@ parse_expression(Parser *p, struct scope *scope)
 			break;
 		case tt_dollar: FAILWITH("TODO: tt_dollar"); break;
 		case tt_string:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, NULL);
@@ -1144,19 +1152,20 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_char: {
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, NULL);
 			exp->lit.tag = LITERAL_CHAR;
 			struct strview sv = sv_unescape_string(sv_drop_char(token_to_strview(exp->tok)));
-			assert(sv.len == 1);
+			if (sv.len != 1)
+				FAILWITH("Unreachable. Possibly something wrong with lexer?");
 			exp->lit.i = sv.ptr[0];
 			free(sv.ptr);
 			da_append(&out, exp);
 		} break;
 		case tt_true:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
@@ -1165,7 +1174,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_false:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
@@ -1174,26 +1183,28 @@ parse_expression(Parser *p, struct scope *scope)
 			da_append(&out, exp);
 			break;
 		case tt_intlit:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_literal;
 			exp->lit.tag = LITERAL_INT;
-			assert(sv_to_int(token_to_strview(tok), &exp->lit.i));
+			if (!sv_to_int(token_to_strview(tok), &exp->lit.i))
+				FAILWITH("Unreachable. Something is wrong with the lexer?");
 			da_append(&out, exp);
 			break;
 		case tt_hexlit:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tag = ast_exp_literal;
 			exp->tok = next_token(p, &tok);
 			exp->lit.tag = LITERAL_INT;
-			assert(sv_to_int(token_to_strview(tok), &exp->lit.i));
+			if (!sv_to_int(token_to_strview(tok), &exp->lit.i))
+				FAILWITH("Unreachable. Something is wrong with the lexer?");
 			da_append(&out, exp);
 			break;
 		case tt_floatlit: FAILWITH("TODO: tt_floatlit"); break;
 		case tt_undefined:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
 			exp->tok = next_token(p, &tok);
 			exp->tag = ast_exp_undefined;
@@ -1201,9 +1212,9 @@ parse_expression(Parser *p, struct scope *scope)
 			break;
 		case tt_noreturn: FAILWITH("TODO: tt_noreturn"); break;
 		case tt_lbrace:
-			next_token(p, &exp->tok);
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			op_prev = false;
+			next_token(p, &exp->tok);
 			parse_initializer_list(p, scope, exp);
 			da_append(&out, exp);
 			break;
@@ -1241,7 +1252,7 @@ parse_expression(Parser *p, struct scope *scope)
 			shunt(exp, &out, &ops);
 		} break;
 		case tt_rparen:
-			assert(op_prev == false);
+			CHK_OP_PREV(false);
 			if (shunt(NULL, &out, &ops)) {
 				next_token(p, NULL);
 				goto repeat;
@@ -1250,7 +1261,7 @@ parse_expression(Parser *p, struct scope *scope)
 			}
 			break;
 		case tt_as:
-			assert(op_prev == false);
+			CHK_OP_PREV(false);
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_unary;
 			exp->cast.op = op_cast;
@@ -1285,20 +1296,20 @@ parse_expression(Parser *p, struct scope *scope)
 		case tt_pipe_pipe:
 		case tt_and_and:
 		case tt_period:
-			assert(op_prev == false);
+			CHK_OP_PREV(false);
 			op_prev = true;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_binary;
-			exp->bin.op = (enum operator)tt;
+			exp->bin.op = (enum operator)tok->tt;
 			shunt(exp, &out, &ops);
 			break;
 			/* unary ops */
 		case tt_tilde:
 		case tt_bang:
-			assert(op_prev == true);
+			CHK_OP_PREV(true);
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_unary;
-			exp->una.op = (enum operator)tt;
+			exp->una.op = (enum operator)tok->tt;
 			shunt(exp, &out, &ops);
 			break;
 			/* binary or unary ops */
@@ -1311,7 +1322,7 @@ parse_expression(Parser *p, struct scope *scope)
 			} else {
 				op_prev = true;
 				exp->tag = ast_exp_binary;
-				exp->bin.op = (enum operator)tt;
+				exp->bin.op = (enum operator)tok->tt;
 				shunt(exp, &out, &ops);
 			}
 			break;
@@ -1324,7 +1335,7 @@ parse_expression(Parser *p, struct scope *scope)
 			} else {
 				op_prev = true;
 				exp->tag = ast_exp_binary;
-				exp->bin.op = (enum operator)tt;
+				exp->bin.op = (enum operator)tok->tt;
 				shunt(exp, &out, &ops);
 			}
 			break;
@@ -1337,7 +1348,7 @@ parse_expression(Parser *p, struct scope *scope)
 			} else {
 				op_prev = true;
 				exp->tag = ast_exp_binary;
-				exp->bin.op = (enum operator)tt;
+				exp->bin.op = (enum operator)tok->tt;
 				shunt(exp, &out, &ops);
 			}
 			break;
@@ -1350,7 +1361,7 @@ parse_expression(Parser *p, struct scope *scope)
 			} else {
 				op_prev = true;
 				exp->tag = ast_exp_binary;
-				exp->bin.op = (enum operator)tt;
+				exp->bin.op = (enum operator)tok->tt;
 				shunt(exp, &out, &ops);
 			}
 			break;
@@ -1369,7 +1380,7 @@ parse_expression(Parser *p, struct scope *scope)
 		case tt_minus_more:
 		case tt_period_period:
 		case tt_eof:
-			assert(op_prev == false);
+			CHK_OP_PREV(false);
 			goto flush;
 		case TOKEN_TYPE_MAX:
 			FAILWITH("Invalid token (parse_expression)");
@@ -1384,6 +1395,8 @@ flush:
 	da_free(&ops);
 	return exp;
 }
+#undef ASSERT
+#pragma pop_macro("ASSERT")
 
 KC_PRIVATE const char *
 ast_binop_to_str(enum binop op)
