@@ -72,7 +72,7 @@ compile_file(const char *filename, bool is_jit)
 #if KC_DEBUG
 	puts("[Debug]");
 	for (size_t i = 0; i < ir.len; ++i) {
-		if (ir.elems[i].tag == IRO_PROC || ir.elems[i].tag == IRO_INIT_THUNK) {
+		if (ir.elems[i].tag == IRO_PROC) {
 			ir_proc_fprint(&ir.elems[i].proc, stdout);
 			fputc('\n', stdout);
 		}
@@ -184,7 +184,7 @@ fprint_disassembly(Asm_module *m, FILE *f)
 	char line[0x1000];
 	char temp_name[] = "XXXXXX";
 	int fd = mkstemp(temp_name);
-	write(fd, m->mc.data, m->mc.len);
+	write(fd, m->sections[ASM_SECTION_TEXT].data, m->sections[ASM_SECTION_TEXT].len);
 	close(fd);
 	FILE *pipe = popen(fmt_str("objdump -D -b binary -m i386:x64-32 %s", temp_name), "r");
 	fgets(line, sizeof(line), pipe);

@@ -1734,8 +1734,8 @@ ast_compile(struct scope *scope)
 		default: {
 			size_t data_id = tl.len;
 			p.tag = IRO_DATA;
-			p.hddr.is_static = true;
-			p.hddr.link = generate_mangled_name(id_name, def->type);
+			p.data.is_static = true;
+			p.data.link = generate_mangled_name(id_name, def->type);
 			p.data.size = type_size(def->type);
 			p.data.type = def->type;
 			p.data.alignment = type_alignment(def->type);
@@ -1767,8 +1767,8 @@ ast_compile(struct scope *scope)
 		} break;
 		case IRO_INIT_THUNK: {
 #if KC_DEBUG
-			struct strview id_name = token_to_strview(tl.elems[i].proc.def->id);
-			printf("[Debug] Compiling global initializer: "SV_FMT" : ", SV_ARGS(id_name));
+			const char *id_name = tl.elems[i].thunk.link;
+			printf("[Debug] Compiling global initializer: %s [%zu]: ", id_name, i);
 			ast_type_fprint(tl.elems[i].proc.def->type, stdout);
 			printf("\n");
 #endif

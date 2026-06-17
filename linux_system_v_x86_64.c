@@ -2323,6 +2323,7 @@ KC_PUBLIC void
 cg_emit_procedure(CG_module *mod, IR_object *obj, struct ir_toplevel *tl)
 {
 	assert(obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK);
+	asm_dir_section(&mod->asm_mod, ASM_SECTION_TEXT);
 	struct da_pointers blks = ir_blk_reverse_post_order(obj->proc.entry);
 	struct cg_procedure *code = da_allot(&mod->procs);
 	if (obj->tag == IRO_INIT_THUNK)
@@ -2341,6 +2342,7 @@ KC_PUBLIC void
 cg_emit_data(CG_module *mod, struct ir_data *data)
 {
 	Asm_module *m = &mod->asm_mod;
+	asm_dir_section(m, ASM_SECTION_DATA);
 	asm_dir_align(m, data->alignment);
 	asm_dir_label(m, data->asm_label);
 	size_t size = data->size;
@@ -2413,8 +2415,11 @@ cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit)
 		} break;
 		case IRO_INIT_THUNK:
 			obj->hddr.asm_label = asm_make_label(&mod->asm_mod, obj->hddr.link,
-												 ASM_LBL_T_FUNC, ASM_LBL_B_GLOBAL,
-												 .is_init = true);
+												 ASM_LBL_T_FUNC, ASM_LBL_B_GLOBAL);
+			if (!is_jit) {
+				asm_dir_section(&mod->asm_mod, ASM_SECTION_INIT_ARRAY);
+				asm_dir_int(&mod->asm_mod, ZQ, LABEL(obj->hddr.asm_label, 0));
+			}
 			break;
 		default: FAILWITH("Unreachable"); break;
 		}

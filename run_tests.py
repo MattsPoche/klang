@@ -107,6 +107,8 @@ slice_output = "Hello, World\nHello\nWorld\n0 1 2 3 4 \n0 1 2 \n2 3 4 \n"
 constexpr_output = "489\n-351\n28980\n0\n481\n4\nfalse\ntrue\nfalse\ntrue\nfalse\n"
 generic_types = "69\n420\n1303948\n38438273\n32 33 34 35 36 37 38 \n69\nHello, World\n690\n6969\n"
 simple_union = "argc = 1\nfile = ./a.out\nOpened file: ./a.out\nError code: 2\nNo such file or directory\n"
+global_variables = "Hello, World!!!\n69\n489\n"
+
 
 tests = [
 	{"file_name": "tests/fibonacci.k",			   "exit_code": 89,  "output": None},
@@ -123,6 +125,7 @@ tests = [
 	{"file_name": "tests/polymorphic_procedure.k", "exit_code": 0,   "output": "69\n420\n-348\n"},
 	{"file_name": "tests/generic_types.k",         "exit_code": 0,   "output": generic_types},
 	{"file_name": "tests/simple_union.k",          "exit_code": 0,   "output": simple_union},
+	{"file_name": "tests/global_variables.k",      "exit_code": 0,   "output": global_variables},
 ]
 
 def run_test(file_name, exit_code, output):
