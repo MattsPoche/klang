@@ -232,7 +232,7 @@ struct type_env {
 
 struct typing_context {
 	struct scope    *scope;
-	struct kc_type     *ret;
+	struct kc_type  *ret;
 	struct type_env *env;
 };
 

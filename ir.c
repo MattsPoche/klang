@@ -489,7 +489,6 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		}
 	} break;
 	case ast_exp_array_initializer:
-		printf("Here!! %s\n", ast_type_to_str(exp->type));
 		[[fallthrough]];
 	case ast_exp_struct_initializer: {
 		switch (dst.tag) {
@@ -504,7 +503,6 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			}
 		} [[fallthrough]];
 		case DST_VAL: {
-			printf("Here!! %s\n", ast_type_to_str(exp->type));
 			int tmp = ir_proc_new_reg(tl, proc_id);
 			da_append(&blk->code, (IR_Ins){
 					.op      = ir_op_alloca,
@@ -588,7 +586,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		assert(def != NULL);
 		size_t ir_symbol;
 		if (type_is_polymorphic(def->type)) {
-			struct type_spec *instance = lookup_poly_proc_spec(NULL, def, exp->type, scope);
+			struct type_spec *instance = lookup_poly_proc_spec(def, exp->type, scope);
 			if (instance == NULL) {
 				FAILWITH(SV_FMT"; %s", SV_ARGS(token_to_strview(exp->tok)), ast_type_to_str(exp->type));
 			}
@@ -1634,17 +1632,16 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	return NULL;
 }
 
-KC_PRIVATE char *
+KC_PRIVATE const char *
 generate_mangled_name(struct strview ident, KCType *type)
 {
-	char *ptr;
-	size_t sz;
-	FILE *f = open_memstream(&ptr, &sz);
+	static char buf[1024];
+	FILE *f = fmemopen(buf, sizeof(buf), "w");
 	assert(f != NULL);
 	fprintf(f, SV_FMT"#", SV_ARGS(ident));
 	ast_type_fprint(type, f);
 	fclose(f);
-	return ptr;
+	return str_dup(buf, strlen(buf));
 }
 
 KC_PRIVATE void
@@ -1654,7 +1651,7 @@ ast_create_proc_object(IR_object *p, struct definition *def, KCType *type, struc
 	struct strview id_name = token_to_strview(def->id);
 	if (sv_is_equal(id_name, sv_of_cstr("main"))) {
 		/* entry point */
-		p->proc.link = strndup(id_name.ptr, id_name.len);
+		p->proc.link = str_dup(id_name.ptr, id_name.len);
 		p->proc.is_static = false;
 	} else {
 		p->proc.link = generate_mangled_name(id_name, type);
@@ -1666,11 +1663,11 @@ ast_create_proc_object(IR_object *p, struct definition *def, KCType *type, struc
 	p->proc.regc = 0;
 }
 
-KC_PUBLIC struct ir_toplevel
-ast_compile(struct scope *scope)
+KC_PRIVATE void
+ast_compile_impl(struct scope *scope, struct ir_toplevel *tl)
 {
+	if (scope->parent) ast_compile_impl(scope->parent, tl);
 	struct symtbl *st = &scope->symtbl;
-	struct ir_toplevel tl = {0};
 	for (size_t i = 0; i < st->len; ++i) {
 		if (st->elems[i].tag == SYMTBL_VALCONS) continue;
 		assert(st->elems[i].tag == SYMTBL_VARIABL);
@@ -1679,7 +1676,7 @@ ast_compile(struct scope *scope)
 		IR_object p = {0};
 		int thunkc = 0;
 		struct strview id_name = token_to_strview(def->id);
-		def->ir_symbol = tl.len;
+		def->ir_symbol = tl->len;
 		def->is_global = true;
 		switch ((int)exp->tag) {
 		case ast_exp_procedure_literal: {
@@ -1692,12 +1689,12 @@ ast_compile(struct scope *scope)
 					struct type_spec *spec_def = &def->specs.elems[i];
 					if (type_is_polymorphic(spec_def->type)) continue;
 					ast_create_proc_object(&p, def, spec_def->type, spec_def->exp);
-					spec_def->ir_symbol = tl.len;
-					da_append(&tl, p);
+					spec_def->ir_symbol = tl->len;
+					da_append(tl, p);
 				}
 			} else {
 				ast_create_proc_object(&p, def, def->type, def->exp);
-				da_append(&tl, p);
+				da_append(tl, p);
 			}
 		} break;
 		case ast_exp_extern_symbol: {
@@ -1707,8 +1704,8 @@ ast_compile(struct scope *scope)
 				p.tag = IRO_EXTERN_DATA;
 			}
 			struct strview name = token_to_strview(exp->tok);
-			p.hddr.link = strndup(name.ptr, name.len);
-			da_append(&tl, p);
+			p.hddr.link = str_dup(name.ptr, name.len);
+			da_append(tl, p);
 		} break;
 		case ast_exp_literal:
 			p.tag = IRO_DATA;
@@ -1720,7 +1717,7 @@ ast_compile(struct scope *scope)
 				p.data.size = type_size(def->type);
 				p.data.alignment = type_alignment(def->type);
 				p.data.type = def->type;
-				p.data.dat = malloc(p.data.size);
+				p.data.dat = MALLOC(p.data.size);
 				assert(p.data.dat != NULL);
 				memcpy(p.data.dat, &exp->lit.i, p.data.size);
 				break;
@@ -1729,21 +1726,21 @@ ast_compile(struct scope *scope)
 			case LITERAL_CHAR:   FAILWITH("TODO: LITERAL_CHAR");   break;
 			default:             FAILWITH("Unreachable"); break;
 			}
-			da_append(&tl, p);
+			da_append(tl, p);
 			break;
 		default: {
-			size_t data_id = tl.len;
+			size_t data_id = tl->len;
 			p.tag = IRO_DATA;
 			p.data.is_static = true;
 			p.data.link = generate_mangled_name(id_name, def->type);
 			p.data.size = type_size(def->type);
 			p.data.type = def->type;
 			p.data.alignment = type_alignment(def->type);
-			da_append(&tl, p);
+			da_append(tl, p);
 			KCType *type = MEM_ALLOC(KCType);
 			type->tag = ast_type_proc;
 			type->proc.ret = &AST_TYPE_VOID;
-			da_append(&tl, (IR_object){
+			da_append(tl, (IR_object){
 					.thunk.tag = IRO_INIT_THUNK,
 					.thunk.scope = scope,
 					.thunk.type = type,
@@ -1754,28 +1751,35 @@ ast_compile(struct scope *scope)
 		} break;
 		}
 	}
-	for (size_t i = 0; i < tl.len; ++i) {
-		switch ((int)tl.elems[i].tag) {
+	for (size_t i = 0; i < tl->len; ++i) {
+		switch ((int)tl->elems[i].tag) {
 		case IRO_PROC: {
 #if KC_DEBUG
-			struct strview id_name = token_to_strview(tl.elems[i].proc.def->id);
+			struct strview id_name = token_to_strview(tl->elems[i].proc.def->id);
 			printf("[Debug] Compiling proc: "SV_FMT" : ", SV_ARGS(id_name));
-			ast_type_fprint(tl.elems[i].proc.def->type, stdout);
+			ast_type_fprint(tl->elems[i].proc.def->type, stdout);
 			printf("\n");
 #endif
-			ast_compile_procedure(i, &tl);
+			ast_compile_procedure(i, tl);
 		} break;
 		case IRO_INIT_THUNK: {
 #if KC_DEBUG
-			const char *id_name = tl.elems[i].thunk.link;
+			const char *id_name = tl->elems[i].thunk.link;
 			printf("[Debug] Compiling global initializer: %s [%zu]: ", id_name, i);
-			ast_type_fprint(tl.elems[i].proc.def->type, stdout);
+			ast_type_fprint(tl->elems[i].proc.def->type, stdout);
 			printf("\n");
 #endif
-			ast_compile_init_thunk(i, &tl);
+			ast_compile_init_thunk(i, tl);
 		} break;
 		}
 	}
+}
+
+KC_PUBLIC IR_toplevel
+ast_compile(struct scope *scope)
+{
+	struct ir_toplevel tl = {0};
+	ast_compile_impl(scope, &tl);
 	return tl;
 }
 
@@ -2010,16 +2014,16 @@ ir_proc_fprint(struct ir_proc *proc, FILE *file)
 	fputs("}\n", file);
 }
 
-KC_PUBLIC struct expression *
-ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
+KC_PRIVATE struct expression *
+ast_desugar_expression(struct expression *exp, struct scope *scope)
 {
 	if (exp->type == NULL) {
-		log_error_and_die(p->lexer.filename, exp->tok, "Expression has no type.");
+		log_error_and_die(exp->tok->filename, exp->tok, "Expression has no type.");
 	}
 	{
-		KCType *t = resolve_type(p, exp->type, scope);
+		KCType *t = resolve_type(exp->type, scope);
 		if (t == NULL)
-			log_error_and_die(p->lexer.filename, exp->tok,
+			log_error_and_die(exp->tok->filename, exp->tok,
 							  "Failed to resolve type of expression `%s`.",
 							  ast_type_to_str(exp->type));
 		exp->type = t;
@@ -2031,37 +2035,37 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 			for (size_t i = 0; i < def->specs.len; ++i) {
 				struct type_spec *spec_def = &def->specs.elems[i];
 				if (!type_is_polymorphic(type_recursive_find(spec_def->type)) && spec_def->exp != NULL) {
-					spec_def->type = resolve_type(p, spec_def->type, scope);
-					spec_def->exp = ast_desugar(p, spec_def->exp, scope);
+					spec_def->type = resolve_type(spec_def->type, scope);
+					spec_def->exp = ast_desugar_expression(spec_def->exp, scope);
 				}
 			}
 		} else {
-			def->type = resolve_type(p, def->type, scope);
-			def->exp = ast_desugar(p, def->exp, scope);
+			def->type = resolve_type(def->type, scope);
+			def->exp = ast_desugar_expression(def->exp, scope);
 		}
 		return exp;
 	} break;
 	case ast_exp_let:
-		exp->let.def.exp = ast_desugar(p, exp->let.def.exp, scope);
-		exp->let.def.type = resolve_type(p, exp->let.def.type, scope);
-		exp->let.body = ast_desugar(p, exp->let.body, &exp->let.scope);
+		exp->let.def.exp = ast_desugar_expression(exp->let.def.exp, scope);
+		exp->let.def.type = resolve_type(exp->let.def.type, scope);
+		exp->let.body = ast_desugar_expression(exp->let.body, &exp->let.scope);
 		return exp;
 	case ast_exp_while:
-		exp->wloop.cond = ast_desugar(p, exp->wloop.cond, scope);
-		exp->wloop.body = ast_desugar(p, exp->wloop.body, scope);
+		exp->wloop.cond = ast_desugar_expression(exp->wloop.cond, scope);
+		exp->wloop.body = ast_desugar_expression(exp->wloop.body, scope);
 		return exp;
 	case ast_exp_array_initializer: [[fallthrough]];
 	case ast_exp_struct_initializer: {
 		struct expression_stack *exps = &exp->init;
 		for (size_t i = 0; i < exps->len; ++i) {
-			exps->elems[i] = ast_desugar(p, exps->elems[i], scope);
+			exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
 		}
 		return exp;
 	} break;
 	case ast_exp_named_struct_initializer: {
 		struct expression_stack *exps = &exp->named_init.exps;
 		for (size_t i = 0; i < exps->len; ++i) {
-			exps->elems[i] = ast_desugar(p, exps->elems[i], scope);
+			exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
 		}
 		return exp;
 	} break;
@@ -2069,59 +2073,59 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	case ast_exp_procedure_literal:
 		for (size_t i = 0; i < exp->proc.formals.len; ++i) {
 			exp->proc.formals.elems[i].type =
-				resolve_type(p, exp->proc.formals.elems[i].type, scope);
+				resolve_type(exp->proc.formals.elems[i].type, scope);
 		}
-		exp->proc.ret = resolve_type(p, exp->proc.ret, scope);
-		exp->proc.body = ast_desugar(p, exp->proc.body, &exp->proc.scope);
+		exp->proc.ret = resolve_type(exp->proc.ret, scope);
+		exp->proc.body = ast_desugar_expression(exp->proc.body, &exp->proc.scope);
 		return exp;
 	case ast_exp_undefined:  FAILWITH("TODO: ast_exp_undefined"); break;
 	case ast_exp_value_cons:
 		if (exp->valcons.exp)
-			exp->valcons.exp = ast_desugar(p, exp->valcons.exp, scope);
+			exp->valcons.exp = ast_desugar_expression(exp->valcons.exp, scope);
 		return exp;
 	case ast_exp_unary:
 		if ((enum unaop)exp->una.op == unaop_call) {
-			exp->call.proc = ast_desugar(p, exp->call.proc, scope);
+			exp->call.proc = ast_desugar_expression(exp->call.proc, scope);
 			for (size_t i = 0; i < exp->call.args.len; ++i) {
-				exp->call.args.elems[i] = ast_desugar(p, exp->call.args.elems[i], scope);
+				exp->call.args.elems[i] = ast_desugar_expression(exp->call.args.elems[i], scope);
 			}
 		} else if ((enum unaop)exp->una.op == unaop_index) {
 			struct index *idx = &exp->idx;
-			idx->exp = ast_desugar(p, idx->exp, scope);
-			idx->idx = ast_desugar(p, idx->idx, scope);
+			idx->exp = ast_desugar_expression(idx->exp, scope);
+			idx->idx = ast_desugar_expression(idx->idx, scope);
 		} else if ((enum unaop)exp->una.op == unaop_slice) {
 			struct slice *slice = &exp->slice;
-			slice->exp = ast_desugar(p, slice->exp, scope);
-			slice->idx = ast_desugar(p, slice->idx, scope);
-			slice->len = ast_desugar(p, slice->len, scope);
+			slice->exp = ast_desugar_expression(slice->exp, scope);
+			slice->idx = ast_desugar_expression(slice->idx, scope);
+			slice->len = ast_desugar_expression(slice->len, scope);
 		} else if (((enum unaop)exp->una.op == unaop_cast)) {
 			struct cast *cast = &exp->cast;
-			cast->type = resolve_type(p, cast->type, scope);
-			cast->exp = ast_desugar(p, cast->exp, scope);
+			cast->type = resolve_type(cast->type, scope);
+			cast->exp = ast_desugar_expression(cast->exp, scope);
 		} else {
-			exp->una.exp = ast_desugar(p, exp->una.exp, scope);
+			exp->una.exp = ast_desugar_expression(exp->una.exp, scope);
 		}
 		return exp;
 	case ast_exp_if:
-		exp->iff.cond = ast_desugar(p, exp->iff.cond, scope);
-		exp->iff.tb = ast_desugar(p, exp->iff.tb, scope);
+		exp->iff.cond = ast_desugar_expression(exp->iff.cond, scope);
+		exp->iff.tb = ast_desugar_expression(exp->iff.tb, scope);
 		if (exp->iff.fb != NULL)
-			exp->iff.fb = ast_desugar(p, exp->iff.fb, scope);
+			exp->iff.fb = ast_desugar_expression(exp->iff.fb, scope);
 		return exp;
 	case ast_exp_case: {
-		exp->ccase.cexp = ast_desugar(p, exp->ccase.cexp, scope);
+		exp->ccase.cexp = ast_desugar_expression(exp->ccase.cexp, scope);
 		struct case_branches *branches = &exp->ccase.branches;
 		for (size_t i = 0; i < branches->len; ++i) {
 			struct case_branch *branch = &branches->elems[i];
 			struct scope *sc = &branch->scope;
 			if (branch->binds_value)
-				branch->binding.type = resolve_type(p, branch->binding.type, scope);
+				branch->binding.type = resolve_type(branch->binding.type, scope);
 			if (branch->guard != NULL)
-				branch->guard = ast_desugar(p, branch->guard, sc);
-			branch->body = ast_desugar(p, branch->body, sc);
+				branch->guard = ast_desugar_expression(branch->guard, sc);
+			branch->body = ast_desugar_expression(branch->body, sc);
 		}
 		if (exp->ccase.else_exp != NULL)
-			ast_desugar(p, exp->ccase.else_exp, scope);
+			ast_desugar_expression(exp->ccase.else_exp, scope);
 		return exp;
 	} break;
 	case ast_exp_return:			FAILWITH("TODO: ast_exp_return"); break;
@@ -2131,15 +2135,15 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	case ast_exp_ident:
 	case ast_exp_extern_symbol: return exp;
 	case ast_exp_get_ptr:
-		exp->get_ptr = ast_desugar(p, exp->get_ptr, scope);
+		exp->get_ptr = ast_desugar_expression(exp->get_ptr, scope);
 		return exp;
 	case ast_exp_get_len:
-		exp->get_len = ast_desugar(p, exp->get_len, scope);
+		exp->get_len = ast_desugar_expression(exp->get_len, scope);
 		return exp;
 	case ast_exp_size_of: {
-		KCType *t = resolve_type(p, exp->size_of.type, scope);
+		KCType *t = resolve_type(exp->size_of.type, scope);
 		if (t == NULL) {
-			log_error_and_die(p->lexer.filename, exp->tok,
+			log_error_and_die(exp->tok->filename, exp->tok,
 							  "Failed to resolve type of expression `%s`.",
 							  ast_type_to_str(exp->type));
 		}
@@ -2149,8 +2153,8 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	case ast_exp_binary: {
 		switch ((int)exp->bin.op) {
 		case binop_and: {
-			struct expression *left = ast_desugar(p, exp->bin.left, scope);
-			struct expression *right = ast_desugar(p, exp->bin.right, scope);
+			struct expression *left = ast_desugar_expression(exp->bin.left, scope);
+			struct expression *right = ast_desugar_expression(exp->bin.right, scope);
 			struct expression *iff = MEM_ALLOC(struct expression);
 			struct expression *fb  = MEM_ALLOC(struct expression);
 			iff->tag = ast_exp_if;
@@ -2169,13 +2173,13 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 			FAILWITH("TODO: binop_or");
 		} break;
 		case binop_member: {
-			exp->bin.left = ast_desugar(p, exp->bin.left, scope);
+			exp->bin.left = ast_desugar_expression(exp->bin.left, scope);
 			exp->bin.right->type = &AST_TYPE_U64;
 			if (exp->bin.right->tag == ast_exp_literal) {
 				return exp;
 			} else {
 				assert(exp->bin.right->tag == ast_exp_ident);
-				struct struct_type *mems = struct_type_members(p, exp->bin.left->type, scope);
+				struct struct_type *mems = struct_type_members(exp->bin.left->type, scope);
 				for (size_t i = 0; i < mems->len; ++i) {
 					if (sv_is_equal(token_to_strview(mems->elems[i].name),
 									token_to_strview(exp->bin.right->tok))) {
@@ -2204,11 +2208,11 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 			assign->bin.op = op_assign;
 			assign->bin.left = exp->bin.left;
 			assign->bin.right = exp;
-			return ast_desugar(p, assign, scope);
+			return ast_desugar_expression(assign, scope);
 		} break;
 		default: {
-			struct expression *left = ast_desugar(p, exp->bin.left, scope);
-			struct expression *right = ast_desugar(p, exp->bin.right, scope);
+			struct expression *left = ast_desugar_expression(exp->bin.left, scope);
+			struct expression *right = ast_desugar_expression(exp->bin.right, scope);
 			exp->bin.left = left;
 			exp->bin.right = right;
 			return exp;
@@ -2218,4 +2222,12 @@ ast_desugar(Parser *p, struct expression *exp, struct scope *scope)
 	default: FAILWITH("Unreachable");
 	}
 	return NULL;
+}
+
+KC_PUBLIC void
+ast_desugar(struct expression_stack *exps, struct scope *scope)
+{
+	for (size_t i = 0; i < exps->len; ++i) {
+		exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
+	}
 }

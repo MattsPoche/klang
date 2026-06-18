@@ -5,12 +5,13 @@ struct lines {
 	char **elems;
 };
 
-KC_PUBLIC struct strview sv_fmtv(const char *fmt, va_list ap);
+//KC_PUBLIC struct strview sv_fmtv(const char *fmt, va_list ap);
 KC_PUBLIC struct strview sv_fmt(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 KC_PUBLIC char *fmt_str(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 KC_PUBLIC char *concat_lines(struct lines *lines, const char *delim);
 KC_PUBLIC char *strjoin(const char *s1, const char *s2, const char *delim);
 KC_PUBLIC char *subst_file_suffix(const char *file_name, const char *prefix);
+KC_PUBLIC const char *str_dup(const char *s, size_t len);
 KC_PUBLIC void append_line(struct lines *lines, char *str);
 KC_PUBLIC void log_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
 					   const char *fmt, va_list ap);

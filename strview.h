@@ -1,6 +1,16 @@
 #ifndef STRVIEW_H_
 #define STRVIEW_H_
 
+#ifndef MALLOC
+#define MALLOC malloc
+#endif
+#ifndef REALLOC
+#define REALLOC realloc
+#endif
+#ifndef FREE
+#define FREE free
+#endif
+
 #include <assert.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -50,7 +60,7 @@ bool sv_open_file(const char *filename, struct strview *sv)
 	int64_t len;
 	assert((len = file_size(file)) >= 0);
 	sv->len = len;
-	assert((sv->ptr = malloc(len + 1)));
+	assert((sv->ptr = MALLOC(len + 1)));
 	int64_t i;
 	for (i = 0; i < len; ++i) sv->ptr[i] = fgetc(file);
 	sv->ptr[i] = 0;
@@ -74,7 +84,7 @@ struct strview sv_of_cstr(char *str)
 
 char *sv_to_cstr(struct strview sv)
 {
-	char *s = malloc(sv.len + 1);
+	char *s = MALLOC(sv.len + 1);
 	assert(s != NULL);
 	memcpy(s, sv.ptr, sv.len);
 	s[sv.len] = 0;
@@ -106,7 +116,7 @@ int escape_char(int c)
 struct strview
 sv_unescape_string(struct strview sv)
 {
-	char *s = malloc(sv.len + 1);
+	char *s = MALLOC(sv.len + 1);
 	assert(s != NULL);
 	size_t length = 0;
 	size_t i = 0;

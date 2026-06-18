@@ -60,6 +60,7 @@ token_type_to_str(enum token_type tt)
 	case tt_case:			 return "tt_case";
 	case tt_of: 			 return "tt_of";
 	case tt_return:          return "tt_return";
+	case tt_import:          return "tt_import";
 	case tt_colon_equal:     return "tt_colon_equal";
 	case tt_and_equal:		 return "tt_and_equal";
 	case tt_pipe_equal:		 return "tt_pipe_equal";
@@ -226,6 +227,7 @@ KC_PRIVATE struct token
 make_token(struct lexer *lex)
 {
 	return (struct token) {
+		.filename = lex->filename,
 		.text	  = lex->text,
 		.offset	  = lex->offset,
 		.text_len = lex->length,
@@ -291,7 +293,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 			}
 			/* Match Keywords */
 			struct strview sv = token_to_strview(&tok);
-			CHECK_EXAUSTIVE_KEYWORDS(69);
+			CHECK_EXAUSTIVE_KEYWORDS(70);
 			if (sv_is_equal(sv, sv_of_cstr("_")))               tok.tt = tt_underscore;
 			else if (sv_is_equal(sv, sv_of_cstr("let")))        tok.tt = tt_let;
 			else if (sv_is_equal(sv, sv_of_cstr("type")))       tok.tt = tt_type;
@@ -328,6 +330,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 			else if (sv_is_equal(sv, sv_of_cstr("u64")))        tok.tt = tt_u64;
 			else if (sv_is_equal(sv, sv_of_cstr("f32")))        tok.tt = tt_f32;
 			else if (sv_is_equal(sv, sv_of_cstr("f64")))        tok.tt = tt_f64;
+			else if (sv_is_equal(sv, sv_of_cstr("import")))     tok.tt = tt_import;
 			else if (sv_is_equal(sv, sv_of_cstr("#undefined"))) tok.tt = tt_undefined;
 			else if (sv_is_equal(sv, sv_of_cstr("#noreturn")))  tok.tt = tt_noreturn;
 			else if (sv_is_equal(sv, sv_of_cstr("#extern")))    tok.tt = tt_extern;

@@ -1,6 +1,7 @@
 TARGET=kc
 CFLAGS=-std=c23 -Wall -Wextra -Wswitch-enum -ggdb -Werror=vla -D_GNU_SOURCE
-CFLAGS += -fwrapv -fno-strict-aliasing
+CFLAGS += -fwrapv -fno-strict-aliasing -fsanitize=address
+LFLAGS= -fsanitize=address
 HFILES=$(shell find -type f -name '*.h')
 CFILES=$(shell find -type f -name '*.c')
 OFILES=$(CFILES:%.c=%.o)
@@ -10,7 +11,7 @@ DEBUG=1
 .PHONEY: test clean
 
 $(TARGET): $(OFILES)
-	$(CC) $(OFILES) -o $@
+	$(CC) $(LFLAGS) $(OFILES) -o $@
 
 %.o: %.c $(HFILES)
 	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -O$(OPT) -c -o $@ $<

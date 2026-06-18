@@ -97,7 +97,7 @@ enum ir_obj_tag {
 
 #define IR_OBJ_HDDR_MEMBERS						\
 	enum ir_obj_tag tag;						\
-	char *link;									\
+	const char *link;							\
 	int64_t asm_label;							\
 	bool is_static
 
@@ -182,7 +182,7 @@ struct ast_comp_dest {
 #define DEST_RET(_reg) ((struct ast_comp_dest){.tag = DST_RET, .reg = (_reg)})
 #define DEST_NONE(...) ((struct ast_comp_dest){.tag = DST_NONE})
 
-KC_PUBLIC struct ir_toplevel ast_compile(struct scope *scope);
+KC_PUBLIC IR_toplevel ast_compile(struct scope *scope);
 KC_PUBLIC struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
 											 struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl);
 KC_PUBLIC void ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl);
@@ -190,4 +190,4 @@ KC_PUBLIC IR_object *get_toplevel_obj(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct ir_proc *get_toplevel_proc(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct da_pointers ir_blk_reverse_post_order(struct ir_blk *root);
 KC_PUBLIC void ir_proc_fprint(struct ir_proc *proc, FILE *file);
-KC_PUBLIC struct expression *ast_desugar(Parser *p, struct expression *exp, struct scope *scope);
+KC_PUBLIC void ast_desugar(struct expression_stack *exps, struct scope *scope);

@@ -19,20 +19,20 @@ KC_PUBLIC_DATA KCType AST_TYPE_STRING;
 #define AST_TYPE_UNION_TAG AST_TYPE_I64
 #define AST_TYPE_CHAR      AST_TYPE_I8
 
-KC_PUBLIC void type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps);
-KC_PUBLIC bool type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope);
+KC_PUBLIC void type_check(struct typing_context *ctx, struct expression_stack *exps);
+KC_PUBLIC bool type_equiv(KCType *t, KCType *u, struct scope *scope);
 KC_PUBLIC uintptr_t align_adjust(uintptr_t x, uintptr_t alignment);
 KC_PUBLIC KCType *copy_type(KCType *type);
 KC_PUBLIC KCType *type_find(KCType *type);
 KC_PUBLIC KCType *type_recursive_find(KCType *type);
-KC_PUBLIC KCType *resolve_type(Parser *p, KCType *type, struct scope *scope);
+KC_PUBLIC KCType *resolve_type(KCType *type, struct scope *scope);
 KC_PUBLIC size_t type_size(KCType *t);
 KC_PUBLIC size_t type_alignment(KCType *t);
 KC_PUBLIC size_t struct_member_offset(struct struct_type *st, size_t index);
 KC_PUBLIC size_t get_struct_member_idx(KCType *t, struct token *mem);
-KC_PUBLIC struct type_spec *lookup_poly_proc_spec(Parser *p, struct definition *def, KCType *t, struct scope *scope);
+KC_PUBLIC struct type_spec *lookup_poly_proc_spec(struct definition *def, KCType *t, struct scope *scope);
 KC_PUBLIC KCType *type_slice_to_array_ptr(KCType *t);
-KC_PUBLIC struct struct_type * struct_type_members(Parser *p, KCType *type, struct scope *scope);
+KC_PUBLIC struct struct_type * struct_type_members(KCType *type, struct scope *scope);
 KC_PUBLIC bool type_is_var(KCType *t);
 KC_PUBLIC bool type_is_integer(KCType *t);
 KC_PUBLIC bool type_is_signed_integer(KCType *t);

@@ -105,7 +105,7 @@ typedef struct cg_module {
 		uint32_t len, cap;
 		uint32_t *elems;
 	} thunks;
-	Asm_module asm_mod;
+	Asm_module as;
 } CG_module;
 
 typedef struct cg_modules {

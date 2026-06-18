@@ -41,9 +41,9 @@ error_unexpected_token(Parser *p, struct token *token, const char *debug_filenam
 }
 
 KC_PUBLIC void
-error_undefined_ident(Parser *p, struct token *id, const char *debug_filename, const int debug_line)
+error_undefined_ident(struct token *id, const char *debug_filename, const int debug_line)
 {
-	log_error_impl(p->lexer.filename, id, debug_filename, debug_line,
+	log_error_impl(id->filename, id, debug_filename, debug_line,
 				   "Undefined identifier `"SV_FMT"`.", SV_ARGS(token_to_strview(id)));
 	EXIT(1);
 }
@@ -428,18 +428,28 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 	}
 }
 
-KC_PUBLIC struct expression *
-parse_toplevel_expression(Parser *p, struct scope *scope)
+KC_PRIVATE void
+parse_toplevel_expression(Parser *p, struct expression_stack *tl_exps, struct scope *scope)
 {
 	struct token *tok;
 	struct expression *exp = NULL;
 	switch ((int)next_token(p, &tok)->tt) {
+	case tt_import: {
+		EXPECT(next_token(p, &tok), tt_string);
+		struct strview sv = sv_unescape_string(token_to_strview(tok));
+		const char *file = fmt_str(SV_FMT".k", SV_ARGS(sv));
+		struct scope *p = scope->parent;
+		scope->parent = parse_file(file, tl_exps);
+		scope->parent->parent = p;
+		break;
+	} break;
 	case tt_let:
 		exp = MEM_ALLOC(struct expression);
 		exp->tok = tok;
 		exp->tag = ast_exp_definition;
 		parse_definition(p, &exp->def, scope);
 		symtbl_add(&scope->symtbl, &exp->def, exp);
+		da_append(tl_exps, exp);
 		break;
 	case tt_type: {
 		parse_type_def(p, scope, false);
@@ -450,7 +460,6 @@ parse_toplevel_expression(Parser *p, struct scope *scope)
 	case tt_eof: break;
 	default: UNEXPECTED_TOKEN(tok); break;
 	}
-	return exp;
 }
 
 KC_PUBLIC bool
@@ -1020,6 +1029,7 @@ parse_expression(Parser *p, struct scope *scope)
 			}
 			da_append(&out, exp);
 		} break;
+		case tt_import: FAILWITH("TODO: tt_import"); break;
 		case tt_underscore: FAILWITH("TODO: tt_underscore"); break;
 		case tt_mut: FAILWITH("TODO: tt_mut"); break;
 		case tt_tick: FAILWITH("TODO: tt_tick"); break;
@@ -1161,7 +1171,7 @@ parse_expression(Parser *p, struct scope *scope)
 			if (sv.len != 1)
 				FAILWITH("Unreachable. Possibly something wrong with lexer?");
 			exp->lit.i = sv.ptr[0];
-			free(sv.ptr);
+			FREE(sv.ptr);
 			da_append(&out, exp);
 		} break;
 		case tt_true:
@@ -1439,16 +1449,15 @@ ast_binop_to_str(enum binop op)
 
 /* --- AST Printer --- */
 
-KC_PUBLIC char *
+KC_PUBLIC const char *
 ast_type_to_str(KCType *t)
 {
-	char *str;
-	size_t sz;
-	FILE *f = open_memstream(&str, &sz);
+	static char buf[1024];
+	FILE *f = fmemopen(buf, sizeof(buf), "w");;
 	assert(f != NULL);
 	ast_type_fprint(t, f);
 	fclose(f);
-	return str;
+	return str_dup(buf, strlen(buf));
 }
 
 KC_PUBLIC void
@@ -1779,7 +1788,6 @@ ast_fprint(struct expression *exp, FILE *file)
 			case op_address_of:	 fputc('&', file); break;
 			case op_lnot:		 fputc('~', file); break;
 			case op_not:		 fputc('!', file); break;
-
 			default:
 				FAILWITH("Unreachable condition");
 				break;
@@ -1822,7 +1830,6 @@ ast_fprint(struct expression *exp, FILE *file)
 				if (cb->binding.is_mut) fputs("mut ", file);
 				if (cb->binding_is_ref) fputc('&', file);
 				fprintf(file, SV_FMT")", SV_ARGS(token_to_strview(cb->binding.id)));
-
 			}
 			if (cb->guard) {
 				fputs(" if ", file);
@@ -1850,4 +1857,31 @@ ast_fprint(struct expression *exp, FILE *file)
 		FAILWITH("Unreachable condition.");
 		break;
 	}
+}
+
+KC_PUBLIC struct scope *
+parse_file(const char *filename, struct expression_stack *tl_exps)
+{
+	struct strview sv = {0};
+	if (sv_open_file(filename, &sv) == false) {
+		fprintf(stderr, "[Error] %s: %s\n", filename, strerror(errno));
+		EXIT(1);
+	}
+	if (sv.len == 0) {
+		fprintf(stderr, "[Error] %s: %s\n", filename, "Empty file");
+		EXIT(1);
+	}
+	Parser parser = {
+		.lexer = {
+			.filename = filename,
+			.text     = sv.ptr,
+			.length   = sv.len,
+			.line     = 1,
+		}
+	};
+	tokenize(&parser.lexer, &parser.tokens);
+	struct scope *sc = MEM_ALLOC(struct scope);
+	while (!parser_is_at_end(&parser))
+		parse_toplevel_expression(&parser, tl_exps, sc);
+	return sc;
 }

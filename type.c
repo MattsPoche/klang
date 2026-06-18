@@ -23,10 +23,10 @@ KC_PUBLIC KCType AST_TYPE_F32    = {.tag = ast_type_f32};
 KC_PUBLIC KCType AST_TYPE_F64    = {.tag = ast_type_f64};
 KC_PUBLIC KCType AST_TYPE_STRING = {.tag = ast_type_slice, .slice = &AST_TYPE_I8};
 
-KC_PRIVATE KCType *infer_type(Parser *p, struct typing_context ctx, struct expression *exp);
-KC_PRIVATE bool unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u);
+KC_PRIVATE KCType *infer_type(struct typing_context ctx, struct expression *exp);
+KC_PRIVATE bool unify(struct typing_context ctx, KCType *t, KCType *u);
 KC_PRIVATE KCType *type_var_subst(KCType *type, struct type_var_bindings *bindings);
-KC_PRIVATE KCType *resolve_alias(Parser *p, KCType *t, struct scope *scope);
+KC_PRIVATE KCType *resolve_alias(KCType *t, struct scope *scope);
 KC_PRIVATE KCType *fresh_type_var(enum type_class c);
 KC_PRIVATE void add_type_var_binding(struct type_var_bindings *bindings, KCType *var, KCType *type);
 KC_PRIVATE KCType *find_type_var_binding(struct type_var_bindings *bindings, KCType *var);
@@ -34,11 +34,11 @@ KC_PRIVATE KCType *instantiate_type_scheme(struct type_scheme *scm);
 KC_PRIVATE void type_env_add(struct typing_context *ctx, struct token *name, struct type_scheme scm);
 KC_PRIVATE struct type_env *lookup_type_env(struct typing_context *ctx, struct token *var);
 KC_PRIVATE struct type_scheme generalize_type(struct typing_context *ctx, KCType *type);
-KC_PRIVATE void specialize_generic_procedure(Parser *p, struct typing_context ctx, struct definition *def,
+KC_PRIVATE void specialize_generic_procedure(struct typing_context ctx, struct definition *def,
 										 struct type_spec *spec_def);
-KC_PRIVATE struct definition specialize_definition(Parser *p, struct typing_context ctx, struct definition *def,
+KC_PRIVATE struct definition specialize_definition(struct typing_context ctx, struct definition *def,
 											   struct type_var_bindings *bindings);
-KC_PRIVATE struct expression *specialize_expression(Parser *p, struct typing_context ctx,
+KC_PRIVATE struct expression *specialize_expression(struct typing_context ctx,
 												struct expression *exp, struct type_var_bindings *bindings);
 
 KC_PRIVATE bool
@@ -48,7 +48,7 @@ exp_is_integer_literal(struct expression *exp)
 }
 
 KC_PRIVATE KCType *
-type_application(Parser *p, struct type_app *app, struct scope *scope)
+type_application(struct type_app *app, struct scope *scope)
 {
 	struct type_definition *def = lookup_type(scope, token_to_strview(app->cons));
 	if (def == NULL) ERROR_UNDEFINED_IDENT(app->cons);
@@ -84,9 +84,9 @@ type_get_underlying(struct scope *scope, KCType *type, KCType **out_type)
 }
 
 KC_PRIVATE void
-fprint_full_type_name(Parser *p, struct typing_context ctx, KCType *t, FILE *f)
+fprint_full_type_name(struct typing_context ctx, KCType *t, FILE *f)
 {
-	KCType *u = resolve_alias(p, t, ctx.scope);
+	KCType *u = resolve_alias(t, ctx.scope);
 	fputs("`", f);
 	ast_type_fprint(t, f);
 	if (t != u) {
@@ -97,7 +97,7 @@ fprint_full_type_name(Parser *p, struct typing_context ctx, KCType *t, FILE *f)
 }
 
 KC_PRIVATE void
-type_mismatch_error(Parser *p, struct typing_context ctx, KCType *t, KCType *u,
+type_mismatch_error(struct typing_context ctx, KCType *t, KCType *u,
 					struct token *tok, char *debug_file, int debug_line)
 {
 	fflush(stdout);
@@ -109,17 +109,18 @@ type_mismatch_error(Parser *p, struct typing_context ctx, KCType *t, KCType *u,
 	struct strview msg = {0};
 	FILE *stream = open_memstream(&msg.ptr, &msg.len);
 	fputs("KCType error. ", stream);
-	fprint_full_type_name(p, ctx, t, stream);
+	fprint_full_type_name(ctx, t, stream);
 	fputs(" is incompatible with ", stream);
-	fprint_full_type_name(p, ctx, u, stream);
+	fprint_full_type_name(ctx, u, stream);
 	fputs(".", stream);
 	fclose(stream);
-	log_error_impl(p->lexer.filename, tok, debug_file, debug_line, "%s", msg.ptr);
+	log_error_impl(tok->filename, tok, debug_file, debug_line, "%s", msg.ptr);
+	free(msg.ptr);
 	EXIT(1);
 }
 
 KC_PUBLIC KCType *
-resolve_type(Parser *p, KCType *type, struct scope *scope)
+resolve_type(KCType *type, struct scope *scope)
 {
 	type = type_find(type);
 	switch (type->tag) {
@@ -139,36 +140,36 @@ resolve_type(Parser *p, KCType *type, struct scope *scope)
 		return type;
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
-		type->ptr = resolve_type(p, type->ptr, scope);
+		type->ptr = resolve_type(type->ptr, scope);
 		type->tag = ast_type_ptr;
 		return type;
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		type->slice = resolve_type(p, type->slice, scope);
+		type->slice = resolve_type(type->slice, scope);
 		type->tag = ast_type_slice;
 		return type;
 	case ast_type_array:
-		type->array.base = resolve_type(p, type->array.base, scope);
+		type->array.base = resolve_type(type->array.base, scope);
 		return type;
 	case ast_type_proc:
 		for (size_t i = 0; i < type->proc.args.len; ++i) {
-			type->proc.args.elems[i] = resolve_type(p, type->proc.args.elems[i], scope);
+			type->proc.args.elems[i] = resolve_type(type->proc.args.elems[i], scope);
 		}
-		type->proc.ret = resolve_type(p, type->proc.ret, scope);
+		type->proc.ret = resolve_type(type->proc.ret, scope);
 		return type;
 	case ast_type_istruct:
 	case ast_type_struct:
 		for (size_t i = 0; i < type->struct_t.len; ++i) {
-			type->struct_t.elems[i].type = resolve_type(p, type->struct_t.elems[i].type, scope);
+			type->struct_t.elems[i].type = resolve_type(type->struct_t.elems[i].type, scope);
 		}
 		return type;
 	case ast_type_union:
 		for (size_t i = 0; i < type->union_t.len; ++i) {
-			type->union_t.elems[i].type = resolve_type(p, type->union_t.elems[i].type, scope);
+			type->union_t.elems[i].type = resolve_type(type->union_t.elems[i].type, scope);
 		}
 		return type;
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
-	case ast_type_app: return resolve_type(p, type_application(p, &type->app, scope), scope);
+	case ast_type_app: return resolve_type(type_application(&type->app, scope), scope);
 	case ast_type_var:
 		switch (type->var.class) {
 		case type_class_integer:
@@ -630,10 +631,10 @@ type_is_polymorphic(KCType *t)
 }
 
 KC_PUBLIC struct struct_type *
-struct_type_members(Parser *p, KCType *type, struct scope *scope)
+struct_type_members(KCType *type, struct scope *scope)
 {
 	if (type->tag == ast_type_app)
-		return struct_type_members(p, type_application(p, &type->app, scope), scope);
+		return struct_type_members(type_application(&type->app, scope), scope);
 	if (type->tag == ast_type_struct)
 		return &type->struct_t;
 	if (type->tag == ast_type_ptr && type->ptr->tag == ast_type_struct)
@@ -755,33 +756,33 @@ copy_type(KCType *type)
 }
 
 KC_PUBLIC struct type_spec *
-lookup_poly_proc_spec(Parser *p, struct definition *def, KCType *t, struct scope *scope)
+lookup_poly_proc_spec(struct definition *def, KCType *t, struct scope *scope)
 {
 	assert(def->type->tag == ast_type_proc);
 	for (size_t i = 0; i < def->specs.len; ++i) {
-		if (type_equiv(p, def->specs.elems[i].type, t, scope))
+		if (type_equiv(def->specs.elems[i].type, t, scope))
 			return &def->specs.elems[i];
 	}
 	return NULL;
 }
 
 KC_PRIVATE KCType *
-resolve_alias(Parser *p, KCType *t, struct scope *scope)
+resolve_alias(KCType *t, struct scope *scope)
 {
 	if (t->tag == ast_type_app) {
 		struct type_definition *def = lookup_type(scope, token_to_strview(t->app.cons));
 		if (def == NULL) ERROR_UNDEFINED_IDENT(t->app.cons);
-		if (def->is_alias) return type_application(p, &t->app, scope);
+		if (def->is_alias) return type_application(&t->app, scope);
 	}
 	return t;
 }
 
 KC_PUBLIC bool
-type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
+type_equiv(KCType *t, KCType *u, struct scope *scope)
 {
 	if (t == u) return true;
-	t = resolve_alias(p, type_find(t), scope);
-	u = resolve_alias(p, type_find(u), scope);
+	t = resolve_alias(type_find(t), scope);
+	u = resolve_alias(type_find(u), scope);
 	switch (t->tag) {
 	case ast_type_noreturn: FAILWITH("TODO: ast_type_noreturn"); break;
 	case ast_type_var: return t == u;
@@ -793,7 +794,7 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 		if (!sv_is_equal(token_to_strview(t->app.cons), token_to_strview(u->app.cons)))
 			return false;
 		for (size_t i = 0; i < t->app.args.len; ++i) {
-			if (!type_equiv(p, t->app.args.elems[i], u->app.args.elems[i], scope)) return false;
+			if (!type_equiv(t->app.args.elems[i], u->app.args.elems[i], scope)) return false;
 		}
 		return true;
 	case ast_type_void:
@@ -813,12 +814,12 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	case ast_type_mut_ptr:
 	case ast_type_slice:
 	case ast_type_mut_slice:
-		return t->tag == u->tag && type_equiv(p, t->ptr, u->ptr, scope);
+		return t->tag == u->tag && type_equiv(t->ptr, u->ptr, scope);
 	case ast_type_array:
 		return t->tag == u->tag
 			&& t->array.is_sized == u->array.is_sized
 			&& t->array.size == u->array.size
-			&& type_equiv(p, t->array.base, t->array.base, scope);
+			&& type_equiv(t->array.base, t->array.base, scope);
 	case ast_type_istruct:
 	case ast_type_struct:
 		if (t->tag != u->tag) return false;
@@ -827,7 +828,7 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 			if (!sv_is_equal(token_to_strview(t->struct_t.elems[i].name),
 							 token_to_strview(u->struct_t.elems[i].name)))
 				return false;
-			if (!type_equiv(p, t->struct_t.elems[i].type, u->struct_t.elems[i].type, scope))
+			if (!type_equiv(t->struct_t.elems[i].type, u->struct_t.elems[i].type, scope))
 				return false;
 		}
 		return true;
@@ -835,10 +836,10 @@ type_equiv(Parser *p, KCType *t, KCType *u, struct scope *scope)
 	case ast_type_vector: FAILWITH("TODO: ast_type_vector"); break;
 	case ast_type_proc:
 		if (t->tag != u->tag) return false;
-		if (!type_equiv(p, t->proc.ret, t->proc.ret, scope)) return false;
+		if (!type_equiv(t->proc.ret, t->proc.ret, scope)) return false;
 		if (t->proc.args.len != u->proc.args.len) return false;
 		for (size_t i = 0; i < t->proc.args.len; ++i) {
-			if (!type_equiv(p, t->proc.args.elems[i], u->proc.args.elems[i], scope))
+			if (!type_equiv(t->proc.args.elems[i], u->proc.args.elems[i], scope))
 				return false;
 		}
 		return true;
@@ -867,7 +868,7 @@ find_type_var_binding(struct type_var_bindings *bindings, KCType *var)
 }
 
 KC_PRIVATE void
-bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindings *bindings,
+bind_polymorphic_type_vars(struct scope *scope, struct type_var_bindings *bindings,
 						   KCType *poly, KCType *mono)
 {
 	switch (poly->tag) {
@@ -891,7 +892,7 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 		assert(mono->tag == ast_type_app);
 		assert(poly->app.args.len == mono->app.args.len);
 		for (size_t i = 0; i < poly->app.args.len; ++i) {
-			bind_polymorphic_type_vars(p, scope, bindings,
+			bind_polymorphic_type_vars(scope, bindings,
 									   poly->app.args.elems[i],
 									   mono->app.args.elems[i]);
 		}
@@ -899,23 +900,23 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 	case ast_type_ptr:
 	case ast_type_mut_ptr:
 		assert(type_is_pointer(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->ptr, mono->ptr);
+		bind_polymorphic_type_vars(scope, bindings, poly->ptr, mono->ptr);
 		return;
 	case ast_type_slice:
 	case ast_type_mut_slice:
 		assert(type_is_slice(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->slice, mono->slice);
+		bind_polymorphic_type_vars(scope, bindings, poly->slice, mono->slice);
 		return;
 	case ast_type_array:
 		assert(type_is_array(mono));
-		bind_polymorphic_type_vars(p, scope, bindings, poly->array.base, mono->array.base);
+		bind_polymorphic_type_vars(scope, bindings, poly->array.base, mono->array.base);
 		return;
 	case ast_type_istruct:
 	case ast_type_struct:
 		assert(type_is_struct(mono, scope));
 		assert(poly->struct_t.len == mono->struct_t.len);
 		for (size_t i = 0; i < poly->struct_t.len; ++i) {
-			bind_polymorphic_type_vars(p, scope, bindings,
+			bind_polymorphic_type_vars(scope, bindings,
 									   poly->struct_t.elems[i].type,
 									   mono->struct_t.elems[i].type);
 		}
@@ -926,16 +927,16 @@ bind_polymorphic_type_vars(Parser *p, struct scope *scope, struct type_var_bindi
 		assert(type_is_procedure(mono));
 		assert(poly->proc.args.len == mono->proc.args.len);
 		for (size_t i = 0; i < poly->proc.args.len; ++i) {
-			bind_polymorphic_type_vars(p, scope, bindings, poly->proc.args.elems[i], mono->proc.args.elems[i]);
+			bind_polymorphic_type_vars(scope, bindings, poly->proc.args.elems[i], mono->proc.args.elems[i]);
 		}
-		bind_polymorphic_type_vars(p, scope, bindings, poly->proc.ret, mono->proc.ret);
+		bind_polymorphic_type_vars(scope, bindings, poly->proc.ret, mono->proc.ret);
 		return;
 	case ast_type_var: {
 		KCType *b = find_type_var_binding(bindings, poly);
 		if (b == NULL) {
 			add_type_var_binding(bindings, poly, mono);
 		} else {
-			assert(type_equiv(p, b, mono, scope));
+			assert(type_equiv(b, mono, scope));
 		}
 		return;
 	} break;
@@ -1034,34 +1035,32 @@ type_var_subst(KCType *type, struct type_var_bindings *bindings)
 	do {																\
 		KCType * _T = (t);											\
 		KCType * _U = (u);											\
-		if (!unify(p, ctx, _T, _U))										\
-			type_mismatch_error(p, ctx, _T, _U, (exp)->tok, __FILE__, __LINE__); \
+		if (!unify(ctx, _T, _U))										\
+			type_mismatch_error(ctx, _T, _U, (exp)->tok, __FILE__, __LINE__); \
 	} while (0)
 
-#define UNIFY_EXP(ctx, exp, u)  \
+#define UNIFY_EXP(ctx, exp, u)						\
 	do {											\
 		struct expression *_E = (exp);				\
-		UNIFY(ctx, infer_type(p, ctx, _E), u, _E);	\
+		UNIFY(ctx, infer_type(ctx, _E), u, _E);	\
 	} while (0)
 
 KC_PRIVATE struct definition
-specialize_definition(Parser *p,
-					  struct typing_context ctx,
+specialize_definition(struct typing_context ctx,
 					  struct definition *def,
 					  struct type_var_bindings *bindings)
 {
 	return (struct definition) {
 		.id			= def->id,
 		.type		= type_var_subst(def->type, bindings),
-		.exp		= def->exp ? specialize_expression(p, ctx, def->exp, bindings) : NULL,
+		.exp		= def->exp ? specialize_expression(ctx, def->exp, bindings) : NULL,
 		.is_mut		= def->is_mut,
 		.is_global	= def->is_global,
 	};
 }
 
 KC_PRIVATE struct expression *
-specialize_expression(Parser *p,
-					  struct typing_context ctx,
+specialize_expression(struct typing_context ctx,
 					  struct expression *exp,
 					  struct type_var_bindings *bindings)
 {
@@ -1075,13 +1074,13 @@ specialize_expression(Parser *p,
 	switch (exp->tag) {
 	case ast_exp_definition: FAILWITH("TODO: ast_exp_definition"); break;
 	case ast_exp_let:
-		newexp->let.def = specialize_definition(p, ctx, &exp->let.def, bindings);
+		newexp->let.def = specialize_definition(ctx, &exp->let.def, bindings);
 		newexp->let.scope.parent = ctx.scope;
 		symtbl_add(&newexp->let.scope.symtbl, &newexp->let.def, NULL);
 		ctx.scope = &newexp->let.scope;
 		type_env_add(&ctx, newexp->let.def.id,
 					 generalize_type(&ctx, type_recursive_find(newexp->let.def.type)));
-		newexp->let.body = specialize_expression(p, ctx, exp->let.body, bindings);
+		newexp->let.body = specialize_expression(ctx, exp->let.body, bindings);
 		break;
 	case ast_exp_literal: newexp->lit = exp->lit; break;
 	case ast_exp_array_initializer: FAILWITH("TODO: ast_exp_array_initializer"); break;
@@ -1098,8 +1097,8 @@ specialize_expression(Parser *p,
 	} break;
 	case ast_exp_binary:
 		newexp->bin.op = exp->bin.op;
-		newexp->bin.left = specialize_expression(p, ctx, exp->bin.left, bindings);
-		newexp->bin.right = specialize_expression(p, ctx, exp->bin.right, bindings);
+		newexp->bin.left = specialize_expression(ctx, exp->bin.left, bindings);
+		newexp->bin.right = specialize_expression(ctx, exp->bin.right, bindings);
 		break;
 	case ast_exp_value_cons: FAILWITH("TODO: ast_exp_value_cons"); break;
 	case ast_exp_unary:
@@ -1111,14 +1110,14 @@ specialize_expression(Parser *p,
 		case unaop_pos:
 		case unaop_address_of:
 		case unaop_dereference:
-			newexp->una.exp = specialize_expression(p, ctx, exp->una.exp, bindings);
+			newexp->una.exp = specialize_expression(ctx, exp->una.exp, bindings);
 			break;
 		case unaop_index:
-			newexp->idx.exp = specialize_expression(p, ctx, exp->idx.exp, bindings);
-			newexp->idx.idx = specialize_expression(p, ctx, exp->idx.idx, bindings);
+			newexp->idx.exp = specialize_expression(ctx, exp->idx.exp, bindings);
+			newexp->idx.idx = specialize_expression(ctx, exp->idx.idx, bindings);
 			break;
 		case unaop_call: {
-			newexp->call.proc = specialize_expression(p, ctx, exp->call.proc, bindings);
+			newexp->call.proc = specialize_expression(ctx, exp->call.proc, bindings);
 			if (type_is_polymorphic(newexp->call.proc->type)) {
 				struct call *call = &newexp->call;
 				if (call->proc->tag != ast_exp_ident) {
@@ -1139,13 +1138,13 @@ specialize_expression(Parser *p,
 				inf_type->proc.ret = ret_type;
 				for (size_t i = 0; i < exp->call.args.len; ++i) {
 					struct expression *arg_exp = exp->call.args.elems[i];
-					arg_exp = specialize_expression(p, ctx, arg_exp, bindings);
+					arg_exp = specialize_expression(ctx, arg_exp, bindings);
 					assert(arg_exp->type);
 					da_append(&newexp->call.args, arg_exp);
 					da_append(&inf_type->proc.args, arg_exp->type);
 				}
 				UNIFY(ctx, call->proc->type, inf_type, newexp);
-				if (lookup_poly_proc_spec(p, generic, inf_type, ctx.scope) == NULL) {
+				if (lookup_poly_proc_spec(generic, inf_type, ctx.scope) == NULL) {
 					da_append(&generic->specs, (struct type_spec) {
 							.type = inf_type,
 						});
@@ -1153,31 +1152,31 @@ specialize_expression(Parser *p,
 			} else {
 				for (size_t i = 0; i < exp->call.args.len; ++i) {
 					struct expression *arg_exp = exp->call.args.elems[i];
-					da_append(&newexp->call.args, specialize_expression(p, ctx, arg_exp, bindings));
+					da_append(&newexp->call.args, specialize_expression(ctx, arg_exp, bindings));
 				}
 			}
 		} break;
 		case unaop_cast:
 			newexp->cast.type = type_var_subst(exp->cast.type, bindings);
-			newexp->cast.exp = specialize_expression(p, ctx, exp->cast.exp, bindings);
+			newexp->cast.exp = specialize_expression(ctx, exp->cast.exp, bindings);
 			break;
 		case unaop_slice:
-			newexp->slice.exp = specialize_expression(p, ctx, exp->slice.exp, bindings);
-			newexp->slice.idx = specialize_expression(p, ctx, exp->slice.idx, bindings);
-			newexp->slice.len = specialize_expression(p, ctx, exp->slice.len, bindings);
+			newexp->slice.exp = specialize_expression(ctx, exp->slice.exp, bindings);
+			newexp->slice.idx = specialize_expression(ctx, exp->slice.idx, bindings);
+			newexp->slice.len = specialize_expression(ctx, exp->slice.len, bindings);
 			break;
 		default: FAILWITH("Unreachable"); break;
 		}
 		break;
 	case ast_exp_while:
-		newexp->wloop.cond = specialize_expression(p, ctx, exp->wloop.cond, bindings);
-		newexp->wloop.body = specialize_expression(p, ctx, exp->wloop.body, bindings);
+		newexp->wloop.cond = specialize_expression(ctx, exp->wloop.cond, bindings);
+		newexp->wloop.body = specialize_expression(ctx, exp->wloop.body, bindings);
 		break;
 	case ast_exp_if:
-		newexp->iff.cond = specialize_expression(p, ctx, exp->iff.cond, bindings);
-		newexp->iff.tb   = specialize_expression(p, ctx, exp->iff.tb, bindings);
+		newexp->iff.cond = specialize_expression(ctx, exp->iff.cond, bindings);
+		newexp->iff.tb   = specialize_expression(ctx, exp->iff.tb, bindings);
 		if (exp->iff.fb)
-			newexp->iff.fb = specialize_expression(p, ctx, exp->iff.fb, bindings);
+			newexp->iff.fb = specialize_expression(ctx, exp->iff.fb, bindings);
 		break;
 	case ast_exp_case: FAILWITH("TODO: ast_exp_case"); break;
 	case ast_exp_return: FAILWITH("TODO: ast_exp_return"); break;
@@ -1185,10 +1184,10 @@ specialize_expression(Parser *p,
 	case ast_exp_continue: FAILWITH("TODO: ast_exp_continue"); break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_get_ptr:
-		newexp->get_ptr = specialize_expression(p, ctx, exp->get_ptr, bindings);
+		newexp->get_ptr = specialize_expression(ctx, exp->get_ptr, bindings);
 		break;
 	case ast_exp_get_len:
-		newexp->get_len = specialize_expression(p, ctx, exp->get_len, bindings);
+		newexp->get_len = specialize_expression(ctx, exp->get_len, bindings);
 		break;
 	case ast_exp_size_of: FAILWITH("TODO: ast_exp_size_of"); break;
 	default: FAILWITH("Unreachable"); break;
@@ -1196,8 +1195,7 @@ specialize_expression(Parser *p,
 	return newexp;
 }
 
-void specialize_generic_procedure(Parser *p,
-								  struct typing_context ctx,
+void specialize_generic_procedure(struct typing_context ctx,
 								  struct definition *def,
 								  struct type_spec *spec_def)
 {
@@ -1219,7 +1217,7 @@ void specialize_generic_procedure(Parser *p,
 	struct procedure *newproc = &spec_def->exp->proc;
 	struct procedure *proc = &def->exp->proc;
 	{
-		bind_polymorphic_type_vars(p, ctx.scope, &bindings, generic_type, spec_type);
+		bind_polymorphic_type_vars(ctx.scope, &bindings, generic_type, spec_type);
 		type_env_add(&ctx, def->id, generalize_type(&ctx, spec_type));
 		for (size_t i = 0; i < proc->formals.len; ++i) {
 			struct definition *arg_def = da_allot(&newproc->formals);
@@ -1232,7 +1230,7 @@ void specialize_generic_procedure(Parser *p,
 	newproc->ret = type_var_subst(proc->ret, &bindings);
 	newproc->scope.parent = ctx.scope;
 	ctx.scope = &newproc->scope;
-	newproc->body = specialize_expression(p, ctx, proc->body, &bindings);
+	newproc->body = specialize_expression(ctx, proc->body, &bindings);
 	da_free(&bindings);
 }
 
@@ -1520,12 +1518,12 @@ type_var_set_equal_to(KCType *t, KCType *u)
 }
 
 KC_PRIVATE bool
-unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
+unify(struct typing_context ctx, KCType *t, KCType *u)
 {
-	t = resolve_alias(p, type_find(t), ctx.scope);
-	u = resolve_alias(p, type_find(u), ctx.scope);
+	t = resolve_alias(type_find(t), ctx.scope);
+	u = resolve_alias(type_find(u), ctx.scope);
 	if (!type_is_var(t) && type_is_var(u))
-		return unify(p, ctx, u, t);
+		return unify(ctx, u, t);
 	if (type_is_void(u)) {
 		if (type_is_var(t))
 			type_var_set_equal_to(t, u);
@@ -1552,7 +1550,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		if ((u->tag == ast_type_union
 			 || u->tag == ast_type_istruct
 			 || u->tag == ast_type_array)
-			&& unify(p, ctx, type_application(p, &t->app, ctx.scope), u)) {
+			&& unify(ctx, type_application(&t->app, ctx.scope), u)) {
 			return true;
 		}
 		if (u->tag != ast_type_app) return false;
@@ -1562,26 +1560,26 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		for (size_t i = 0; i < t->app.args.len; ++i) {
 			KCType *tm = t->app.args.elems[i];
 			KCType *um = u->app.args.elems[i];
-			if (!unify(p, ctx, tm, um)) {
+			if (!unify(ctx, tm, um)) {
 				return false;
 			}
 		}
 		return true;
 	} break;
 	case ast_type_ptr: {
-		if (type_is_pointer(u)) return unify(p, ctx, t->ptr, u->ptr);
+		if (type_is_pointer(u)) return unify(ctx, t->ptr, u->ptr);
 		return false;
 	} break;
 	case ast_type_mut_ptr: FAILWITH("TODO: ast_type_mut_ptr"); break;
 	case ast_type_slice: {
 		if (type_is_slice(u))
-			return unify(p, ctx, t->slice, u->slice);
+			return unify(ctx, t->slice, u->slice);
 		return false;
 	} break;
 	case ast_type_mut_slice: FAILWITH("TODO: ast_type_mut_slice"); break;
 	case ast_type_array: {
 		if (type_is_array(u)) {
-			if (!unify(p, ctx, t->array.base, u->array.base)) return false;
+			if (!unify(ctx, t->array.base, u->array.base)) return false;
 			if (t->array.is_sized && u->array.is_sized)
 				return t->array.size == u->array.size;
 			if (t->array.is_sized) {
@@ -1604,7 +1602,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 					return false;
 				if (t->union_t.elems[i].tag_value != u->union_t.elems[i].tag_value)
 					return false;
-				if (!unify(p, ctx, t->union_t.elems[i].type, u->union_t.elems[i].type)) {
+				if (!unify(ctx, t->union_t.elems[i].type, u->union_t.elems[i].type)) {
 					KCType *tm = t->union_t.elems[i].type;
 					KCType *um = u->union_t.elems[i].type;
 					printf("tm = ");
@@ -1623,7 +1621,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 	} break;
 	case ast_type_istruct: {
 		if (u->tag == ast_type_app)
-			u = type_application(p, &u->app, ctx.scope);
+			u = type_application(&u->app, ctx.scope);
 		if (u->tag == ast_type_struct) {
 			if (t->struct_t.len != u->struct_t.len) return false;
 			for (size_t i = 0; i < t->struct_t.len; ++i) {
@@ -1633,7 +1631,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 										token_to_strview(u->struct_t.elems[i].name)))
 						return false;
 				}
-				if (!unify(p, ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
+				if (!unify(ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
 					return false;
 			}
 			t->tag = ast_type_struct;
@@ -1649,7 +1647,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 					&& !sv_is_equal(token_to_strview(t->struct_t.elems[i].name),
 									token_to_strview(u->struct_t.elems[i].name)))
 					return false;
-				if (!unify(p, ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
+				if (!unify(ctx, t->struct_t.elems[i].type, u->struct_t.elems[i].type))
 					return false;
 			}
 			return true;
@@ -1661,10 +1659,10 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 		if (!type_is_procedure(u)) return false;
 		if (t->proc.args.len != u->proc.args.len) return false;
 		for (size_t i = 0; i < t->proc.args.len; ++i) {
-			if (!unify(p, ctx, t->proc.args.elems[i], u->proc.args.elems[i]))
+			if (!unify(ctx, t->proc.args.elems[i], u->proc.args.elems[i]))
 				return false;
 		}
-		return unify(p, ctx, t->proc.ret, u->proc.ret);
+		return unify(ctx, t->proc.ret, u->proc.ret);
 	} break;
 	case ast_type_var: {
 		if (t == u) return true;
@@ -1820,7 +1818,7 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 			}
 			if (type_is_indexable(u)) {
 				type_var_set_equal_to(t, u);
-				return unify(p, ctx, t->var.contains, get_indexable_base_type(u));
+				return unify(ctx, t->var.contains, get_indexable_base_type(u));
 			} else {
 				return false;
 			}
@@ -1861,10 +1859,10 @@ unify(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
 }
 
 KC_PRIVATE bool
-unify_cast(Parser *p, struct typing_context ctx, KCType *t, KCType *u)
+unify_cast(struct typing_context ctx, KCType *t, KCType *u)
 {
-	t = resolve_alias(p, type_find(t), ctx.scope);
-	u = resolve_alias(p, type_find(u), ctx.scope);
+	t = resolve_alias(type_find(t), ctx.scope);
+	u = resolve_alias(type_find(u), ctx.scope);
 	if (type_is_void(u)) {
 		return true;
 	} else if (type_is_var(t) || type_is_var(u)) {
@@ -1902,12 +1900,12 @@ get_fresh_valcons_entry_type(struct typing_context *ctx, struct valcons_entry *e
 	KCType *t = get_valcons_entry_type(e);
 	Forall s = generalize_type(ctx, t);
 	KCType *u = instantiate_type_scheme(&s);
-	free(t);
+	FREE(t);
 	return u;
 }
 
 KC_PRIVATE KCType *
-infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
+infer_type(struct typing_context ctx, struct expression *exp)
 {
 	switch (exp->tag) {
 	case ast_exp_definition: {
@@ -2061,10 +2059,10 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->bin.left, type);
 			UNIFY_EXP(ctx, exp->bin.right, type);
 			if (!exp->bin.left->is_lvalue)
-				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
+				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
 								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
 			if (!exp->bin.left->is_mutable)
-				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
+				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
 								  "Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
@@ -2076,24 +2074,24 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->bin.left, type);
 			UNIFY_EXP(ctx, exp->bin.right, type);
 			if (!exp->bin.left->is_lvalue)
-				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
+				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
 								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
 			if (!exp->bin.left->is_mutable)
-				log_error_and_die(p->lexer.filename, exp->bin.left->tok,
+				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
 								  "Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
 		case binop_member: {
-			KCType *type, *infered = infer_type(p, ctx, exp->bin.left);
+			KCType *type, *infered = infer_type(ctx, exp->bin.left);
 			if (infered->tag == ast_type_app) {
-				type = type_application(p, &infered->app, ctx.scope);
+				type = type_application(&infered->app, ctx.scope);
 			} else {
 				type = infered;
 			}
 			if (type_is_struct_ptr(type, ctx.scope))
 				type = type->ptr;
 			if (!type_is_struct(type, ctx.scope)) {
-				log_error_and_die(p->lexer.filename, exp->tok,
+				log_error_and_die(exp->tok->filename, exp->tok,
 								  "KCType error. `%s` is not a structure.",
 								  ast_type_to_str(infered));
 			}
@@ -2105,7 +2103,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 						return exp->type = type->struct_t.elems[i].type;
 					}
 				}
-				log_error_and_die(p->lexer.filename, exp->tok,
+				log_error_and_die(exp->tok->filename, exp->tok,
 								  "KCType error. `%s` has no member `"SV_FMT"`.",
 								  ast_type_to_str(infered),
 								  SV_ARGS(sv_mem));
@@ -2137,7 +2135,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		int64_t tag_val = entry->valcons.elems[0].tag_val;
 		exp->valcons.tag_val = tag_val;
 		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->valcons.elems[0]);
-		KCType *I = type_application(p, &U->app, ctx.scope);
+		KCType *I = type_application(&U->app, ctx.scope);
 		KCType *T = I->union_t.elems[tag_val].type;
 		if (exp->valcons.exp == NULL) {
 			if (!type_is_void(T))
@@ -2145,7 +2143,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		} else {
 			UNIFY_EXP(ctx, exp->valcons.exp, T);
 		}
-		free(I);
+		FREE(I);
 		return exp->type = U;
 	} break;
 	case ast_exp_unary: {
@@ -2165,7 +2163,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			KCType *type = fresh_type_var(type_class_any);
 			UNIFY_EXP(ctx, exp->una.exp, type);
 			if (!exp->una.exp->is_lvalue)
-				log_error_and_die(p->lexer.filename, exp->tok, "Error. Expression is not an lvalue.");
+				log_error_and_die(exp->tok->filename, exp->tok, "Error. Expression is not an lvalue.");
 			KCType *ptr = MEM_ALLOC(KCType);
 			ptr->tag = exp->una.exp->is_mutable ? ast_type_mut_ptr : ast_type_ptr;
 			ptr->ptr = type;
@@ -2199,7 +2197,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->slice.idx, idx_type);
 			UNIFY_EXP(ctx, exp->slice.len, len_type);
 			if (!exp->slice.exp->is_lvalue) {
-				log_error_and_die(p->lexer.filename, exp->slice.exp->tok,
+				log_error_and_die(exp->slice.exp->tok->filename, exp->slice.exp->tok,
 								  "Error. Expression is not an lvalue.");
 			}
 			exp->is_lvalue = exp->slice.exp->is_lvalue;
@@ -2211,7 +2209,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		} break;
 		case unaop_call: {
 			struct call *call = &exp->call;
-			KCType *proc_type = infer_type(p, ctx, call->proc);
+			KCType *proc_type = infer_type(ctx, call->proc);
 			KCType *ret_type = fresh_type_var(type_class_any);
 			KCType *infered = MEM_ALLOC(KCType);
 			infered->tag = ast_type_proc;
@@ -2230,7 +2228,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 					assert(entry != NULL);
 					assert(entry->tag == SYMTBL_VARIABL);
 					struct definition *def = entry->variable.def;
-					if (lookup_poly_proc_spec(p, def, proc_type, ctx.scope) == NULL) {
+					if (lookup_poly_proc_spec(def, proc_type, ctx.scope) == NULL) {
 						da_append(&def->specs, (struct type_spec) {
 								.type = proc_type,
 							});
@@ -2248,8 +2246,8 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 			}
 			KCType *type = fresh_type_var(type_class_any);
 			UNIFY_EXP(ctx, exp->cast.exp, type);
-			if (!unify_cast(p, ctx, type, exp->cast.type))
-				type_mismatch_error(p, ctx, type, exp->cast.type, exp->tok, __FILE__, __LINE__);
+			if (!unify_cast(ctx, type, exp->cast.type))
+				type_mismatch_error(ctx, type, exp->cast.type, exp->tok, __FILE__, __LINE__);
 			return exp->type = exp->cast.type;
 		} break;
 		}
@@ -2277,7 +2275,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 		assert(entry->tag == SYMTBL_VALCONS);
 		struct type_definition *td = entry->valcons.elems[0].td;
 		KCType *U = get_fresh_valcons_entry_type(&ctx, &entry->valcons.elems[0]);
-		KCType *I = type_application(p, &U->app, ctx.scope);
+		KCType *I = type_application(&U->app, ctx.scope);
 		UNIFY_EXP(ctx, exp->ccase.cexp, U);
 		for (size_t i = 0; i < branches->len; ++i) {
 			struct case_branch *br = &branches->elems[i];
@@ -2324,7 +2322,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 	} break;
 	case ast_exp_size_of: {
 		if (exp->size_of.exp) {
-			exp->size_of.type = infer_type(p, ctx, exp->size_of.exp);
+			exp->size_of.type = infer_type(ctx, exp->size_of.exp);
 		}
 		assert(exp->size_of.type);
 		return exp->type = &AST_TYPE_U64;
@@ -2335,7 +2333,7 @@ infer_type(Parser *p, struct typing_context ctx, struct expression *exp)
 }
 
 KC_PRIVATE bool
-specialize(Parser *p, struct typing_context ctx, struct definition *def)
+specialize(struct typing_context ctx, struct definition *def)
 {
 	bool succ = false;
 	if (def->specs.len == 0) return succ;
@@ -2343,14 +2341,14 @@ specialize(Parser *p, struct typing_context ctx, struct definition *def)
 		struct type_spec *spec = &def->specs.elems[i];
 		if (spec->exp == NULL) {
 			succ = true;
-			specialize_generic_procedure(p, ctx, def, spec);
+			specialize_generic_procedure(ctx, def, spec);
 		}
 	}
 	return succ;
 }
 
 KC_PUBLIC void
-type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
+type_check(struct typing_context *ctx, struct expression_stack *exps)
 {
 	for (size_t i = 0; i < exps->len; ++i) {
 		if (exps->elems[i]->tag == ast_exp_definition) {
@@ -2360,14 +2358,14 @@ type_check(Parser *p, struct typing_context *ctx, struct expression_stack *exps)
 		}
 	}
 	for (size_t i = 0; i < exps->len; ++i) {
-		infer_type(p, *ctx, exps->elems[i]);
+		infer_type(*ctx, exps->elems[i]);
 	}
 	bool loop;
 	do {
 		loop = false;
 		for (size_t i = 0; i < exps->len; ++i) {
 			if (exps->elems[i]->tag == ast_exp_definition) {
-				loop |= specialize(p, *ctx, &exps->elems[i]->def);
+				loop |= specialize(*ctx, &exps->elems[i]->def);
 			}
 		}
 	} while (loop);

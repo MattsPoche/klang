@@ -39,6 +39,7 @@ enum token_type {
 	tt_slash        = '/',
 	tt_eof = 0x100,
 	/* Keywords */
+	tt_import,
 	tt_struct,
 	tt_type,
 	tt_newtype,
@@ -115,11 +116,12 @@ enum token_type {
 };
 
 #define CHECK_EXAUSTIVE_KEYWORDS(n) static_assert(TOKEN_TYPE_MAX - tt_eof == (n))
-CHECK_EXAUSTIVE_KEYWORDS(69);
+CHECK_EXAUSTIVE_KEYWORDS(70);
 
 struct token {
 	enum token_type tt;
 	char *text;
+	const char *filename;
 	uint32_t text_len;
 	uint32_t tok_len;
 	uint32_t offset;

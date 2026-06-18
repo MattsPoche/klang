@@ -1,24 +1,27 @@
 #include "common.h"
 
-KC_PUBLIC struct strview
-sv_fmtv(const char *fmt, va_list ap)
-{
-	struct strview sv = {0};
-	FILE *stream = open_memstream(&sv.ptr, &sv.len);
-	if (fmt == NULL) EXIT(1);
-	vfprintf(stream, fmt, ap);
-	fclose(stream);
-	return sv;
-}
+#ifndef MALLOC
+#define MALLOC malloc
+#endif
+#ifndef REALLOC
+#define REALLOC realloc
+#endif
+#ifndef FREE
+#define FREE free
+#endif
 
 KC_PUBLIC struct strview
 sv_fmt(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	struct strview sv = sv_fmtv(fmt, ap);
+	int sz = vsnprintf(NULL, 0, fmt, ap);
 	va_end(ap);
-	return sv;
+	char *s = MALLOC(sz+1);
+	va_start(ap, fmt);
+	vsnprintf(s, sz+1, fmt, ap);
+	va_end(ap);
+	return (struct strview){.ptr = s, .len = sz};
 }
 
 KC_PUBLIC char *
@@ -26,9 +29,13 @@ fmt_str(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	struct strview sv = sv_fmtv(fmt, ap);
+	int sz = vsnprintf(NULL, 0, fmt, ap);
 	va_end(ap);
-	return sv.ptr;
+	char *s = MALLOC(sz+1);
+	va_start(ap, fmt);
+	vsnprintf(s, sz+1, fmt, ap);
+	va_end(ap);
+	return s;
 }
 
 KC_PUBLIC void
@@ -46,7 +53,7 @@ concat_lines(struct lines *lines, const char *delim)
 	da_foreach(line, lines) {
 		total_len += strlen(*line);
 	}
-	char *str = malloc(total_len + 1);
+	char *str = MALLOC(total_len + 1);
 	assert(str != NULL);
 	for (size_t i = 0; i < total_len; ++i) {
 		da_foreach(line, lines) {
@@ -69,7 +76,7 @@ strjoin(const char *s1, const char *s2, const char *delim)
 	size_t s2_len = strlen(s2);
 	size_t delim_len = delim ? strlen(delim) : 0;
 	size_t total_len = s1_len + s2_len + delim_len;
-	char *cat = malloc(total_len + 1);
+	char *cat = MALLOC(total_len + 1);
 	assert(cat != NULL);
 	char *cp = cat;
 	while (*s1) *cp++ = *s1++;
@@ -87,7 +94,7 @@ subst_file_suffix(const char *file_name, const char *prefix)
 	const char *end_ptr = strrchr(file_name, '.');
 	size_t len = end_ptr ? (size_t)(end_ptr - file_name) : strlen(file_name);
 	size_t prefix_len = strlen(prefix);
-	char *new_name = malloc(len + prefix_len + 2);
+	char *new_name = MALLOC(len + prefix_len + 2);
 	assert(new_name != NULL);
 	char *ptr = new_name;
 	for (size_t i = 0; i < len; ++i) {
@@ -143,4 +150,13 @@ log_error_impl(const char *filename, struct token *tloc,
 	va_start(ap, fmt);
 	log_errorv(filename, tloc, debug_file, debug_line, fmt, ap);
 	va_end(ap);
+}
+
+KC_PUBLIC const char *
+str_dup(const char *s, size_t len)
+{
+	char *t = MALLOC(len+1);
+	memcpy(t, s, len);
+	t[len] = 0;
+	return t;
 }

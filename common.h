@@ -47,9 +47,6 @@
 		}																\
 	} while (0)
 
-#define MEM_ALLOC_ARRAY(type, n) calloc(n, sizeof(type))
-#define MEM_ALLOC(type) MEM_ALLOC_ARRAY(type, 1)
-
 #ifndef KC_PUBLIC
 #    define KC_PUBLIC
 #endif
@@ -66,6 +63,9 @@ typedef double float64_t;
 static_assert(sizeof(int32_t) == sizeof(float32_t));
 static_assert(sizeof(int64_t) == sizeof(float64_t));
 
+typedef struct kc_session KC_session;
+
+#include "alloc.h"
 #include "./da.h"
 #include "./strview.h"
 #include "./ast.h"
@@ -76,3 +76,4 @@ static_assert(sizeof(int64_t) == sizeof(float64_t));
 #include "./scope.h"
 #include "./ir.h"
 #include "./linux_system_v_x86_64.h"
+#include "./kc.h"
