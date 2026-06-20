@@ -35,11 +35,11 @@ KC_PRIVATE void type_env_add(struct typing_context *ctx, struct token *name, str
 KC_PRIVATE struct type_env *lookup_type_env(struct typing_context *ctx, struct token *var);
 KC_PRIVATE struct type_scheme generalize_type(struct typing_context *ctx, KCType *type);
 KC_PRIVATE void specialize_generic_procedure(struct typing_context ctx, struct definition *def,
-										 struct type_spec *spec_def);
+											 struct type_spec *spec_def);
 KC_PRIVATE struct definition specialize_definition(struct typing_context ctx, struct definition *def,
-											   struct type_var_bindings *bindings);
+												   struct type_var_bindings *bindings);
 KC_PRIVATE struct expression *specialize_expression(struct typing_context ctx,
-												struct expression *exp, struct type_var_bindings *bindings);
+													struct expression *exp, struct type_var_bindings *bindings);
 
 KC_PRIVATE bool
 exp_is_integer_literal(struct expression *exp)
@@ -106,16 +106,14 @@ type_mismatch_error(struct typing_context ctx, KCType *t, KCType *u,
 		if (!type_get_underlying(ctx.scope, t, &chk)) ERROR_UNDEFINED_IDENT(chk->app.cons);
 		if (!type_get_underlying(ctx.scope, u, &chk)) ERROR_UNDEFINED_IDENT(chk->app.cons);
 	}
-	struct strview msg = {0};
-	FILE *stream = open_memstream(&msg.ptr, &msg.len);
+	FILE *stream = fmemopen(scratch_buffer, sizeof(scratch_buffer), "w");
 	fputs("KCType error. ", stream);
 	fprint_full_type_name(ctx, t, stream);
 	fputs(" is incompatible with ", stream);
 	fprint_full_type_name(ctx, u, stream);
 	fputs(".", stream);
 	fclose(stream);
-	log_error_impl(tok->filename, tok, debug_file, debug_line, "%s", msg.ptr);
-	free(msg.ptr);
+	log_compile_error_impl(tok->filename, tok, debug_file, debug_line, "%s", scratch_buffer);
 	EXIT(1);
 }
 
@@ -1033,15 +1031,15 @@ type_var_subst(KCType *type, struct type_var_bindings *bindings)
 
 #define UNIFY(ctx, t, u, exp)											\
 	do {																\
-		KCType * _T = (t);											\
-		KCType * _U = (u);											\
+		KCType * _T = (t);												\
+		KCType * _U = (u);												\
 		if (!unify(ctx, _T, _U))										\
 			type_mismatch_error(ctx, _T, _U, (exp)->tok, __FILE__, __LINE__); \
 	} while (0)
 
-#define UNIFY_EXP(ctx, exp, u)						\
-	do {											\
-		struct expression *_E = (exp);				\
+#define UNIFY_EXP(ctx, exp, u)					\
+	do {										\
+		struct expression *_E = (exp);			\
 		UNIFY(ctx, infer_type(ctx, _E), u, _E);	\
 	} while (0)
 
@@ -2059,11 +2057,13 @@ infer_type(struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->bin.left, type);
 			UNIFY_EXP(ctx, exp->bin.right, type);
 			if (!exp->bin.left->is_lvalue)
-				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
-								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
+				log_compile_error_and_die(
+					exp->bin.left->tok->filename, exp->bin.left->tok,
+					"Memory address is unbound in left hand side of assignment (not an lvalue).");
 			if (!exp->bin.left->is_mutable)
-				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
-								  "Left hand side of assignment is immutable.");
+				log_compile_error_and_die(
+					exp->bin.left->tok->filename, exp->bin.left->tok,
+					"Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
 		case binop_add_assign:
@@ -2074,11 +2074,11 @@ infer_type(struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->bin.left, type);
 			UNIFY_EXP(ctx, exp->bin.right, type);
 			if (!exp->bin.left->is_lvalue)
-				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
-								  "Memory address is unbound in left hand side of assignment (not an lvalue).");
+				log_compile_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
+										  "Memory address is unbound in left hand side of assignment (not an lvalue).");
 			if (!exp->bin.left->is_mutable)
-				log_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
-								  "Left hand side of assignment is immutable.");
+				log_compile_error_and_die(exp->bin.left->tok->filename, exp->bin.left->tok,
+										  "Left hand side of assignment is immutable.");
 			return exp->type = type;
 		} break;
 		case binop_member: {
@@ -2091,9 +2091,9 @@ infer_type(struct typing_context ctx, struct expression *exp)
 			if (type_is_struct_ptr(type, ctx.scope))
 				type = type->ptr;
 			if (!type_is_struct(type, ctx.scope)) {
-				log_error_and_die(exp->tok->filename, exp->tok,
-								  "KCType error. `%s` is not a structure.",
-								  ast_type_to_str(infered));
+				log_compile_error_and_die(exp->tok->filename, exp->tok,
+										  "KCType error. `%s` is not a structure.",
+										  ast_type_to_str(infered));
 			}
 			if (exp->bin.right->tag == ast_exp_ident) {
 				struct strview sv_mem = token_to_strview(exp->bin.right->tok);
@@ -2103,10 +2103,10 @@ infer_type(struct typing_context ctx, struct expression *exp)
 						return exp->type = type->struct_t.elems[i].type;
 					}
 				}
-				log_error_and_die(exp->tok->filename, exp->tok,
-								  "KCType error. `%s` has no member `"SV_FMT"`.",
-								  ast_type_to_str(infered),
-								  SV_ARGS(sv_mem));
+				log_compile_error_and_die(exp->tok->filename, exp->tok,
+										  "KCType error. `%s` has no member `"SV_FMT"`.",
+										  ast_type_to_str(infered),
+										  SV_ARGS(sv_mem));
 			}
 			if (exp_is_integer_literal(exp->bin.right)) {
 				int64_t i = exp->bin.right->lit.i;
@@ -2163,7 +2163,7 @@ infer_type(struct typing_context ctx, struct expression *exp)
 			KCType *type = fresh_type_var(type_class_any);
 			UNIFY_EXP(ctx, exp->una.exp, type);
 			if (!exp->una.exp->is_lvalue)
-				log_error_and_die(exp->tok->filename, exp->tok, "Error. Expression is not an lvalue.");
+				log_compile_error_and_die(exp->tok->filename, exp->tok, "Error. Expression is not an lvalue.");
 			KCType *ptr = MEM_ALLOC(KCType);
 			ptr->tag = exp->una.exp->is_mutable ? ast_type_mut_ptr : ast_type_ptr;
 			ptr->ptr = type;
@@ -2197,8 +2197,8 @@ infer_type(struct typing_context ctx, struct expression *exp)
 			UNIFY_EXP(ctx, exp->slice.idx, idx_type);
 			UNIFY_EXP(ctx, exp->slice.len, len_type);
 			if (!exp->slice.exp->is_lvalue) {
-				log_error_and_die(exp->slice.exp->tok->filename, exp->slice.exp->tok,
-								  "Error. Expression is not an lvalue.");
+				log_compile_error_and_die(exp->slice.exp->tok->filename, exp->slice.exp->tok,
+										  "Error. Expression is not an lvalue.");
 			}
 			exp->is_lvalue = exp->slice.exp->is_lvalue;
 			assert(exp->is_lvalue);

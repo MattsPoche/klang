@@ -37,14 +37,17 @@ TODOS:
 #include "common.h"
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
-#include "cmd_flags.h"
 
-Mem_pool kc_heap;
+KC_PRIVATE Mem_pool kc_heap;
+KC_PUBLIC  Mem_pool *KC_HEAP = &kc_heap;
 
-__attribute__((constructor))
-static void
-init_heap(void)
+int set_sig_handler(void);
+
+KC_PRIVATE void
+kc_init(void)
 {
+	if (set_sig_handler() != 0)
+		FAILWITH("[Error] %s\n", strerror(errno));
 	kc_heap = mem_pool_create();
 }
 
@@ -71,13 +74,49 @@ kc_realloc(void *ptr, size_t size)
 }
 
 KC_PRIVATE int
-exec_cmd(struct lines *args)
+exec_cmd(struct lines *cmd)
 {
-	char *cmd_str = concat_lines(args, " ");
-	printf("[Info] %s\n", cmd_str);
-	int c = system(cmd_str);
-	FREE(cmd_str);
-	return c;
+	pid_t pid;
+	int wstatus = 0;
+	int io_pipes[2];
+	assert(cmd->len > 0);
+	if (pipe(io_pipes) < 0)
+		FAILWITH("[Error] pipe(io_pipes): %s\n", strerror(errno));
+	if ((pid = fork()) == 0) {
+		/* child */
+		printf("[Info]");
+		for (size_t i = 0; i < cmd->len && cmd->elems[i]; ++i)
+			printf(" %s", cmd->elems[i]);
+		printf("\n");
+		if (close(io_pipes[0]) < 0)
+			FAILWITH("[Error] close(io_pipes[0]): %s\n", strerror(errno));
+		if (dup2(io_pipes[1], STDOUT_FILENO) < 0)
+			FAILWITH("[Error] dup2(io_pipes[1], STDOUT_FILENO): %s\n", strerror(errno));
+		if (dup2(io_pipes[1], STDERR_FILENO) < 0)
+			FAILWITH("[Error] dup2(io_pipes[1], STDERR_FILENO): %s\n", strerror(errno));
+		if (execvp(cmd->elems[0], cmd->elems) < 0)
+			FAILWITH("[Error] %s\n", strerror(errno));
+	} else if (pid < 0) {
+		FAILWITH("[Error] %s\n", strerror(errno));
+	} else {
+		/* parent */
+		if (close(io_pipes[1]) < 0)
+			FAILWITH("[Error] close(io_pipes[1]): %s\n", strerror(errno));
+		wait(&wstatus);
+		wstatus = WEXITSTATUS(wstatus);
+		if (wstatus) {
+			FILE *f = fdopen(io_pipes[0], "r");
+			if (f == NULL)
+				FAILWITH("[Error] fdopen(io_pipes[0], \"r\"): %s\n", strerror(errno));
+			while (fgets(scratch_buffer, sizeof(scratch_buffer), f)) {
+				printf("[Info] %s", scratch_buffer);
+			}
+			fclose(f);
+		} else if (close(io_pipes[0]) < 0) {
+			FAILWITH("[Error] close(io_pipes[0]): %s\n", strerror(errno));
+		}
+	}
+	return wstatus;
 }
 
 // ld -dynamic-linker /lib/ld-linux-x86-64.so.2 /usr/lib/crt1.o /usr/lib/crti.o -lc syntax.o /usr/lib/crtn.o
@@ -87,43 +126,19 @@ link_object_files(struct lines *obj_files, const char *target, bool is_dll)
 	struct lines cmd = {0};
 	da_append(&cmd, "ld");
 	if (is_dll) da_append(&cmd, "-shared");
-	da_append(&cmd, "-dynamic-linker /lib/ld-linux-x86-64.so.2");
+	da_append(&cmd, "-dynamic-linker");
+	da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
 	da_append(&cmd, "/usr/lib/crt1.o");
 	da_append(&cmd, "/usr/lib/crti.o");
 	da_append(&cmd, "-lc");
 	da_concat(&cmd, obj_files);
 	da_append(&cmd, "/usr/lib/crtn.o");
 	da_append(&cmd, "-o");
-	da_append(&cmd, (void *)target);
+	da_append(&cmd, (char *)target);
+	da_append(&cmd, (char *)NULL);
 	int c = exec_cmd(&cmd);
 	da_free(&cmd);
 	return c;
-}
-
-KC_PRIVATE Cmd_args
-fh_set_bool_flag(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
-{
-	*(bool *)data = true;
-	return cmd_args_next(args);
-}
-
-KC_PRIVATE Cmd_args
-fh_set_output_file(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
-{
-	args = cmd_args_next(args);
-	assert(args.argc > 0);
-	*(char **)data = args.argv[0];
-	return cmd_args_next(args);
-}
-
-KC_PRIVATE Cmd_args
-fh_default_handler(UNUSED Cmd_flags *flags, UNUSED Cmd_flag_def *fd, Cmd_args args, void *data)
-{
-	static char input[PATH_MAX];
-	if (sscanf(args.argv[0], "%s.k", input) != 1)
-		FAILWITH("[Error] Invalid input file %s\n", args.argv[0]);
-	*(const char **)data = str_dup(input, strlen(input));
-	return cmd_args_next(args);
 }
 
 void
@@ -244,55 +259,139 @@ compilation_phase3(KC_session *session)
 	}
 }
 
-int main(int argc, char **argv)
+typedef struct {
+	char **argv;
+	int  argc;
+} CL_args;
+
+KC_PRIVATE int
+shift_args(CL_args *args)
 {
-	KC_session session = {.target = "a.out", .run_p = false};
-	bool output_asm_p = false;
-	if (set_sig_handler() != 0) {
-		fprintf(stderr, "[Error] %s\n", strerror(errno));
-		return 1;
+	args->argc--;
+	args->argv++;
+	return args->argc;
+}
+
+KC_PRIVATE const char *
+get_arg(CL_args *args)
+{
+	return *args->argv;
+}
+
+KC_PRIVATE bool
+is_valid_input_file_name(const char *file)
+{
+	int n1 = 0, n2 = 0;
+	int len = strlen(file);
+	if (sscanf(file, "%*[a-zA-Z_/]%n.k", &n1) == EOF || n1 == 0)
+		return false;
+	switch (len - n1) {
+	case 0: return true;
+	case 1: return false;
+	case 2:
+		if (sscanf(file+n1, ".k%n", &n2) == EOF)
+			return false;
+		break;
+	default:
+		if (sscanf(file+n1, "%*[a-zA-Z0-9_/].k%n", &n2) == EOF)
+			return false;
+		break;
 	}
+	return len == n1 + n2;
+}
+
+KC_PRIVATE int
+dispatch_build(CL_args args)
+{
+	KC_session session = {.target = "a.out", .link_p = true};
+	printf("[Info] dispatch_build\n");
 	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
 		fprintf(stderr, "[Error] %s\n", strerror(errno));
 		return 1;
 	}
-	/* process args and compile input files */
-	Cmd_flags flags = cmd_flags_make(&session.input_file, fh_default_handler, "Usage kc [options] file...");
-	cmd_flags_add(&flags,
-				  .name    = "-run",
-				  .desc    = "Run compiled program from memory. Do not produce an output file.",
-				  .data    = &session.run_p,
-				  .handler = fh_set_bool_flag);
-	cmd_flags_add(&flags,
-				  .name    = "-S",
-				  .desc    = "Print out disassembly.",
-				  .data    = &output_asm_p,
-				  .handler = fh_set_bool_flag);
-	cmd_flags_add(&flags,
-				  .name    = "-o",
-				  .desc    = "Specify output file name.",
-				  .data    = &session.target,
-				  .handler = fh_set_output_file);
-	cmd_parse_flags(&flags, argc, argv);
-	if (session.input_file == NULL) return 0;
+	while (shift_args(&args) > 0) {
+		const char *arg = get_arg(&args);
+		if (strcmp("-o", arg) == 0) {
+			if (shift_args(&args) <= 0) {
+				fprintf(stderr, "[Error] No output file provided after flag `-o`\n");
+				return 1;
+			}
+			session.target = get_arg(&args);
+		} else if (strcmp("-c", arg) == 0) {
+			session.link_p = false;
+		} else if (is_valid_input_file_name(arg)) {
+			session.input_file = arg;
+		} else {
+			fprintf(stderr, "[Error] Invalid input file `%s`\n", arg);
+			return 1;
+		}
+	}
+	if (session.input_file == NULL) {
+		fprintf(stderr, "[Error] No input file was provided\n");
+		return 1;
+	}
+	compilation_phase1(&session);
+	compilation_phase2(&session);
+	compilation_phase3(&session);
+	const char *ofile = subst_file_suffix(session.input_file, "o");
+	asm_output_object_file(&session.cg_module.as, ofile);
+	if (session.link_p) {
+		struct lines obj_files = {
+			.cap = 1,
+			.len = 1,
+			.elems = (void *)&ofile,
+		};
+		return link_object_files(&obj_files, session.target, false);
+	}
+	return 0;
+}
+
+KC_PRIVATE int
+dispatch_run(CL_args args)
+{
+	KC_session session = {.run_p = true};
+	printf("[Info] dispatch_run\n");
+	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
+		fprintf(stderr, "[Error] %s\n", strerror(errno));
+		return 1;
+	}
+	while (shift_args(&args)) {
+		const char *arg = get_arg(&args);
+		if (is_valid_input_file_name(arg)) {
+			session.input_file = arg;
+		} else {
+			fprintf(stderr, "[Error] Invalid input file `%s`\n", arg);
+			return 1;
+		}
+	}
+	if (session.input_file == NULL) {
+		fprintf(stderr, "[Error] No input file was provided\n");
+		return 1;
+	}
 	compilation_phase1(&session);
 	compilation_phase2(&session);
 	int(*entry_point)(int, const char**) = compilation_phase3(&session);
-	if (output_asm_p) {
-		fprint_disassembly(&session.cg_module.as, stdout);
-	}
 	if (entry_point) {
 		const char *argv[] = {session.input_file, NULL};
 		run_code_from_entry_point(&session.cg_module, entry_point, 1, argv);
 	} else {
-		const char *ofile = subst_file_suffix(session.input_file, "o");
-		asm_output_object_file(&session.cg_module.as, ofile);
-		struct lines obj_files = {0};
-		da_append(&obj_files, (void *)ofile);
-		link_object_files(&obj_files, session.target, false);
+		fprintf(stderr, "[Error] No entry point found in compilation unit\n");
+		return 1;
 	}
-	size_t total, bufc;
-	mem_pool_total_allocated(&kc_heap, &total, &bufc);
-	printf("[Info] Total memory allocated: %zu in %zu buffers.\n", total, bufc);
+	return 0;
+}
+
+int main(int argc, char *argv[])
+{
+	kc_init();
+	CL_args args = {argv, argc};
+	printf("%s\n", get_arg(&args));
+	if (shift_args(&args) <= 0) FAILWITH("TODO: print default help message.");
+	if (strcmp("build", get_arg(&args)) == 0)
+		return dispatch_build(args);
+	if (strcmp("run", get_arg(&args)) == 0)
+		return dispatch_run(args);
+	fprintf(stderr, "[Error] Unrecognized command: `%s`\n", get_arg(&args));
+	FAILWITH("TODO: print default help message.");
 	return 0;
 }

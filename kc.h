@@ -9,5 +9,6 @@ typedef struct kc_session {
 	struct scope *scope;
 	CG_module cg_module;
 	bool run_p;
+	bool link_p;
 	char cwd[PATH_MAX];
 } KC_session;

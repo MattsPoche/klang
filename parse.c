@@ -35,15 +35,15 @@ next_token(Parser *p, struct token **rt)
 KC_PRIVATE void
 error_unexpected_token(Parser *p, struct token *token, const char *debug_filename, const int debug_line)
 {
-	log_error_impl(p->lexer.filename, token, debug_filename, debug_line,
-				   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(token_to_strview(token)));
+	log_compile_error_impl(p->lexer.filename, token, debug_filename, debug_line,
+						   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(token_to_strview(token)));
 	EXIT(1);
 }
 
 KC_PUBLIC void
 error_undefined_ident(struct token *id, const char *debug_filename, const int debug_line)
 {
-	log_error_impl(id->filename, id, debug_filename, debug_line,
+	log_compile_error_impl(id->filename, id, debug_filename, debug_line,
 				   "Undefined identifier `"SV_FMT"`.", SV_ARGS(token_to_strview(id)));
 	EXIT(1);
 }
@@ -1025,7 +1025,7 @@ parse_expression(Parser *p, struct scope *scope)
 			} while (!ACCEPT(peek_token(p), tt_end));
 			next_token(p, NULL);
 			if (c->branches.len == 0) {
-				log_error_and_die(p->lexer.filename, tok, "Case expression has no branches.");
+				log_compile_error_and_die(p->lexer.filename, tok, "Case expression has no branches.");
 			}
 			da_append(&out, exp);
 		} break;

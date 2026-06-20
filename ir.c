@@ -677,44 +677,44 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		case binop_shift_left:	op = ir_op_shl;  goto LBL_binop;
 		case binop_shift_right:	op = ir_op_shr;  goto LBL_binop;
 		LBL_binop:
-		{
-			int left_reg = ir_proc_new_reg(tl, proc_id);
-			int right_reg = ir_proc_new_reg(tl, proc_id);
-			struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, scope, tl);
-			struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, scope, tl);
-			switch (dst.tag) {
-			case DST_RET:
-			case DST_VAL: {
-				da_append(&right->code, (IR_Ins){
-						.op   = op,
-						.type = exp->type,
-						.dst  = dst.reg,
-						.arg.rx[0] = left_reg,
-						.arg.rx[1] = right_reg,
-					});
+			{
+				int left_reg = ir_proc_new_reg(tl, proc_id);
+				int right_reg = ir_proc_new_reg(tl, proc_id);
+				struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, scope, tl);
+				struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, scope, tl);
+				switch (dst.tag) {
+				case DST_RET:
+				case DST_VAL: {
+					da_append(&right->code, (IR_Ins){
+							.op   = op,
+							.type = exp->type,
+							.dst  = dst.reg,
+							.arg.rx[0] = left_reg,
+							.arg.rx[1] = right_reg,
+						});
+				} break;
+				case DST_CPY: {
+					int tmp = ir_proc_new_reg(tl, proc_id);
+					da_append(&right->code, (IR_Ins){
+							.op   = op,
+							.type = exp->type,
+							.dst  = tmp,
+							.arg.rx[0] = left_reg,
+							.arg.rx[1] = right_reg,
+						});
+					da_append(&right->code, (IR_Ins){
+							.op   = ir_op_store,
+							.type = exp->type,
+							.dst  = dst.reg,
+							.arg.rx[0] = tmp,
+						});
+				} break;
+				case DST_REF: FAILWITH("TODO: DST_REF"); break;
+				case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
+				default: FAILWITH("Unreachable"); break;
+				}
+				return right;
 			} break;
-			case DST_CPY: {
-				int tmp = ir_proc_new_reg(tl, proc_id);
-				da_append(&right->code, (IR_Ins){
-						.op   = op,
-						.type = exp->type,
-						.dst  = tmp,
-						.arg.rx[0] = left_reg,
-						.arg.rx[1] = right_reg,
-					});
-				da_append(&right->code, (IR_Ins){
-						.op   = ir_op_store,
-						.type = exp->type,
-						.dst  = dst.reg,
-						.arg.rx[0] = tmp,
-					});
-			} break;
-			case DST_REF: FAILWITH("TODO: DST_REF"); break;
-			case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
-			default: FAILWITH("Unreachable"); break;
-			}
-			return right;
-		} break;
 		case binop_equal:      op = ir_op_cmpe;  goto LBL_cmp;
 		case binop_not_equal:  op = ir_op_cmpne; goto LBL_cmp;
 		case binop_less_than:  op = ir_op_cmpl;  goto LBL_cmp;
@@ -861,7 +861,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			assert(dst.tag == DST_VAL || dst.tag == DST_NONE);
 			return right;
 		} break;
-		/* NOTE: These operators should be desugared */
+			/* NOTE: These operators should be desugared */
 		case binop_add_assign: FAILWITH("TODO: binop_add_assign"); break;
 		case binop_and_assign: FAILWITH("TODO: binop_and_assign"); break;
 		case binop_lor_assign: FAILWITH("TODO: binop_lor_assign"); break;
@@ -2018,14 +2018,14 @@ KC_PRIVATE struct expression *
 ast_desugar_expression(struct expression *exp, struct scope *scope)
 {
 	if (exp->type == NULL) {
-		log_error_and_die(exp->tok->filename, exp->tok, "Expression has no type.");
+		log_compile_error_and_die(exp->tok->filename, exp->tok, "Expression has no type.");
 	}
 	{
 		KCType *t = resolve_type(exp->type, scope);
 		if (t == NULL)
-			log_error_and_die(exp->tok->filename, exp->tok,
-							  "Failed to resolve type of expression `%s`.",
-							  ast_type_to_str(exp->type));
+			log_compile_error_and_die(exp->tok->filename, exp->tok,
+									  "Failed to resolve type of expression `%s`.",
+									  ast_type_to_str(exp->type));
 		exp->type = t;
 	}
 	switch (exp->tag) {
@@ -2143,9 +2143,9 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 	case ast_exp_size_of: {
 		KCType *t = resolve_type(exp->size_of.type, scope);
 		if (t == NULL) {
-			log_error_and_die(exp->tok->filename, exp->tok,
-							  "Failed to resolve type of expression `%s`.",
-							  ast_type_to_str(exp->type));
+			log_compile_error_and_die(exp->tok->filename, exp->tok,
+									  "Failed to resolve type of expression `%s`.",
+									  ast_type_to_str(exp->type));
 		}
 		exp->size_of.type = t;
 		return exp;
@@ -2202,14 +2202,14 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 		case binop_shift_left_assign:  exp->bin.op = op_shift_left;  goto desugar_assignment;
 		case binop_shift_right_assign: exp->bin.op = op_shift_right; goto desugar_assignment;
 		desugar_assignment:
-		{
-			struct expression *assign = MEM_ALLOC(struct expression);
-			*assign = *exp;
-			assign->bin.op = op_assign;
-			assign->bin.left = exp->bin.left;
-			assign->bin.right = exp;
-			return ast_desugar_expression(assign, scope);
-		} break;
+			{
+				struct expression *assign = MEM_ALLOC(struct expression);
+				*assign = *exp;
+				assign->bin.op = op_assign;
+				assign->bin.left = exp->bin.left;
+				assign->bin.right = exp;
+				return ast_desugar_expression(assign, scope);
+			} break;
 		default: {
 			struct expression *left = ast_desugar_expression(exp->bin.left, scope);
 			struct expression *right = ast_desugar_expression(exp->bin.right, scope);

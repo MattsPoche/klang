@@ -259,7 +259,7 @@ lex_str_char(struct lexer *lex, struct token *tok)
 		lex_nextc(lex);
 		tok->tok_len++;
 		return false;
-	case EOF: log_error_and_die(lex->filename, tok, "Syntax error"); break;
+	case EOF: log_compile_error_and_die(lex->filename, tok, "Syntax error"); break;
 	default:
 		lex_nextc(lex);
 		tok->tok_len++;
@@ -360,7 +360,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 						lex_nextc(lex);
 						tok.tok_len++;
 						if (!isdigit(lex_peekc(lex))) {
-							log_error_and_die(lex->filename, &tok, "Syntax error");
+							log_compile_error_and_die(lex->filename, &tok, "Syntax error");
 						}
 						while (isdigit(lex_peekc(lex))) {
 							lex_nextc(lex);
@@ -426,7 +426,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 				else if (sv_is_equal(sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
 				else if (sv_is_equal(sv, sv_of_cstr("..")))  tok.tt = tt_period_period;
 				else {
-					log_error_and_die(lex->filename, &tok, "invalid operator `"SV_FMT"`.", SV_ARGS(sv));
+					log_compile_error_and_die(lex->filename, &tok, "invalid operator `"SV_FMT"`.", SV_ARGS(sv));
 				}
 				break;
 			}

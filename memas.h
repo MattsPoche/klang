@@ -2938,10 +2938,12 @@ asm_output_static_executable(Asm_module *m, asm_label_id entry_lbl, const char *
 	byte_buffer_insert_bytes(&elf_buff, &ph, sizeof(ph));
 	byte_buffer_insert_bytes(&elf_buff, asm_get_current_section_buffer(m)->data, asm_get_current_section_buffer(m)->len);
 	int out;
-	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY)) == -1)		goto fail0;
-	if (byte_buffer_write_data_to_file(&elf_buff, out) == -1)       goto fail1;
-	if (fchmod(out, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) == -1) goto fail1;
-	if (close(out) == -1)											goto fail0;
+	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) == -1)
+		goto fail0;
+	if (byte_buffer_write_data_to_file(&elf_buff, out) == -1)
+		goto fail1;
+	if (close(out) == -1)
+		goto fail0;
 	elf_buff.free(&elf_buff);
 	return;
 fail1:
@@ -2965,10 +2967,12 @@ asm_output_object_file(Asm_module *m, const char *filename)
 	Asm_elf_builder eb = asm_make_elf_builder(m, ET_REL);
 	asm_elf_resolve_symbols(m, &eb);
 	int out;
-	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY)) == -1)	goto fail0;
-	if (asm_elf_to_file(&eb, out) == -1)                        goto fail1;
-	if (fchmod(out, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH) == -1)     goto fail1;
-	if (close(out) == -1)										goto fail0;
+	if ((out = open(filename, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH)) == -1)
+		goto fail0;
+	if (asm_elf_to_file(&eb, out) == -1)
+		goto fail1;
+	if (close(out) == -1)
+		goto fail0;
 	return;
 fail1:
 	close(out);

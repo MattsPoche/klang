@@ -130,7 +130,7 @@ tests = [
 
 def run_test(file_name, exit_code, output):
 	print(f'Running test "{file_name}" ... ', end="")
-	result = subprocess.run(["./kc", file_name], capture_output=True)
+	result = subprocess.run(["./kc", "build", file_name], capture_output=True)
 	if result.returncode != 0:
 		print("FAILED at compilation.")
 		return False

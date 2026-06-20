@@ -56,14 +56,14 @@ ssize_t byte_buffer_write_data_to_file(Byte_buffer *buf, int fileno);
 
 #ifdef BYTE_BUFFER_IMPLEMENTATION
 
-#ifndef MALLOC
-#define MALLOC malloc
+#ifndef BB_MALLOC
+#define BB_MALLOC malloc
 #endif
-#ifndef REALLOC
-#define REALLOC realloc
+#ifndef BB_REALLOC
+#define BB_REALLOC realloc
 #endif
-#ifndef FREE
-#define FREE free
+#ifndef BB_FREE
+#define BB_FREE free
 #endif
 
 #ifndef INIT_BUFFER_SIZE
@@ -107,7 +107,7 @@ resize_buffer(Byte_buffer *buf, size_t offset, size_t size)
 static void
 malloc_mem_buffer(Byte_buffer *buff, size_t size)
 {
-	if ((buff->data = MALLOC(size)) == NULL) {
+	if ((buff->data = BB_MALLOC(size)) == NULL) {
 #ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
 #else
@@ -121,7 +121,7 @@ malloc_mem_buffer(Byte_buffer *buff, size_t size)
 static void
 realloc_mem_buffer(Byte_buffer *buff, size_t size)
 {
-	if ((buff->data = REALLOC(buff->data, size)) == NULL) {
+	if ((buff->data = BB_REALLOC(buff->data, size)) == NULL) {
 #ifndef NO_STD_HEADERS
 		FAILWITH("[ERROR] %s\n", strerror(errno));
 #else
@@ -135,7 +135,7 @@ realloc_mem_buffer(Byte_buffer *buff, size_t size)
 static void
 free_mem_buffer(Byte_buffer *buff)
 {
-	FREE(buff->data);
+	BB_FREE(buff->data);
 	buff->cap = 0;
 	buff->len = 0;
 	buff->data = NULL;

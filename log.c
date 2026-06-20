@@ -10,6 +10,8 @@
 #define FREE free
 #endif
 
+char scratch_buffer[PAGE_SIZE];
+
 KC_PUBLIC struct strview
 sv_fmt(const char *fmt, ...)
 {
@@ -121,10 +123,14 @@ current_line(struct token *tloc)
 	};
 }
 
-KC_PRIVATE const char *wiggly_line = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
+KC_PRIVATE const char wiggly_line[] =
+	"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+	"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+	"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+	"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
 
-KC_PUBLIC void
-log_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
+KC_PRIVATE void
+log_compile_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
 		   const char *fmt, va_list ap)
 {
 	fprintf(stderr, "[Error] %s:%d:%d: ", filename, tloc->line, tloc->column);
@@ -143,12 +149,12 @@ log_errorv(const char *filename, struct token *tloc, const char *debug_file, int
 }
 
 KC_PUBLIC void
-log_error_impl(const char *filename, struct token *tloc,
-			   const char *debug_file, int debug_line, const char *fmt, ...)
+log_compile_error_impl(const char *filename, struct token *tloc,
+					   const char *debug_file, int debug_line, const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	log_errorv(filename, tloc, debug_file, debug_line, fmt, ap);
+	log_compile_errorv(filename, tloc, debug_file, debug_line, fmt, ap);
 	va_end(ap);
 }
 
