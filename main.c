@@ -231,17 +231,16 @@ run_code_from_entry_point(CG_module *m, int(*entry_point)(int argc, const char *
 void
 compilation_phase1(KC_session *session)
 {
-	struct expression_stack tl_exps = {0};
 	struct typing_context ctx = {0};
-	ctx.scope = parse_file(session->input_file, &tl_exps);
-	type_check(&ctx, &tl_exps);
-	ast_desugar(&tl_exps, ctx.scope);
+	ctx.scope = kc_parse(session, &session->tl_exps);
+	type_check(session, &ctx, &session->tl_exps);
 	session->scope = ctx.scope;
 }
 
 void
 compilation_phase2(KC_session *session)
 {
+	ast_desugar(&session->tl_exps, session->scope);
 	session->ir = ast_compile(session->scope);
 }
 
@@ -303,7 +302,7 @@ is_valid_input_file_name(const char *file)
 KC_PRIVATE int
 dispatch_build(CL_args args)
 {
-	KC_session session = {.target = "a.out", .link_p = true};
+	KC_session session = {.target = "a.out", .link_p = true, .symbols = syminfo_create()};
 	printf("[Info] dispatch_build\n");
 	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
 		fprintf(stderr, "[Error] %s\n", strerror(errno));
@@ -331,6 +330,55 @@ dispatch_build(CL_args args)
 		return 1;
 	}
 	compilation_phase1(&session);
+#if 1
+		Syminfo_iter iter = syminfo_iter(session.symbols);
+		Syminfo_pair pair = {0};
+		while (syminfo_iter_next(&iter, &pair)) {
+			for (Syminfo_list list = pair.info_list; list; list = list->next) {
+				const char *filename;
+				uint32_t line, column, offset;
+				if (list->si && list->si->tag == SYMTBL_VARIABL) {
+					filename = list->si->name->filename;
+					offset   = list->si->name->offset;
+					line     = list->si->name->line;
+					column   = list->si->name->column;
+					struct definition *def = list->si->variable.def;
+					fprintf(stdout,
+							"@\t%s\t%u\t%u\t%u\tv\t\""SV_FMT"\"\tt\t\"",
+							filename, line, column+1, offset, SV_ARGS(pair.name));
+					ast_type_fprint(def->type, stdout);
+					printf("\"\n");
+				} else if (list->si && list->si->tag == SYMTBL_VALCONS) {
+					filename = list->si->name->filename;
+					offset   = list->si->name->offset;
+					line     = list->si->name->line;
+					column   = list->si->name->column;
+					KCType *memb = list->si->valcons.type;
+					KCType type  = get_temp_app_type_from_definition(list->si->valcons.td);
+					fprintf(stdout,
+							"@\t%s\t%u\t%u\t%u\tc\t\""SV_FMT"\"\tt\t\"",
+							filename, line, column+1, offset, SV_ARGS(pair.name));
+					ast_type_fprint(memb, stdout);
+					fprintf(stdout, "\"\tt\t\"");
+					ast_type_fprint(&type, stdout);
+					fprintf(stdout, "\"\n");
+				} else if (list->ti) {
+					filename = list->ti->name->filename;
+					offset   = list->ti->name->offset;
+					line     = list->ti->name->line;
+					column   = list->ti->name->column;
+					KCType type = get_temp_app_type_from_definition(list->ti);
+					fprintf(stdout,
+							"@\t%s\t%u\t%u\t%u\tt\t\"",
+							filename, line, column+1, offset);
+					ast_type_fprint(&type, stdout);
+					fprintf(stdout, "\"\tt\t\"");
+					ast_type_fprint(list->ti->type, stdout);
+					fprintf(stdout, "\"\n");
+				}
+			}
+		}
+#endif
 	compilation_phase2(&session);
 	compilation_phase3(&session);
 	const char *ofile = subst_file_suffix(session.input_file, "o");
@@ -349,7 +397,7 @@ dispatch_build(CL_args args)
 KC_PRIVATE int
 dispatch_run(CL_args args)
 {
-	KC_session session = {.run_p = true};
+	KC_session session = {.run_p = true, .symbols = syminfo_create()};
 	printf("[Info] dispatch_run\n");
 	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
 		fprintf(stderr, "[Error] %s\n", strerror(errno));

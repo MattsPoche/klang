@@ -47,6 +47,8 @@
 		}																\
 	} while (0)
 
+#define KC_INLINE __attribute__((always_inline)) static inline
+
 #ifndef KC_PUBLIC
 #    define KC_PUBLIC
 #endif
@@ -66,8 +68,9 @@ static_assert(sizeof(int64_t) == sizeof(float64_t));
 typedef struct kc_session KC_session;
 
 #include "alloc.h"
-#include "da.h"
 #include "strview.h"
+#include "syminfo.h"
+#include "da.h"
 #include "ast.h"
 #include "lex.h"
 #include "parse.h"

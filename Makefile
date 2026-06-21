@@ -1,7 +1,7 @@
 TARGET=kc
 CFLAGS=-std=c23 -Wall -Wextra -Wswitch-enum -ggdb -Werror=vla -D_GNU_SOURCE
-CFLAGS += -fwrapv -fno-strict-aliasing -fsanitize=address
-LFLAGS= -fsanitize=address
+CFLAGS += -fwrapv -fno-strict-aliasing -fsanitize=address -fsanitize=undefined
+LFLAGS= -fsanitize=address -fsanitize=undefined
 HFILES=$(shell find -type f -name '*.h')
 CFILES=$(shell find -type f -name '*.c')
 OFILES=$(CFILES:%.c=%.o)

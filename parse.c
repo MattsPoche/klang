@@ -1,11 +1,12 @@
 #include "common.h"
 
+KC_PRIVATE struct scope *parse_file(KC_session *session, const char *filename, struct expression_stack *tl_exps);
 KC_PRIVATE const char *ast_binop_to_str(enum binop op);
 KC_PRIVATE void ast_def_fprint(struct definition *def, FILE *file);
-KC_PRIVATE KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
-KC_PRIVATE void parse_definition(Parser *p, struct definition *def, struct scope *scope);
-KC_PRIVATE struct expression *parse_expression(Parser *p, struct scope *scope);
-KC_PRIVATE KCType *parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p);
+KC_PRIVATE void parse_definition(KC_session *session, Parser *p, struct definition *def, struct scope *scope);
+KC_PRIVATE struct expression *parse_expression(KC_session *session, Parser *p, struct scope *scope);
+KC_PRIVATE KCType *parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_type_var_p);
+
 
 /* --- Parser --- */
 KC_PRIVATE struct token *
@@ -77,7 +78,7 @@ procedure_type(struct procedure *proc)
 /* TODO: Improve error messages in parser
  */
 KC_PRIVATE struct type_ptrs
-parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
+parse_type_list(KC_session *session, Parser *p, bool allow_trailing_comma, enum token_type terminal,
 				struct scope *scope, bool introduce_type_var_p)
 {
 	struct type_ptrs list = {0};
@@ -91,14 +92,14 @@ parse_type_list(Parser *p, bool allow_trailing_comma, enum token_type terminal,
 			next_token(p, NULL);
 			return list;
 		}
-		da_append(&list, parse_type(p, scope, introduce_type_var_p));
+		da_append(&list, parse_type(session, p, scope, introduce_type_var_p));
 	} while (ACCEPT(next_token(p, &tok), tt_comma));
 	EXPECT(tok, terminal);
 	return list;
 }
 
 KC_PRIVATE KCType *
-parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+parse_named_struct_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_struct;
@@ -116,7 +117,7 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 		EXPECT(next_token(p, NULL), tt_colon);
 		struct struct_member m = {
 			.name = tok,
-			.type = parse_type(p, scope, introduce_type_var_p),
+			.type = parse_type(session, p, scope, introduce_type_var_p),
 		};
 		assert(m.type != NULL);
 		da_append(&type->struct_t, m);
@@ -126,7 +127,7 @@ parse_named_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_
 }
 
 KC_PRIVATE KCType *
-parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+parse_struct_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_struct;
@@ -141,7 +142,7 @@ parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 			return type;
 		}
 		da_append(&type->struct_t, (struct struct_member) {
-				.type = parse_type(p, scope, introduce_type_var_p),
+				.type = parse_type(session, p, scope, introduce_type_var_p),
 			});
 	} while (ACCEPT(next_token(p, &tok), tt_comma));
 	EXPECT(tok, tt_rbrace);
@@ -149,7 +150,7 @@ parse_struct_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 }
 
 KC_PRIVATE KCType *
-parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
+parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_type_var_p)
 {
 	KCType *type = NULL;
 	struct token *tok = NULL;
@@ -167,19 +168,19 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 			type = MEM_ALLOC(KCType);
 			type->tag = ast_type_slice;
 		}
-		type->slice = parse_type(p, scope, introduce_type_var_p);
+		type->slice = parse_type(session, p, scope, introduce_type_var_p);
 		EXPECT(next_token(p, NULL), tt_rbracket);
 	} break;
 	case tt_lparen: {
 		next_token(p, NULL);
 		/* parse formal parameter list */
-		struct type_ptrs args = parse_type_list(p, true, tt_rparen, scope, introduce_type_var_p);
+		struct type_ptrs args = parse_type_list(session, p, true, tt_rparen, scope, introduce_type_var_p);
 		type = MEM_ALLOC(KCType);
 		if (ACCEPT(peek_token(p), tt_minus_more)) {
 			next_token(p, NULL);
 			type->tag = ast_type_proc;
 			type->proc.args = args;
-			type->proc.ret = parse_type(p, scope, introduce_type_var_p);
+			type->proc.ret = parse_type(session, p, scope, introduce_type_var_p);
 		} else if (ACCEPT(peek_token(p), tt_star)) {
 			next_token(p, NULL);
 			assert(args.len == 1);
@@ -203,9 +204,9 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		if (peek_token(p)->tt == tt_ident && peek_token2(p)->tt == tt_colon) {
 			/* begin parsing named members */
-			type = parse_named_struct_type(p, scope, introduce_type_var_p);
+			type = parse_named_struct_type(session, p, scope, introduce_type_var_p);
 		} else {
-			type = parse_struct_type(p, scope, introduce_type_var_p);
+			type = parse_struct_type(session, p, scope, introduce_type_var_p);
 		}
 		assert(type->tag == ast_type_struct);
 	} break;
@@ -213,10 +214,10 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 		next_token(p, NULL);
 		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_array;
-		type->array.base = parse_type(p, scope, introduce_type_var_p);
+		type->array.base = parse_type(session, p, scope, introduce_type_var_p);
 		if (ACCEPT(peek_token(p), tt_comma)) {
 			next_token(p, NULL);
-			struct expression *exp = parse_expression(p, scope);
+			struct expression *exp = parse_expression(session, p, scope);
 			assert(exp->tag == ast_exp_literal);
 			assert(exp->lit.tag == LITERAL_INT);
 			type->array.is_sized = true;
@@ -296,7 +297,7 @@ parse_type(Parser *p, struct scope *scope, bool introduce_type_var_p)
 }
 
 KC_PRIVATE void
-parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
+parse_type_def(KC_session *session, Parser *p, struct scope *scope, bool is_newtype)
 {
 	struct type_ptrs args = {0};
 	struct scope sc = {.parent = scope};
@@ -326,14 +327,15 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 	struct token *name;
 	EXPECT(next_token(p, &name), tt_ident);
 	EXPECT(next_token(p, NULL), tt_equal);
-	struct type_definition *type_def = da_allot(&scope->typetbl);
-	type_def->name = name;
-	type_def->args = args;
-	type_def->is_alias = !is_newtype;
+	struct type_definition *type_def = typetbl_add(&scope->typetbl,
+												   .name = name,
+												   .args = args,
+												   .is_alias = !is_newtype);
 	if (!is_newtype || !ACCEPT(peek_token(p), tt_pipe)) {
-		type_def->type = parse_type(p, &sc, false);
+		type_def->type = parse_type(session, p, &sc, false);
 		return;
 	}
+	syminfo_add(&session->symbols, token_to_strview(name), type_def);
 	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_union;
 	int64_t tag_value = 0;
@@ -342,7 +344,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 		struct token *name = EXPECT(next_token(p, NULL), tt_ident);
 		if (ACCEPT(peek_token(p), tt_lparen)) {
 			next_token(p, NULL);
-			struct expression *exp = parse_expression(p, &sc);
+			struct expression *exp = parse_expression(session, p, &sc);
 			assert(exp->tag == ast_exp_literal);
 			assert(exp->lit.tag == LITERAL_INT);
 			tag_value = exp->lit.i;
@@ -351,11 +353,13 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 		KCType *mem_type;
 		if (ACCEPT(peek_token(p), tt_colon)) {
 			next_token(p, NULL);
-			mem_type = parse_type(p, &sc, false);
+			mem_type = parse_type(session, p, &sc, false);
 		} else {
 			mem_type = &AST_TYPE_VOID;
 		}
-		symtbl_add_valcons(&scope->symtbl, name, tag_value, mem_type, type_def);
+		syminfo_add(&session->symbols,
+					token_to_strview(name),
+					symtbl_add_valcons(&scope->symtbl, name, tag_value, mem_type, type_def));
 		da_append(&type->union_t, (struct union_member) {
 				.name = name,
 				.type = mem_type,
@@ -366,7 +370,7 @@ parse_type_def(Parser *p, struct scope *scope, bool is_newtype)
 }
 
 KC_PRIVATE void
-parse_definition(Parser *p, struct definition *def, struct scope *scope)
+parse_definition(KC_session *session, Parser *p, struct definition *def, struct scope *scope)
 {
 	/* We enter with `let` token already consumed */
 	struct token *tok;
@@ -380,9 +384,9 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 	def->id = tok;
 	if (ACCEPT(next_token(p, &tok), tt_colon)) {
 		/* variable definition */
-		def->type = parse_type(p, scope, false);
+		def->type = parse_type(session, p, scope, false);
 		EXPECT(next_token(p, NULL), tt_equal);
-		def->exp = parse_expression(p, scope);
+		def->exp = parse_expression(session, p, scope);
 	} else {
 		/* procedure definition */
 		EXPECT(tok, tt_lparen);
@@ -403,8 +407,10 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 				EXPECT(tok, tt_ident);
 				EXPECT(next_token(p, NULL), tt_colon);
 				arg->id = tok;
-				arg->type = parse_type(p, &proc->proc.scope, true);
-				symtbl_add(&proc->proc.scope.symtbl, arg, NULL);
+				arg->type = parse_type(session, p, &proc->proc.scope, true);
+				syminfo_add(&session->symbols,
+							token_to_strview(arg->id),
+							symtbl_add(&proc->proc.scope.symtbl, arg, NULL));
 				if (ACCEPT(peek_token(p), tt_rparen)) break;
 				EXPECT(next_token(p, NULL), tt_comma);
 			}
@@ -414,7 +420,7 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 		if (ACCEPT(peek_token(p), tt_equal)) {
 			proc->proc.ret = &AST_TYPE_VOID;
 		} else {
-			proc->proc.ret = parse_type(p, &proc->proc.scope, true);
+			proc->proc.ret = parse_type(session, p, &proc->proc.scope, true);
 		}
 		KCType *type = MEM_ALLOC(KCType);
 		type->tag = ast_type_proc;
@@ -423,13 +429,13 @@ parse_definition(Parser *p, struct definition *def, struct scope *scope)
 		def->type = type;
 		/* parse body */
 		EXPECT(next_token(p, NULL), tt_equal);
-		proc->proc.body = parse_expression(p, &proc->proc.scope);
+		proc->proc.body = parse_expression(session, p, &proc->proc.scope);
 		def->exp = proc;
 	}
 }
 
 KC_PRIVATE void
-parse_toplevel_expression(Parser *p, struct expression_stack *tl_exps, struct scope *scope)
+parse_toplevel_expression(KC_session *session, Parser *p, struct expression_stack *tl_exps, struct scope *scope)
 {
 	struct token *tok;
 	struct expression *exp = NULL;
@@ -439,7 +445,7 @@ parse_toplevel_expression(Parser *p, struct expression_stack *tl_exps, struct sc
 		struct strview sv = sv_unescape_string(token_to_strview(tok));
 		const char *file = fmt_str(SV_FMT".k", SV_ARGS(sv));
 		struct scope *p = scope->parent;
-		scope->parent = parse_file(file, tl_exps);
+		scope->parent = parse_file(session, file, tl_exps);
 		scope->parent->parent = p;
 		break;
 	} break;
@@ -447,15 +453,17 @@ parse_toplevel_expression(Parser *p, struct expression_stack *tl_exps, struct sc
 		exp = MEM_ALLOC(struct expression);
 		exp->tok = tok;
 		exp->tag = ast_exp_definition;
-		parse_definition(p, &exp->def, scope);
-		symtbl_add(&scope->symtbl, &exp->def, exp);
+		parse_definition(session, p, &exp->def, scope);
+		syminfo_add(&session->symbols,
+					token_to_strview(exp->def.id),
+					symtbl_add(&scope->symtbl, &exp->def, exp));
 		da_append(tl_exps, exp);
 		break;
 	case tt_type: {
-		parse_type_def(p, scope, false);
+		parse_type_def(session, p, scope, false);
 	} break;
 	case tt_newtype: {
-		parse_type_def(p, scope, true);
+		parse_type_def(session, p, scope, true);
 	} break;
 	case tt_eof: break;
 	default: UNEXPECTED_TOKEN(tok); break;
@@ -771,17 +779,17 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 }
 
 KC_PRIVATE struct expression *
-parse_if(Parser *p, struct expression *exp, struct scope *scope)
+parse_if(KC_session *session, Parser *p, struct expression *exp, struct scope *scope)
 {
 	struct token *tok = NULL;
 	exp->tag = ast_exp_if;
-	exp->iff.cond = parse_expression(p, scope);
+	exp->iff.cond = parse_expression(session, p, scope);
 	EXPECT(next_token(p, NULL), tt_then);
-	exp->iff.tb = parse_expression(p, scope);
+	exp->iff.tb = parse_expression(session, p, scope);
 	if (ACCEPT(next_token(p, &tok), tt_elif)) {
-		exp->iff.fb = parse_if(p, MEM_ALLOC(struct expression), scope);
+		exp->iff.fb = parse_if(session, p, MEM_ALLOC(struct expression), scope);
 	} else if (ACCEPT(tok, tt_else)) {
-		exp->iff.fb = parse_expression(p, scope);
+		exp->iff.fb = parse_expression(session, p, scope);
 		EXPECT(next_token(p, NULL), tt_end);
 	} else {
 		exp->iff.fb = NULL;
@@ -791,7 +799,7 @@ parse_if(Parser *p, struct expression *exp, struct scope *scope)
 }
 
 KC_PRIVATE struct expression *
-parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope *scope)
+parse_square_bracket_expression(KC_session *session, Parser *p, struct expression *exp, struct scope *scope)
 {
 #define PARSE_INIT       0
 #define PARSE_INDEX      1
@@ -814,12 +822,12 @@ parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope 
 			break;
 		case PARSE_LENGTH:
 			if (!ACCEPT(peek_token(p), tt_rbracket)) {
-				len = parse_expression(p, scope);
+				len = parse_expression(session, p, scope);
 			}
 			state = BUILD_SLICE_EXP;
 			break;
 		case PARSE_INDEX:
-			idx = parse_expression(p, scope);
+			idx = parse_expression(session, p, scope);
 			if (ACCEPT(peek_token(p), tt_period_period)) {
 				next_token(p, NULL);
 				state = PARSE_LENGTH;
@@ -852,14 +860,14 @@ parse_square_bracket_expression(Parser *p, struct expression *exp, struct scope 
 }
 
 KC_PRIVATE struct expression *
-parse_array_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
+parse_array_initializer_list(KC_session *session, Parser *p, struct scope *scope, struct expression *exp)
 {
 	exp->tag = ast_exp_array_initializer;
 	struct expression_stack exps = {0};
 	struct token *tok = NULL;
 	if (peek_token(p)->tt != tt_rbracket) {
 		for (;;) {
-			da_append(&exps, parse_expression(p, scope));
+			da_append(&exps, parse_expression(session, p, scope));
 			if (ACCEPT(next_token(p, &tok), tt_rbracket)) break;
 			EXPECT(tok, tt_comma);
 			/* allow trailing comma */
@@ -874,7 +882,7 @@ parse_array_initializer_list(Parser *p, struct scope *scope, struct expression *
 }
 
 KC_PRIVATE struct expression *
-parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
+parse_initializer_list(KC_session *session, Parser *p, struct scope *scope, struct expression *exp)
 {
 	struct token *tok = NULL;
 	if (ACCEPT(peek_token(p), tt_ident) && ACCEPT(peek_token2(p), tt_equal)) {
@@ -885,7 +893,7 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 			EXPECT(next_token(p, &tok), tt_ident);
 			da_append(&ids, tok);
 			EXPECT(next_token(p, NULL), tt_equal);
-			da_append(&exps, parse_expression(p, scope));
+			da_append(&exps, parse_expression(session, p, scope));
 			if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
 			EXPECT(tok, tt_comma);
 			/* allow trailing comma */
@@ -904,7 +912,7 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 		struct expression_stack exps = {0};
 		if (peek_token(p)->tt != tt_rbrace) {
 			for (;;) {
-				da_append(&exps, parse_expression(p, scope));
+				da_append(&exps, parse_expression(session, p, scope));
 				if (ACCEPT(next_token(p, &tok), tt_rbrace)) break;
 				EXPECT(tok, tt_comma);
 				/* allow trailing comma */
@@ -926,7 +934,7 @@ parse_initializer_list(Parser *p, struct scope *scope, struct expression *exp)
 #define ASSERT(...) FAILWITH("TODO: replace this assert with an actual error message.")
 
 KC_PRIVATE struct expression *
-parse_expression(Parser *p, struct scope *scope)
+parse_expression(KC_session *session, Parser *p, struct scope *scope)
 {
 	struct expression_stack out = {0};
 	struct expression_stack ops = {0};
@@ -945,27 +953,29 @@ parse_expression(Parser *p, struct scope *scope)
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_let;
-			parse_definition(p, &exp->let.def, scope);
+			parse_definition(session, p, &exp->let.def, scope);
 			EXPECT(next_token(p, NULL), tt_in);
 			exp->let.scope.parent = scope;
-			symtbl_add(&exp->let.scope.symtbl, &exp->let.def, NULL);
-			exp->let.body = parse_expression(p, &exp->let.scope);
+			syminfo_add(&session->symbols,
+						token_to_strview(exp->let.def.id),
+						symtbl_add(&exp->let.scope.symtbl, &exp->let.def, NULL));
+			exp->let.body = parse_expression(session, p, &exp->let.scope);
 			da_append(&out, exp);
 			break;
 		case tt_if:
 			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
-			da_append(&out, parse_if(p, exp, scope));
+			da_append(&out, parse_if(session, p, exp, scope));
 			break;
 		case tt_while:
 			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_while;
-			exp->wloop.cond = parse_expression(p, scope);
+			exp->wloop.cond = parse_expression(session, p, scope);
 			EXPECT(next_token(p, NULL), tt_do);
-			exp->wloop.body = parse_expression(p, scope);
+			exp->wloop.body = parse_expression(session, p, scope);
 			EXPECT(next_token(p, NULL), tt_done);
 			da_append(&out, exp);
 			break;
@@ -975,7 +985,7 @@ parse_expression(Parser *p, struct scope *scope)
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_case;
 			struct exp_case *c = &exp->ccase;
-			c->cexp = parse_expression(p, scope);
+			c->cexp = parse_expression(session, p, scope);
 			EXPECT(next_token(p, NULL), tt_of);
 			/* parse branches */
 			do {
@@ -998,23 +1008,25 @@ parse_expression(Parser *p, struct scope *scope)
 							branch->binding_is_ref = true;
 						}
 						EXPECT(next_token(p, &branch->binding.id), tt_ident);
-						symtbl_add(&branch->scope.symtbl, &branch->binding, NULL);
+						syminfo_add(&session->symbols,
+									token_to_strview(branch->binding.id),
+									symtbl_add(&branch->scope.symtbl, &branch->binding, NULL));
 					}
 					EXPECT(next_token(p, NULL), tt_rparen);
 				}
 				/* parse guard */
 				if (ACCEPT(peek_token(p), tt_if)) {
 					next_token(p, NULL);
-					branch->guard = parse_expression(p, &branch->scope);
+					branch->guard = parse_expression(session, p, &branch->scope);
 				}
 				/* parse body exp */
 				EXPECT(next_token(p, NULL), tt_minus_more);
-				branch->body = parse_expression(p, &branch->scope);
+				branch->body = parse_expression(session, p, &branch->scope);
 				if (ACCEPT(peek_token(p), tt_comma)) {
 					next_token(p, NULL);
 					if (ACCEPT(peek_token(p), tt_else)) {
 						next_token(p, NULL);
-						c->else_exp = parse_expression(p, scope);
+						c->else_exp = parse_expression(session, p, scope);
 						EXPECT(peek_token(p), tt_end);
 						break;
 					}
@@ -1067,9 +1079,9 @@ parse_expression(Parser *p, struct scope *scope)
 			EXPECT(next_token(p, NULL), tt_lparen);
 			if (ACCEPT(peek_token(p), tt_colon)) {
 				next_token(p, NULL);
-				exp->size_of.type = parse_type(p, scope, false);
+				exp->size_of.type = parse_type(session, p, scope, false);
 			} else {
-				exp->size_of.exp = parse_expression(p, scope);
+				exp->size_of.exp = parse_expression(session, p, scope);
 			}
 			EXPECT(next_token(p, NULL), tt_rparen);
 			da_append(&out, exp);
@@ -1085,7 +1097,7 @@ parse_expression(Parser *p, struct scope *scope)
 				FAILWITH("TODO: parse array literal");
 			} else { // return expression
 				EXPECT(tok, tt_lparen);
-				exp->ret = parse_expression(p, scope);
+				exp->ret = parse_expression(session, p, scope);
 				EXPECT(next_token(p, NULL), tt_rparen);
 			}
 			da_append(&out, exp);
@@ -1106,7 +1118,7 @@ parse_expression(Parser *p, struct scope *scope)
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_ptr;
 			EXPECT(next_token(p, NULL), tt_lparen);
-			exp->get_ptr = parse_expression(p, scope);
+			exp->get_ptr = parse_expression(session, p, scope);
 			EXPECT(next_token(p, NULL), tt_rparen);
 			da_append(&out, exp);
 			break;
@@ -1116,7 +1128,7 @@ parse_expression(Parser *p, struct scope *scope)
 			exp->tok = next_token(p, NULL);
 			exp->tag = ast_exp_get_len;
 			EXPECT(next_token(p, NULL), tt_lparen);
-			exp->get_ptr = parse_expression(p, scope);
+			exp->get_ptr = parse_expression(session, p, scope);
 			EXPECT(next_token(p, NULL), tt_rparen);
 			da_append(&out, exp);
 			break;
@@ -1138,11 +1150,11 @@ parse_expression(Parser *p, struct scope *scope)
 					if (ACCEPT(peek_token(p), tt_lbrace)) {
 						struct expression *arg = MEM_ALLOC(struct expression);
 						next_token(p, &arg->tok);
-						arg = parse_initializer_list(p, scope, arg);
+						arg = parse_initializer_list(session, p, scope, arg);
 						exp->valcons.exp = arg;
 					} else if (ACCEPT(peek_token(p), tt_lparen)) {
 						next_token(p, NULL);
-						exp->valcons.exp = parse_expression(p, scope);
+						exp->valcons.exp = parse_expression(session, p, scope);
 						EXPECT(next_token(p, NULL), tt_rparen);
 					}
 					break;
@@ -1225,16 +1237,16 @@ parse_expression(Parser *p, struct scope *scope)
 			CHK_OP_PREV(true);
 			op_prev = false;
 			next_token(p, &exp->tok);
-			parse_initializer_list(p, scope, exp);
+			parse_initializer_list(session, p, scope, exp);
 			da_append(&out, exp);
 			break;
 		case tt_lbracket: {
 			next_token(p, &exp->tok);
 			if (op_prev == false) {
-				shunt(parse_square_bracket_expression(p, exp, scope), &out, &ops);
+				shunt(parse_square_bracket_expression(session, p, exp, scope), &out, &ops);
 			} else {
 				op_prev = false;
-				parse_array_initializer_list(p, scope, exp);
+				parse_array_initializer_list(session, p, scope, exp);
 				da_append(&out, exp);
 			}
 		} break;
@@ -1253,7 +1265,7 @@ parse_expression(Parser *p, struct scope *scope)
 			da_init(args);
 			if (!ACCEPT(peek_token(p), tt_rparen)) {
 				for (;;) {
-					da_append(args, parse_expression(p, scope));
+					da_append(args, parse_expression(session, p, scope));
 					if (ACCEPT(peek_token(p), tt_rparen)) break;
 					EXPECT(next_token(p, NULL), tt_comma);
 				}
@@ -1275,7 +1287,7 @@ parse_expression(Parser *p, struct scope *scope)
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_unary;
 			exp->cast.op = op_cast;
-			exp->cast.type = parse_type(p, scope, false);
+			exp->cast.type = parse_type(session, p, scope, false);
 			shunt(exp, &out, &ops);
 			break;
 			/* binary ops */
@@ -1859,8 +1871,8 @@ ast_fprint(struct expression *exp, FILE *file)
 	}
 }
 
-KC_PUBLIC struct scope *
-parse_file(const char *filename, struct expression_stack *tl_exps)
+KC_PRIVATE struct scope *
+parse_file(KC_session *session, const char *filename, struct expression_stack *tl_exps)
 {
 	struct strview sv = {0};
 	if (sv_open_file(filename, &sv) == false) {
@@ -1882,6 +1894,12 @@ parse_file(const char *filename, struct expression_stack *tl_exps)
 	tokenize(&parser.lexer, &parser.tokens);
 	struct scope *sc = MEM_ALLOC(struct scope);
 	while (!parser_is_at_end(&parser))
-		parse_toplevel_expression(&parser, tl_exps, sc);
+		parse_toplevel_expression(session, &parser, tl_exps, sc);
 	return sc;
+}
+
+KC_PUBLIC struct scope *
+kc_parse(KC_session *session, struct expression_stack *tl_exps)
+{
+	return parse_file(session, session->input_file, tl_exps);
 }

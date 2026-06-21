@@ -1,7 +1,7 @@
 #pragma once
 #include "memas.h"
 
-#define CG_REG_COUNT     14
+#define CG_REG_COUNT     16
 #define CG_ARG_REG_COUNT 6
 
 enum cg_register_bits {

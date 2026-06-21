@@ -129,19 +129,17 @@ struct expression_stack {
 };
 
 struct symtbl_entry {
+	struct symtbl_entry *next;
 	struct token *name;
 	enum symtbl_entry_tag {
 		SYMTBL_VARIABL,
 		SYMTBL_VALCONS,
 	} tag;
 	union {
-		struct {
-			uint32_t len, cap;
-			struct valcons_entry {
-				int64_t tag_val;
-				struct kc_type *type;
-				struct type_definition *td;
-			} *elems;
+		struct valcons_entry {
+			int64_t tag_val;
+			struct kc_type *type;
+			struct type_definition *td;
 		} valcons;
 		struct variable_entry {
 			struct definition *def;
@@ -150,25 +148,28 @@ struct symtbl_entry {
 	};
 };
 
-struct symtbl {
-	uint32_t len, cap;
-	struct symtbl_entry *elems;
-};
-
-struct typetbl {
-	uint32_t len, cap;
-	struct type_definition *elems;
-};
-
-struct scope {
-	struct symtbl  symtbl;
-	struct typetbl typetbl;
-	struct scope  *parent;
-};
-
 struct type_ptrs {
 	uint32_t len, cap;
 	struct kc_type **elems;
+};
+
+struct type_definition {
+	struct token *name;
+	struct type_ptrs args;
+	struct kc_type *type;
+	bool is_alias;
+	bool is_var;
+};
+
+struct typetbl_entry {
+	struct typetbl_entry *next;
+	struct type_definition def;
+};
+
+struct scope {
+	struct symtbl_entry  *symtbl;
+	struct typetbl_entry *typetbl;
+	struct scope  *parent;
 };
 
 struct proc_type {
@@ -294,14 +295,6 @@ struct definition {
 	bool is_mut;
 	bool is_global;
 	bool is_typechecked;
-};
-
-struct type_definition {
-	struct token *name;
-	struct type_ptrs args;
-	struct kc_type *type;
-	bool is_alias;
-	bool is_var;
 };
 
 struct let {

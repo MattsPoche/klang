@@ -17,6 +17,7 @@ sv_fmt(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
+	assert(fmt != NULL);
 	int sz = vsnprintf(NULL, 0, fmt, ap);
 	va_end(ap);
 	char *s = MALLOC(sz+1);
@@ -31,6 +32,7 @@ fmt_str(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
+	assert(fmt != NULL);
 	int sz = vsnprintf(NULL, 0, fmt, ap);
 	va_end(ap);
 	char *s = MALLOC(sz+1);

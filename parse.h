@@ -7,7 +7,7 @@ typedef struct parser {
 
 #define ERROR_UNDEFINED_IDENT(token)  error_undefined_ident(token, __FILE__, __LINE__)
 
-KC_PUBLIC struct scope *parse_file(const char *filename, struct expression_stack *tl_exps);
+KC_PUBLIC struct scope *kc_parse(KC_session *session, struct expression_stack *tl_exps);
 KC_PUBLIC bool parser_is_at_end(Parser *p);
 KC_PUBLIC const char *ast_type_to_str(KCType *t);
 KC_PUBLIC void error_undefined_ident(struct token *id, const char *debug_filename, const int debug_line);

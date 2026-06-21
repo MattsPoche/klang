@@ -1667,11 +1667,10 @@ KC_PRIVATE void
 ast_compile_impl(struct scope *scope, struct ir_toplevel *tl)
 {
 	if (scope->parent) ast_compile_impl(scope->parent, tl);
-	struct symtbl *st = &scope->symtbl;
-	for (size_t i = 0; i < st->len; ++i) {
-		if (st->elems[i].tag == SYMTBL_VALCONS) continue;
-		assert(st->elems[i].tag == SYMTBL_VARIABL);
-		struct definition *def = st->elems[i].variable.def;
+	for (struct symtbl_entry *st = scope->symtbl; st; st = st->next) {
+		if (st->tag == SYMTBL_VALCONS) continue;
+		assert(st->tag == SYMTBL_VARIABL);
+		struct definition *def = st->variable.def;
 		struct expression *exp = def->exp;
 		IR_object p = {0};
 		int thunkc = 0;

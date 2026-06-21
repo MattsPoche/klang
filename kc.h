@@ -5,8 +5,10 @@
 typedef struct kc_session {
 	const char *input_file;
 	const char *target;
-	IR_toplevel ir;
+	struct expression_stack tl_exps;
 	struct scope *scope;
+	Syminfo symbols;
+	IR_toplevel ir;
 	CG_module cg_module;
 	bool run_p;
 	bool link_p;
