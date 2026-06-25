@@ -10,7 +10,7 @@
 #define FREE free
 #endif
 
-char scratch_buffer[PAGE_SIZE];
+char scratch_buffer[4][PAGE_SIZE];
 
 KC_PUBLIC struct strview
 sv_fmt(const char *fmt, ...)
@@ -27,7 +27,18 @@ sv_fmt(const char *fmt, ...)
 	return (struct strview){.ptr = s, .len = sz};
 }
 
-KC_PUBLIC char *
+KC_PUBLIC const char *
+fmt_buf(char *buf, size_t sz, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	assert(fmt != NULL);
+	vsnprintf(buf, sz, fmt, ap);
+	va_end(ap);
+	return buf;
+}
+
+KC_PUBLIC const char *
 fmt_str(const char *fmt, ...)
 {
 	va_list ap;
@@ -48,7 +59,7 @@ append_line(struct lines *lines, char *str)
 	da_append(lines, str);
 }
 
-KC_PUBLIC char *
+KC_PUBLIC const char *
 concat_lines(struct lines *lines, const char *delim)
 {
 	assert(lines->len > 0);
@@ -73,7 +84,7 @@ concat_lines(struct lines *lines, const char *delim)
 	return str;
 }
 
-KC_PUBLIC char *
+KC_PUBLIC const char *
 strjoin(const char *s1, const char *s2, const char *delim)
 {
 	size_t s1_len = strlen(s1);
@@ -92,7 +103,7 @@ strjoin(const char *s1, const char *s2, const char *delim)
 	return cat;
 }
 
-KC_PUBLIC char *
+KC_PUBLIC const char *
 subst_file_suffix(const char *file_name, const char *prefix)
 {
 	const char *end_ptr = strrchr(file_name, '.');
@@ -132,8 +143,9 @@ KC_PRIVATE const char wiggly_line[] =
 	"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
 
 KC_PRIVATE void
-log_compile_errorv(const char *filename, struct token *tloc, const char *debug_file, int debug_line,
-		   const char *fmt, va_list ap)
+log_compile_errorv(const char *filename, struct token *tloc,
+				   const char *debug_file, const char *debug_func, int debug_line,
+				   const char *fmt, va_list ap)
 {
 	fprintf(stderr, "[Error] %s:%d:%d: ", filename, tloc->line, tloc->column);
 	vfprintf(stderr, fmt, ap);
@@ -143,7 +155,7 @@ log_compile_errorv(const char *filename, struct token *tloc, const char *debug_f
 	fprintf(stderr, "%*d | "SV_FMT"\n", left_pad, tloc->line, SV_ARGS(line));
 	fprintf(stderr, "%*s | %*s^%.*s\n", left_pad, "", tloc->column, "", (int)tloc->tok_len-1, wiggly_line);
 #if KC_DEBUG
-	fprintf(stderr, "[Debug] %s:%d:\n", debug_file, debug_line);
+	fprintf(stderr, "[Debug] %s:%d: %s\n", debug_file, debug_line, debug_func);
 #else
 	(void)debug_file;
 	(void)debug_line;
@@ -152,11 +164,12 @@ log_compile_errorv(const char *filename, struct token *tloc, const char *debug_f
 
 KC_PUBLIC void
 log_compile_error_impl(const char *filename, struct token *tloc,
-					   const char *debug_file, int debug_line, const char *fmt, ...)
+					   const char *debug_file, const char *debug_func, int debug_line,
+					   const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	log_compile_errorv(filename, tloc, debug_file, debug_line, fmt, ap);
+	log_compile_errorv(filename, tloc, debug_file, debug_func, debug_line, fmt, ap);
 	va_end(ap);
 }
 
@@ -167,4 +180,14 @@ str_dup(const char *s, size_t len)
 	memcpy(t, s, len);
 	t[len] = 0;
 	return t;
+}
+
+KC_PUBLIC bool
+str_cpy(char *dest, const char *src, size_t dest_length)
+{
+	size_t len = dest_length - 1;
+	size_t i = 0;
+	for (; i < len && src[i]; i++) dest[i] = src[i];
+	dest[i] = 0;
+	return i < len;
 }

@@ -1,6 +1,8 @@
 #include "common.h"
+#include <libgen.h>
 
-KC_PRIVATE struct scope *parse_file(KC_session *session, const char *filename, struct expression_stack *tl_exps);
+KC_PRIVATE struct symtbl_entry *parse_file(KC_session *session, const char *filename,
+										   struct expression_stack *tl_exps);
 KC_PRIVATE const char *ast_binop_to_str(enum binop op);
 KC_PRIVATE void ast_def_fprint(struct definition *def, FILE *file);
 KC_PRIVATE void parse_definition(KC_session *session, Parser *p, struct definition *def, struct scope *scope);
@@ -34,33 +36,40 @@ next_token(Parser *p, struct token **rt)
 }
 
 KC_PRIVATE void
-error_unexpected_token(Parser *p, struct token *token, const char *debug_filename, const int debug_line)
+error_unexpected_token(Parser *p, struct token *token,
+					   const char *debug_filename,
+					   const char *debug_func,
+					   const int debug_line)
 {
-	log_compile_error_impl(p->lexer.filename, token, debug_filename, debug_line,
+	log_compile_error_impl(p->lexer.filename, token, debug_filename, debug_func, debug_line,
 						   "Syntax error. Unexpected token `"SV_FMT"`.", SV_ARGS(token_to_strview(token)));
 	EXIT(1);
 }
 
 KC_PUBLIC void
-error_undefined_ident(struct token *id, const char *debug_filename, const int debug_line)
+error_undefined_ident(struct token *id,
+					  const char *debug_filename,
+					  const char *debug_func,
+					  const int debug_line)
 {
-	log_compile_error_impl(id->filename, id, debug_filename, debug_line,
+	log_compile_error_impl(id->filename, id, debug_filename, debug_func, debug_line,
 				   "Undefined identifier `"SV_FMT"`.", SV_ARGS(token_to_strview(id)));
 	EXIT(1);
 }
 
 KC_PRIVATE struct token *
-expect(Parser *p, struct token *token, enum token_type tag, const char *debug_filename, const int debug_line)
+expect(Parser *p, struct token *token, enum token_type tag,
+	   const char *debug_filename, const char *debug_func, const int debug_line)
 {
 	if (token->tt != tag) {
-		error_unexpected_token(p, token, debug_filename, debug_line);
+		error_unexpected_token(p, token, debug_filename, debug_func, debug_line);
 	}
 	return token;
 }
 
 #define ACCEPT(token, tag)      ((token)->tt == (tag))
-#define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __LINE__)
-#define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __LINE__)
+#define EXPECT(token, tag)      expect(p, token, tag, __FILE__, __func__, __LINE__)
+#define UNEXPECTED_TOKEN(token) error_unexpected_token(p, token, __FILE__, __func__, __LINE__)
 
 KC_PUBLIC struct proc_type
 procedure_type(struct procedure *proc)
@@ -197,7 +206,9 @@ parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_t
 			EXPECT(next_token(p, &tok), tt_ident);
 			type->tag = ast_type_app;
 			type->app.args = args;
-			type->app.cons = tok;
+			struct symtbl_entry *st = lookup_entry(scope, token_to_strview(tok));
+			assert(st && st->tag == SYMTBL_TYPE);
+			type->app.cons = &st->type;
 		}
 	} break;
 	case tt_lbrace: {
@@ -250,25 +261,33 @@ parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_t
 		next_token(p, &tok);
 		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_app;
-		type->app.cons = tok;
+		struct symtbl_entry *st = lookup_entry(scope, token_to_strview(tok));
+		assert(st && st->tag == SYMTBL_TYPE);
+		type->app.cons = &st->type;
 	} break;
 	case tt_typevar: {
 		next_token(p, &tok);
-		struct type_definition *def = lookup_type(scope, token_to_strview(tok));
+		struct symtbl_entry *st = lookup_entry(scope, token_to_strview(tok));
 		if (introduce_type_var_p) {
-			if (def == NULL) {
+			if (st == NULL) {
 				type = MEM_ALLOC(KCType);
 				type->tag = ast_type_var;
 				type->var.name = tok;
-				typetbl_add(&scope->typetbl, .name = tok, .type = type, .is_var = true);
+				symtbl_add_type(&scope->symtbl, tok, (struct type_definition){
+						.name = tok,
+						.type = type,
+						.is_var = true,
+					});
 			} else {
-				assert(def->is_var);
-				type = def->type;
+				assert(st->tag == SYMTBL_TYPE);
+				assert(st->type.is_var);
+				type = st->type.type;
 			}
 		} else {
-			assert(def != NULL);
-			assert(def->is_var);
-			type = def->type;
+			assert(st != NULL);
+			assert(st->tag == SYMTBL_TYPE);
+			assert(st->type.is_var);
+			type = st->type.type;
 		}
 	} break;
 	}
@@ -279,7 +298,13 @@ parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_t
 		type = MEM_ALLOC(KCType);
 		type->tag = ast_type_app;
 		type->app.args = args;
-		type->app.cons = tok;
+		struct symtbl_entry *st = lookup_entry(scope, token_to_strview(tok));
+		if (st == NULL) {
+			FAILWITH("ident = "SV_FMT"\n", SV_ARGS(token_to_strview(tok)));
+		}
+		assert(st != NULL);
+		assert(st->tag == SYMTBL_TYPE);
+		type->app.cons = &st->type;
 	} else if (ACCEPT(peek_token(p), tt_star)) {
 		next_token(p, NULL);
 		KCType *tmp = type;
@@ -306,36 +331,49 @@ parse_type_def(KC_session *session, Parser *p, struct scope *scope, bool is_newt
 		var->tag = ast_type_var;
 		var->var.name = next_token(p, NULL);
 		da_append(&args, var);
-		typetbl_add(&sc.typetbl, .name = var->var.name, .type = var, .is_var = true);
+		symtbl_add_type(&sc.symtbl, var->var.name, (struct type_definition){
+				.name = var->var.name,
+				.type = var,
+				.is_var = true,
+			});
 	} else if (ACCEPT(peek_token(p), tt_lparen)) {
 		next_token(p, NULL);
 		KCType *var = MEM_ALLOC(KCType);
 		var->tag = ast_type_var;
 		var->var.name = EXPECT(next_token(p, NULL), tt_typevar);
 		da_append(&args, var);
-		typetbl_add(&sc.typetbl, .name = var->var.name, .type = var, .is_var = true);
+		symtbl_add_type(&sc.symtbl, var->var.name, (struct type_definition){
+				.name = var->var.name,
+				.type = var,
+				.is_var = true,
+			});
 		while (ACCEPT(peek_token(p), tt_comma)) {
 			next_token(p, NULL);
 			var = MEM_ALLOC(KCType);
 			var->tag = ast_type_var;
 			var->var.name = EXPECT(next_token(p, NULL), tt_typevar);
 			da_append(&args, var);
-			typetbl_add(&sc.typetbl, .name = var->var.name, .type = var, .is_var = true);
+			symtbl_add_type(&sc.symtbl, var->var.name, (struct type_definition){
+					.name = var->var.name,
+					.type = var,
+					.is_var = true,
+				});
 		}
 		EXPECT(next_token(p, NULL), tt_rparen);
 	}
 	struct token *name;
 	EXPECT(next_token(p, &name), tt_ident);
 	EXPECT(next_token(p, NULL), tt_equal);
-	struct type_definition *type_def = typetbl_add(&scope->typetbl,
-												   .name = name,
-												   .args = args,
-												   .is_alias = !is_newtype);
+	struct symtbl_entry *st = symtbl_add_type(&scope->symtbl, name, (struct type_definition) {
+			.name = name,
+			.args = args,
+			.is_alias = !is_newtype,
+		});
 	if (!is_newtype || !ACCEPT(peek_token(p), tt_pipe)) {
-		type_def->type = parse_type(session, p, &sc, false);
+		st->type.type = parse_type(session, p, &sc, false);
 		return;
 	}
-	syminfo_add(&session->symbols, token_to_strview(name), type_def);
+	syminfo_add(&session->symbols, token_to_strview(name), st);
 	KCType *type = MEM_ALLOC(KCType);
 	type->tag = ast_type_union;
 	int64_t tag_value = 0;
@@ -359,14 +397,14 @@ parse_type_def(KC_session *session, Parser *p, struct scope *scope, bool is_newt
 		}
 		syminfo_add(&session->symbols,
 					token_to_strview(name),
-					symtbl_add_valcons(&scope->symtbl, name, tag_value, mem_type, type_def));
+					symtbl_add_valcons(&scope->symtbl, name, tag_value, mem_type, &st->type));
 		da_append(&type->union_t, (struct union_member) {
 				.name = name,
 				.type = mem_type,
 				.tag_value = tag_value++,
 			});
 	} while (ACCEPT(peek_token(p), tt_pipe));
-	type_def->type = type;
+	st->type.type = type;
 }
 
 KC_PRIVATE void
@@ -434,7 +472,26 @@ parse_definition(KC_session *session, Parser *p, struct definition *def, struct 
 	}
 }
 
-KC_PRIVATE void
+KC_PRIVATE const char *
+resolve_module_file_path(KC_session *session, Parser *p, struct strview modname)
+{
+	/* 1. check directory of currently parsed file */
+	const char *dir = dirname((char *)p->lexer.filename);
+	printf("dir = %s\n", dir);
+	const char *f = fmt_buf(scratch_buffer[0], sizeof(scratch_buffer[0]), "%s/"SV_FMT".k", dir, SV_ARGS(modname));
+	if (access(f, R_OK) == 0)
+		return str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+	/* 2. check session->cwd */
+	f = fmt_buf(scratch_buffer[0], sizeof(scratch_buffer[0]), "%s/"SV_FMT".k", session->cwd, SV_ARGS(modname));
+	if (access(f, R_OK) == 0)
+		return str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+	/* 3. check fallback paths */
+	FAILWITH("TODO: check fallback paths");
+	return NULL;
+}
+
+
+KC_PRIVATE struct scope *
 parse_toplevel_expression(KC_session *session, Parser *p, struct expression_stack *tl_exps, struct scope *scope)
 {
 	struct token *tok;
@@ -442,11 +499,19 @@ parse_toplevel_expression(KC_session *session, Parser *p, struct expression_stac
 	switch ((int)next_token(p, &tok)->tt) {
 	case tt_import: {
 		EXPECT(next_token(p, &tok), tt_string);
-		struct strview sv = sv_unescape_string(token_to_strview(tok));
-		const char *file = fmt_str(SV_FMT".k", SV_ARGS(sv));
-		struct scope *p = scope->parent;
-		scope->parent = parse_file(session, file, tl_exps);
-		scope->parent->parent = p;
+		struct strview modpath  = sv_unescape_string(token_to_strview(tok));
+		const char *file        = resolve_module_file_path(session, p, modpath);
+		struct symtbl_entry *st = parse_file(session, file, tl_exps);
+		assert(st->tag == SYMTBL_NAMESPACE);
+		if (ACCEPT(peek_token(p), tt_as)) {
+			next_token(p, NULL);
+			EXPECT(next_token(p, &tok), tt_ident);
+			st->next = scope->symtbl;
+			scope->symtbl = st;
+			st->name = tok;
+		} else {
+			scope = scope_join(st->namespace.scope, scope);
+		}
 		break;
 	} break;
 	case tt_let:
@@ -468,6 +533,7 @@ parse_toplevel_expression(KC_session *session, Parser *p, struct expression_stac
 	case tt_eof: break;
 	default: UNEXPECTED_TOKEN(tok); break;
 	}
+	return scope;
 }
 
 KC_PUBLIC bool
@@ -594,8 +660,19 @@ copy_exp(struct expression *exp)
 }
 
 KC_PRIVATE struct expression *
-eval_binop_exp(UNUSED Parser *p, struct expression *exp, struct expression *right, struct expression *left)
+eval_binop_exp(struct expression *exp, struct expression *right, struct expression *left)
 {
+	if ((enum binop)exp->bin.op == binop_member
+		&& left->tag == ast_exp_ident
+		&& right->tag == ast_exp_ident
+		&& left->info->tag == SYMTBL_NAMESPACE) {
+		assert(right->info == NULL);
+		right->info = lookup_entry(left->info->namespace.scope, token_to_strview(right->tok));
+		if (right->info == NULL)
+			ERROR_UNDEFINED_IDENT(right->tok);
+		*exp = *right;
+		return exp;
+	}
 	if (exp_is_intlit(right) && exp_is_intlit(left)) {
 		int64_t x = left->lit.i;
 		int64_t y = right->lit.i;
@@ -752,7 +829,7 @@ eval_unaop_exp(struct expression *exp, struct expression *operand)
 }
 
 KC_PRIVATE struct expression *
-build_expression_tree(Parser *p, struct expression_stack *out)
+build_expression_tree(struct expression_stack *out)
 {
 	struct expression_stack stack = {0};
 	struct expression *exp;
@@ -765,7 +842,7 @@ build_expression_tree(Parser *p, struct expression_stack *out)
 			}
 			struct expression *right = da_pop(&stack);
 			struct expression *left  = da_pop(&stack);
-			eval_binop_exp(p, exp, right, left);
+			eval_binop_exp(exp, right, left);
 		} else if (exp->tag == ast_exp_unary) {
 			assert(stack.len >= 1);
 			eval_unaop_exp(exp, da_pop(&stack));
@@ -991,6 +1068,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 			do {
 				struct case_branch *branch = da_allot(&c->branches);
 				EXPECT(next_token(p, &branch->cons), tt_ident);
+				branch->info = lookup_entry(scope, token_to_strview(branch->cons));
 				branch->scope.parent = scope;
 				/* parse binding */
 				if (ACCEPT(peek_token(p), tt_lparen)) {
@@ -1139,14 +1217,19 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 			struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
 			if (entry == NULL) {
 				exp->tag = ast_exp_ident;
+				exp->info = NULL;
 			} else {
 				switch (entry->tag) {
 				case SYMTBL_VARIABL:
+				case SYMTBL_NAMESPACE:
+				case SYMTBL_TYPE:
 					exp->tag = ast_exp_ident;
+					exp->info = entry;
 					break;
 				case SYMTBL_VALCONS:
 					exp->tag = ast_exp_value_cons;
 					exp->valcons.cons = exp->tok;
+					exp->valcons.info = entry;
 					if (ACCEPT(peek_token(p), tt_lbrace)) {
 						struct expression *arg = MEM_ALLOC(struct expression);
 						next_token(p, &arg->tok);
@@ -1412,7 +1495,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 	}
 flush:
 	while (ops.len) da_append(&out, da_pop(&ops));
-	exp = build_expression_tree(p, &out);
+	exp = build_expression_tree(&out);
 	da_free(&out);
 	da_free(&ops);
 	return exp;
@@ -1511,7 +1594,7 @@ ast_type_fprint(KCType *t, FILE *file)
 			}
 			fputs(") ", file);
 		}
-		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(t->app.cons)));
+		fprintf(file, SV_FMT, SV_ARGS(token_to_strview(t->app.cons->name)));
 		break;
 	case ast_type_proc:
 		fputc('(', file);
@@ -1871,9 +1954,14 @@ ast_fprint(struct expression *exp, FILE *file)
 	}
 }
 
-KC_PRIVATE struct scope *
+KC_PRIVATE struct symtbl_entry *
 parse_file(KC_session *session, const char *filename, struct expression_stack *tl_exps)
 {
+	struct strview sv_filename = sv_of_cstr(filename);
+	{
+		Syminfo_list ls = syminfo_lookup(session->symbols, sv_filename);
+		if (ls) return ls->info;
+	}
 	struct strview sv = {0};
 	if (sv_open_file(filename, &sv) == false) {
 		fprintf(stderr, "[Error] %s: %s\n", filename, strerror(errno));
@@ -1883,23 +1971,31 @@ parse_file(KC_session *session, const char *filename, struct expression_stack *t
 		fprintf(stderr, "[Error] %s: %s\n", filename, "Empty file");
 		EXIT(1);
 	}
+	struct symtbl_entry *st_entry = MEM_ALLOC(struct symtbl_entry);
+	st_entry->name = NULL;
+	st_entry->tag = SYMTBL_NAMESPACE;
+	st_entry->namespace.filename = filename;
+	st_entry->namespace.scope = MEM_ALLOC(struct scope);
+	syminfo_add(&session->symbols, sv_filename, st_entry);
 	Parser parser = {
 		.lexer = {
 			.filename = filename,
-			.text     = sv.ptr,
+			.text     = (char *)sv.ptr,
 			.length   = sv.len,
 			.line     = 1,
 		}
 	};
 	tokenize(&parser.lexer, &parser.tokens);
-	struct scope *sc = MEM_ALLOC(struct scope);
-	while (!parser_is_at_end(&parser))
-		parse_toplevel_expression(session, &parser, tl_exps, sc);
-	return sc;
+	while (!parser_is_at_end(&parser)) {
+		st_entry->namespace.scope =
+			parse_toplevel_expression(session, &parser, tl_exps, st_entry->namespace.scope);
+	}
+	da_append(&session->parsers, parser);
+	return st_entry;
 }
 
-KC_PUBLIC struct scope *
-kc_parse(KC_session *session, struct expression_stack *tl_exps)
+KC_PUBLIC void
+kc_parse(KC_session *session)
 {
-	return parse_file(session, session->input_file, tl_exps);
+	session->scope = parse_file(session, session->input_file, &session->tl_exps)->namespace.scope;
 }

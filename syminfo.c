@@ -32,26 +32,11 @@ syminfo_create(void)
 }
 
 KC_PUBLIC void
-syminfo_add_symtbl_entry(Syminfo *si, struct strview key, struct symtbl_entry *val)
+syminfo_add(Syminfo *si, struct strview key, struct symtbl_entry *val)
 {
 	Syminfo_t *info = (Syminfo_t *)si;
 	Syminfo_list list = MEM_ALLOC(struct symbol_info);
-	list->si = val;
-	Syminfo_e *e = symhash_lookup(*info, key);
-	if (e->key.len) {
-		list->next = e->value;
-		e->value = list;
-	} else {
-		symhash_insert(info, key, list);
-	}
-}
-
-KC_PUBLIC void
-syminfo_add_type_entry(Syminfo *si, struct strview key, struct type_definition *val)
-{
-	Syminfo_t *info = (Syminfo_t *)si;
-	Syminfo_list list = MEM_ALLOC(struct symbol_info);
-	list->ti = val;
+	list->info = val;
 	Syminfo_e *e = symhash_lookup(*info, key);
 	if (e->key.len) {
 		list->next = e->value;

@@ -1,7 +1,3 @@
-newtype 'a Option =
-  | None
-  | Some: 'a
-
 newtype ('a, 'e) Result =
   | Ok:    'a
   | Error: 'e
@@ -51,16 +47,16 @@ let print_digits(n: 'a) =
 
 let print_int(n: 'a) =
   if n = 0 then
-    print_char("0"[0])
+    print_char(#"0")
   else
-    let n: 'a = if n < 0 then print_char("-"[0]); -n else n end in
+    let n: 'a = if n < 0 then print_char(#"-"); -n else n end in
     print_digits(n)
   end
 
 let print_bool(x: bool) =
   print_string(if x then "true" else "false" end)
 
-let print_newline() = print_char("\n"[0])
+let print_newline() = print_char(#"\n")
 
 let puts(str: str) =
   print_string(str);
@@ -70,7 +66,7 @@ let print_slice(slice: &['a]) =
   let mut i: u64 = 0 in
   while i < #len(slice) do
     print_int(slice[i]);
-    print_char(" "[0]);
+    print_char(#" ");
     i += 1
   done
 

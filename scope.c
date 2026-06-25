@@ -49,31 +49,21 @@ symtbl_add_valcons(struct symtbl_entry **symtbl, struct token *name,
 	return entry;
 }
 
-KC_PUBLIC struct type_definition *
-typetbl_find(struct typetbl_entry *typetbl, struct strview name)
+KC_PUBLIC struct symtbl_entry *
+symtbl_add_type(struct symtbl_entry **symtbl, struct token *name, struct type_definition def)
 {
-	for (; typetbl; typetbl = typetbl->next) {
-		if (sv_is_equal(name, token_to_strview(typetbl->def.name))) {
-			return &typetbl->def;
-		}
-	}
-	return NULL;
-}
-
-KC_PUBLIC struct type_definition *
-typetbl_add_impl(struct typetbl_entry **typetbl, struct type_definition def)
-{
-	assert(def.name != NULL);
-	struct typetbl_entry *entry = NULL;
-	if (typetbl_find(*typetbl, token_to_strview(def.name)) == NULL) {
-		entry = MEM_ALLOC(struct typetbl_entry);
-		entry->def = def;
-		entry->next = *typetbl;
-		*typetbl = entry;
+	struct symtbl_entry *entry = NULL;
+	if (symtbl_find(*symtbl, token_to_strview(name)) == NULL) {
+		entry = MEM_ALLOC(struct symtbl_entry);
+		entry->name = name;
+		entry->tag  = SYMTBL_TYPE;
+		entry->type = def;
+		entry->next = *symtbl;
+		*symtbl = entry;
 	} else {
-		FAILWITH("TODO: Type is already defined.");
+		FAILWITH("TODO: Symbol already defined.");
 	}
-	return &entry->def;
+	return entry;
 }
 
 KC_PUBLIC struct symtbl_entry *
@@ -87,13 +77,13 @@ lookup_entry(struct scope *scope, struct strview name)
 	return NULL;
 }
 
-KC_PUBLIC struct type_definition *
-lookup_type(struct scope *scope, struct strview name)
+KC_PUBLIC struct scope *
+scope_join(struct scope *sc1, struct scope *sc2)
 {
-	while (scope) {
-		struct type_definition *def = typetbl_find(scope->typetbl, name);
-		if (def) return def;
-		scope = scope->parent;
-	}
-	return NULL;
+	assert(sc1->parent == NULL);
+	assert(sc2->parent == NULL);
+	struct symtbl_entry *entry = sc1->symtbl;
+	for (; entry->next; entry = entry->next);
+	entry->next = sc2->symtbl;
+	return sc1;
 }

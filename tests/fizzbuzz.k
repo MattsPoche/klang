@@ -1,35 +1,4 @@
-/*
- * FILE *stdout;
- */
-let stdout: void* = #extern(stdout)
-
-/*
- * size_t fwrite(const void *ptr, size_t size, size_t n, FILE *stream);
- */
-let fwrite: (void*, u64, u64, void*) -> u64 = #extern(fwrite)
-
-let print_char(c: i8) =
-  fwrite(&c, 1, 1, stdout) as void
-
-let print_string(str: &[i8]) =
-  fwrite(#ptr(str), 1, #len(str), stdout) as void
-
-let print_digits(n: i64) =
-  if n > 0 then
-    let c: i64 = (n % 10) + 48 in
-	print_digits(n / 10);
-	print_char(c as i8)
-  end
-
-let print_int(n: i64) =
-  if n = 0 then
-    print_char(#"0")
-  else
-    let n: i64 = if n < 0 then print_char(#"-"); -n else n end in
-    print_digits(n)
-  end
-
-let print_newline() = print_char(#"\n")
+import "lib/io"
 
 let fizzbuzz(n: i32) =
   let mod3: bool = (n % 3) = 0 in

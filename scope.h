@@ -1,8 +1,5 @@
 #pragma once
 
-#define typetbl_add(tbl, ...) typetbl_add_impl(tbl, (struct type_definition){__VA_ARGS__})
-
-
 KC_PUBLIC struct symtbl_entry *symtbl_find(
 	struct symtbl_entry *symtbl,
 	struct strview name);
@@ -19,18 +16,14 @@ KC_PUBLIC struct symtbl_entry *symtbl_add_valcons(
 	KCType *type,
 	struct type_definition *def);
 
-KC_PUBLIC struct type_definition *typetbl_find(
-	struct typetbl_entry *typetbl,
-	struct strview name);
-
-KC_PUBLIC struct type_definition *typetbl_add_impl(
-	struct typetbl_entry **typetbl,
+KC_PUBLIC struct symtbl_entry *symtbl_add_type(
+	struct symtbl_entry **symtbl,
+	struct token *name,
 	struct type_definition def);
+
 
 KC_PUBLIC struct symtbl_entry *lookup_entry(
 	struct scope *scope,
 	struct strview name);
 
-KC_PUBLIC struct type_definition *lookup_type(
-	struct scope *scope,
-	struct strview name);
+KC_PUBLIC struct scope *scope_join(struct scope *sc1, struct scope *sc2);

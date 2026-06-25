@@ -17,16 +17,19 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 struct strview {
 	size_t len;
-	char  *ptr;
+	const char  *ptr;
 };
 
 int64_t file_size(FILE *f);
 bool sv_open_file(const char *filename, struct strview *sv);
 bool sv_is_equal(struct strview s1, struct strview s2);
-struct strview sv_of_cstr(char *str);
+struct strview sv_of_cstr(const char *str);
 char *sv_to_cstr(struct strview sv);
 struct strview sv_unescape_string(struct strview sv);
 bool sv_to_int(struct strview sv, int64_t *out);
@@ -40,7 +43,6 @@ struct strview sv_drop_char(struct strview sv);
 #endif /* STRVIEW_H_ */
 
 #ifdef STRVIEW_IMPLEMENTATION
-#undef STRVIEW_IMPLEMENTATION
 
 int64_t file_size(FILE *f)
 {
@@ -55,6 +57,26 @@ int64_t file_size(FILE *f)
 
 bool sv_open_file(const char *filename, struct strview *sv)
 {
+	int fd;
+	struct stat buf;
+	if ((fd = open(filename, O_RDONLY)) < 0)
+		return false;
+	if (fstat(fd, &buf) < 0) {
+		close(fd);
+		return false;
+	}
+	size_t size = buf.st_size;
+	char *ptr = MALLOC(size);
+	ssize_t len;
+	if ((len = read(fd, ptr, size)) < 0) {
+		close(fd);
+		return false;
+	}
+	sv->ptr = ptr;
+	sv->len = len;
+	close(fd);
+	return true;
+#if 0
 	FILE *file = fopen(filename, "rb");
 	if (file == NULL) return false;
 	int64_t len;
@@ -66,6 +88,7 @@ bool sv_open_file(const char *filename, struct strview *sv)
 	sv->ptr[i] = 0;
 	fclose(file);
 	return true;
+#endif
 }
 
 bool sv_is_equal(struct strview s1, struct strview s2)
@@ -77,7 +100,7 @@ bool sv_is_equal(struct strview s1, struct strview s2)
 	return true;
 }
 
-struct strview sv_of_cstr(char *str)
+struct strview sv_of_cstr(const char *str)
 {
 	return (struct strview){.len = strlen(str), .ptr = str};
 }

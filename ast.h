@@ -128,12 +128,19 @@ struct expression_stack {
 	struct expression **elems;
 };
 
+struct type_ptrs {
+	uint32_t len, cap;
+	struct kc_type **elems;
+};
+
 struct symtbl_entry {
 	struct symtbl_entry *next;
 	struct token *name;
 	enum symtbl_entry_tag {
 		SYMTBL_VARIABL,
 		SYMTBL_VALCONS,
+		SYMTBL_TYPE,
+		SYMTBL_NAMESPACE,
 	} tag;
 	union {
 		struct valcons_entry {
@@ -145,30 +152,22 @@ struct symtbl_entry {
 			struct definition *def;
 			struct expression *tl_exp;
 		} variable;
+		struct type_definition {
+			struct token *name;
+			struct type_ptrs args;
+			struct kc_type *type;
+			bool is_alias;
+			bool is_var;
+		} type;
+		struct namespace {
+			const char *filename;
+			struct scope *scope;
+		} namespace;
 	};
-};
-
-struct type_ptrs {
-	uint32_t len, cap;
-	struct kc_type **elems;
-};
-
-struct type_definition {
-	struct token *name;
-	struct type_ptrs args;
-	struct kc_type *type;
-	bool is_alias;
-	bool is_var;
-};
-
-struct typetbl_entry {
-	struct typetbl_entry *next;
-	struct type_definition def;
 };
 
 struct scope {
 	struct symtbl_entry  *symtbl;
-	struct typetbl_entry *typetbl;
 	struct scope  *parent;
 };
 
@@ -202,7 +201,7 @@ struct union_type {
 
 struct type_app {
 	struct type_ptrs args;
-	struct token *cons;
+	struct type_definition *cons;
 };
 
 enum type_class {
@@ -275,6 +274,7 @@ struct procedure {
 
 struct value_cons {
 	struct token *cons;
+	struct symtbl_entry *info;
 	struct expression *exp;
 	int64_t tag_val;
 };
@@ -333,6 +333,7 @@ struct exp_while {
 
 struct case_branch {
 	struct token *cons;
+	struct symtbl_entry *info;
 	struct definition binding;
 	struct scope scope;
 	struct expression *guard;
@@ -442,6 +443,7 @@ struct expression {
 		struct expression *get_ptr;
 		struct expression *get_len;
 		struct expression *ret;
+		struct symtbl_entry *info;
 		struct expression_stack init;
 		struct {
 			struct expression *exp;

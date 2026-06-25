@@ -48,7 +48,6 @@ ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 		proc->retc = 0;
 	}
 	struct def_array *formals = &proc->node->formals;
-	struct scope *scope = &proc->node->scope;
 	struct ir_blk *entry = MEM_ALLOC(struct ir_blk);
 	proc->entry = entry;
 	for (size_t argn = 0; argn < formals->len; ++argn) {
@@ -74,7 +73,7 @@ ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl)
 	}
 	proc->argc = entry->args.len;
 	int reg = ir_proc_new_reg(tl, proc_id);
-	struct ir_blk *res = ast_compile_expression(proc->node->body, DEST_RET(reg), proc_id, entry, scope, tl);
+	struct ir_blk *res = ast_compile_expression(proc->node->body, DEST_RET(reg), proc_id, entry, tl);
 	da_append(&res->term.args, reg);
 	res->term.op = ir_op_ret;
 }
@@ -83,7 +82,6 @@ KC_PUBLIC void
 ast_compile_init_thunk(size_t thunk_id, struct ir_toplevel *tl)
 {
 	struct ir_thunk *thunk = get_toplevel_thunk(tl, thunk_id);
-	struct scope *scope = thunk->scope;
 	struct ir_blk *entry = MEM_ALLOC(struct ir_blk);
 	thunk->entry = entry;
 	int reg = ir_proc_new_reg(tl, thunk_id);
@@ -93,14 +91,14 @@ ast_compile_init_thunk(size_t thunk_id, struct ir_toplevel *tl)
 			.dst  = reg,
 			.arg.u32 = thunk->data_id,
 		});
-	struct ir_blk *res = ast_compile_expression(thunk->def->exp, DEST_CPY(reg), thunk_id, entry, scope, tl);
+	struct ir_blk *res = ast_compile_expression(thunk->def->exp, DEST_CPY(reg), thunk_id, entry, tl);
 	res->term.op = ir_op_ret;
 }
 
 
 KC_PRIVATE struct ir_blk *
 dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
-					struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
+					struct ir_blk *blk, struct ir_toplevel *tl)
 {
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_array_initializer || exp->tag == ast_exp_struct_initializer);
@@ -124,7 +122,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = dst.reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, tl);
 		}
 		return blk;
 	}
@@ -161,7 +159,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = array_reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, tl);
 		}
 		/* build slice */
 		int slice_reg = ir_proc_new_reg(tl, proc_id);
@@ -211,7 +209,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 					.arg.rx[0] = dst.reg,
 					.arg.rx[1] = idx,
 				});
-			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->init.elems[i], DEST_CPY(ptr), proc_id, blk, tl);
 		}
 		return blk;
 	}
@@ -221,7 +219,7 @@ dst_cpy_initializer(struct expression *exp, struct ast_comp_dest dst, size_t pro
 
 KC_PRIVATE struct ir_blk *
 dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
-						  struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
+						  struct ir_blk *blk, struct ir_toplevel *tl)
 {
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_named_struct_initializer);
@@ -247,14 +245,14 @@ dst_cpy_named_initializer(struct expression *exp, struct ast_comp_dest dst, size
 				.arg.rx[0] = dst.reg,
 				.arg.rx[1] = idx_reg,
 			});
-		blk = ast_compile_expression(exp_init, DEST_CPY(ptr_reg), proc_id, blk, scope, tl);
+		blk = ast_compile_expression(exp_init, DEST_CPY(ptr_reg), proc_id, blk, tl);
 	}
 	return blk;
 }
 
 KC_PRIVATE struct ir_blk *
 dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
-				struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
+				struct ir_blk *blk, struct ir_toplevel *tl)
 {
 	assert(dst.tag == DST_CPY);
 	assert(exp->tag == ast_exp_value_cons);
@@ -293,14 +291,14 @@ dst_cpy_valcons(struct expression *exp, struct ast_comp_dest dst, size_t proc_id
 				.arg.rx[1] = tmp,
 			});
 		/* set data field */
-		blk = ast_compile_expression(exp->valcons.exp, DEST_CPY(data_offset), proc_id, blk, scope, tl);
+		blk = ast_compile_expression(exp->valcons.exp, DEST_CPY(data_offset), proc_id, blk, tl);
 	}
 	return blk;
 }
 
 KC_PUBLIC struct ir_blk *
 ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
-					   struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl)
+					   struct ir_blk *blk, struct ir_toplevel *tl)
 {
 	switch (exp->tag) {
 	case ast_exp_let: {
@@ -314,8 +312,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				.dst  = var,
 				.arg.i32 = 1,
 			});
-		struct ir_blk *res = ast_compile_expression(def->exp, DEST_CPY(var), proc_id, blk, scope, tl);
-		return ast_compile_expression(let->body, dst, proc_id, res, &let->scope, tl);
+		struct ir_blk *res = ast_compile_expression(def->exp, DEST_CPY(var), proc_id, blk, tl);
+		return ast_compile_expression(let->body, dst, proc_id, res, tl);
 	} break;
 	case ast_exp_literal: {
 		struct literal *lit = &exp->lit;
@@ -377,7 +375,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			break;
 		case LITERAL_FLOAT:  FAILWITH("TODO: LITERAL_FLOAT"); break;
 		case LITERAL_STRING: {
-			char *str = exp->lit.s.ptr;
+			const char *str = exp->lit.s.ptr;
 			size_t length = exp->lit.s.len;
 			size_t id = tl->len;
 			IR_object p = {
@@ -385,7 +383,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				.data.tag  = IRO_DATA,
 				.data.size = length,
 				.data.alignment = 1,
-				.data.dat  = str,
+				.data.dat  = (char *)str,
 				.data.link = fmt_str(".LSTR%zu", id),
 			};
 			da_append(tl, p);
@@ -462,7 +460,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 						.type = exp->type,
 						.dst  = dst.reg,
 					});
-				return dst_cpy_valcons(exp, DEST_CPY(dst.reg), proc_id, blk, scope, tl);
+				return dst_cpy_valcons(exp, DEST_CPY(dst.reg), proc_id, blk, tl);
 			}
 		} [[fallthrough]];
 		case DST_VAL: {
@@ -473,7 +471,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.dst  = tmp,
 					.arg.i32 = 1,
 				});
-			blk = dst_cpy_valcons(exp, DEST_CPY(tmp), proc_id, blk, scope, tl);
+			blk = dst_cpy_valcons(exp, DEST_CPY(tmp), proc_id, blk, tl);
 			da_append(&blk->code, (IR_Ins){
 					.op        = ir_op_load,
 					.type      = exp->type,
@@ -482,7 +480,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				});
 			return blk;
 		} break;
-		case DST_CPY: return dst_cpy_valcons(exp, dst, proc_id, blk, scope, tl);
+		case DST_CPY: return dst_cpy_valcons(exp, dst, proc_id, blk, tl);
 		case DST_REF:  FAILWITH("TODO: ast_exp_value_cons"); break;
 		case DST_NONE: FAILWITH("TODO: ast_exp_value_cons"); break;
 		default: FAILWITH("Unreachable"); break;
@@ -499,7 +497,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 						.type = exp->type,
 						.dst  = dst.reg,
 					});
-				return dst_cpy_initializer(exp, DEST_CPY(dst.reg), proc_id, blk, scope, tl);
+				return dst_cpy_initializer(exp, DEST_CPY(dst.reg), proc_id, blk, tl);
 			}
 		} [[fallthrough]];
 		case DST_VAL: {
@@ -510,7 +508,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.dst     = tmp,
 					.arg.i32 = 1,
 				});
-			blk = dst_cpy_initializer(exp, DEST_CPY(tmp), proc_id, blk, scope, tl);
+			blk = dst_cpy_initializer(exp, DEST_CPY(tmp), proc_id, blk, tl);
 			da_append(&blk->code, (IR_Ins){
 					.op        = ir_op_load,
 					.type      = exp->type,
@@ -519,7 +517,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				});
 			return blk;
 		} break;
-		case DST_CPY: return dst_cpy_initializer(exp, dst, proc_id, blk, scope, tl);
+		case DST_CPY: return dst_cpy_initializer(exp, dst, proc_id, blk, tl);
 		case DST_REF: FAILWITH("TODO: DST_REF"); break;
 		case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
 		default: FAILWITH("Unreachable"); break;
@@ -534,7 +532,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 						.type = exp->type,
 						.dst  = dst.reg,
 					});
-				return dst_cpy_named_initializer(exp, DEST_CPY(dst.reg), proc_id, blk, scope, tl);
+				return dst_cpy_named_initializer(exp, DEST_CPY(dst.reg), proc_id, blk, tl);
 			}
 		} [[fallthrough]];
 		case DST_VAL: {
@@ -545,7 +543,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					.dst     = tmp,
 					.arg.i32 = 1,
 				});
-			blk = dst_cpy_named_initializer(exp, DEST_CPY(tmp), proc_id, blk, scope, tl);
+			blk = dst_cpy_named_initializer(exp, DEST_CPY(tmp), proc_id, blk, tl);
 			da_append(&blk->code, (IR_Ins){
 					.op        = ir_op_load,
 					.type      = exp->type,
@@ -554,7 +552,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				});
 			return blk;
 		} break;
-		case DST_CPY: return dst_cpy_named_initializer(exp, dst, proc_id, blk, scope, tl);
+		case DST_CPY: return dst_cpy_named_initializer(exp, dst, proc_id, blk, tl);
 		case DST_REF: FAILWITH("TODO: DST_REF"); break;
 		case DST_NONE: FAILWITH("TODO: DST_NONE"); break;
 		default: FAILWITH("Unreachable"); break;
@@ -580,13 +578,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	} break;
 	case ast_exp_extern_symbol: FAILWITH("TODO: ast_exp_extern_symbol"); break;
 	case ast_exp_ident: {
-		struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(exp->tok));
+		struct symtbl_entry *entry = exp->info;
 		assert(entry->tag == SYMTBL_VARIABL);
 		struct definition *def = entry->variable.def;
 		assert(def != NULL);
 		size_t ir_symbol;
 		if (type_is_polymorphic(def->type)) {
-			struct type_spec *instance = lookup_poly_proc_spec(def, exp->type, scope);
+			struct type_spec *instance = lookup_poly_proc_spec(def, exp->type);
 			if (instance == NULL) {
 				FAILWITH(SV_FMT"; %s", SV_ARGS(token_to_strview(exp->tok)), ast_type_to_str(exp->type));
 			}
@@ -663,8 +661,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			struct ir_blk *left =
 				ast_compile_expression(bin->left,
 									   DEST_VAL(ir_proc_new_reg(tl, proc_id)),
-									   proc_id, blk, scope, tl);
-			return ast_compile_expression(bin->right, dst, proc_id, left, scope, tl);
+									   proc_id, blk, tl);
+			return ast_compile_expression(bin->right, dst, proc_id, left, tl);
 		} break;
 		case binop_add:			op = ir_op_add;  goto LBL_binop;
 		case binop_sub:			op = ir_op_sub;  goto LBL_binop;
@@ -680,8 +678,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			{
 				int left_reg = ir_proc_new_reg(tl, proc_id);
 				int right_reg = ir_proc_new_reg(tl, proc_id);
-				struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, scope, tl);
-				struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, scope, tl);
+				struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, tl);
+				struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, tl);
 				switch (dst.tag) {
 				case DST_RET:
 				case DST_VAL: {
@@ -725,8 +723,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		LBL_cmp:
 			int left_reg = ir_proc_new_reg(tl, proc_id);
 			int right_reg = ir_proc_new_reg(tl, proc_id);
-			struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, scope, tl);
-			struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, scope, tl);
+			struct ir_blk *left  = ast_compile_expression(bin->left, DEST_VAL(left_reg), proc_id, blk, tl);
+			struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg), proc_id, left, tl);
 			switch (dst.tag) {
 			case DST_VAL: {
 				da_append(&right->code, (IR_Ins){
@@ -769,11 +767,11 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int base_reg = ir_proc_new_reg(tl, proc_id);
 				int index_reg = ir_proc_new_reg(tl, proc_id);
 				KCType *base_type = base->type;
-				if (type_is_struct_ptr(base->type, scope)) {
-					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
+				if (type_is_struct_ptr(base->type)) {
+					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, tl);
 				} else {
 					assert(base->type->tag == ast_type_struct);
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
 					base_type->ptr = base->type;
@@ -814,10 +812,10 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		case binop_assign: {
 			int right_reg = dst.tag == DST_VAL ? dst.reg : ir_proc_new_reg(tl, proc_id);
 			struct ir_blk *right = ast_compile_expression(bin->right, DEST_VAL(right_reg),
-														  proc_id, blk, scope, tl);
+														  proc_id, blk, tl);
 			switch ((int)bin->left->tag) {
 			case ast_exp_ident: {
-				struct symtbl_entry *entry = lookup_entry(scope, token_to_strview(bin->left->tok));
+				struct symtbl_entry *entry = bin->left->info;
 				assert(entry != NULL);
 				assert(entry->tag == SYMTBL_VARIABL);
 				struct definition *def = entry->variable.def;
@@ -841,10 +839,10 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					int left_reg = ir_proc_new_reg(tl, proc_id);
 					if (bin->left->una.exp->tag == ast_exp_ident) {
 						right = ast_compile_expression(bin->left->una.exp, DEST_VAL(left_reg),
-													   proc_id, right, scope, tl);
+													   proc_id, right, tl);
 					} else {
 						right = ast_compile_expression(bin->left->una.exp, DEST_REF(left_reg),
-													   proc_id, right, scope, tl);
+													   proc_id, right, tl);
 					}
 					da_append(&right->code, (IR_Ins){
 							.op   = ir_op_store,
@@ -885,7 +883,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int target_reg = ir_proc_new_reg(tl, proc_id);
 				int idx = ir_proc_new_reg(tl, proc_id);
 				int tmp = ir_proc_new_reg(tl, proc_id);
-				blk = ast_compile_expression(target, DEST_REF(target_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(target, DEST_REF(target_reg), proc_id, blk, tl);
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_loadimm,
 						.type = &AST_TYPE_U64,
@@ -946,7 +944,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			switch (dst.tag) {
 			case DST_VAL: {
 				int slice_reg = ir_proc_new_reg(tl, proc_id);
-				blk = ast_compile_expression(slice, DEST_REF(slice_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(slice, DEST_REF(slice_reg), proc_id, blk, tl);
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_load,
 						.type = exp->type,
@@ -1005,7 +1003,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		case unaop_pos: {
 			switch (dst.tag) {
 			case DST_VAL: {
-				return ast_compile_expression(una->exp, DEST_REF(dst.reg), proc_id, blk, scope, tl);
+				return ast_compile_expression(una->exp, DEST_REF(dst.reg), proc_id, blk, tl);
 			} break;
 			case DST_CPY: FAILWITH("TODO: unaop_pos"); break;
 			case DST_REF: FAILWITH("TODO: unaop_pos"); break;
@@ -1016,7 +1014,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		} break;
 		case unaop_neg: {
 			int reg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(una->exp, DEST_VAL(reg), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(una->exp, DEST_VAL(reg), proc_id, blk, tl);
 			switch (dst.tag) {
 			case DST_RET:
 			case DST_VAL: {
@@ -1052,7 +1050,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		case unaop_address_of: {
 			switch (dst.tag) {
 			case DST_VAL: {
-				return ast_compile_expression(una->exp, DEST_REF(dst.reg), proc_id, blk, scope, tl);
+				return ast_compile_expression(una->exp, DEST_REF(dst.reg), proc_id, blk, tl);
 			} break;
 			case DST_CPY: FAILWITH("TODO: DST_CPY"); break;
 			case DST_REF: FAILWITH("TODO: DST_REF"); break;
@@ -1063,7 +1061,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		} break;
 		case unaop_dereference: {
 			int reg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(una->exp, DEST_VAL(reg), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(una->exp, DEST_VAL(reg), proc_id, blk, tl);
 			switch (dst.tag) {
 			case DST_RET:
 			case DST_VAL: {
@@ -1105,10 +1103,10 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int index_reg = ir_proc_new_reg(tl, proc_id);
 				KCType *base_type = base->type;
 				if (type_is_pointer(base->type)) {
-					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, tl);
 				} else if (type_is_array(base->type)) {
 					if (base->is_lvalue) {
-						blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+						blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					} else {
 						int tmp = ir_proc_new_reg(tl, proc_id);
 						da_append(&blk->code, (IR_Ins){
@@ -1117,7 +1115,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 								.dst  = base_reg,
 								.arg.i32 = 1,
 							});
-						blk = ast_compile_expression(base, DEST_VAL(tmp), proc_id, blk, scope, tl);
+						blk = ast_compile_expression(base, DEST_VAL(tmp), proc_id, blk, tl);
 						da_append(&blk->code, (IR_Ins){
 								.op   = ir_op_store,
 								.type = base->type,
@@ -1130,7 +1128,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
@@ -1142,7 +1140,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				} else {
 					FAILWITH("Unreachable");
 				}
-				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, tl);
 				int tmp = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_getelemptr,
@@ -1178,15 +1176,15 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int length_reg = ir_proc_new_reg(tl, proc_id);
 				KCType *base_type = base->type;
 				if (type_is_pointer(base->type)) {
-					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, tl);
 				} else if (type_is_array(base->type)) {
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
 					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
@@ -1198,8 +1196,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				} else {
 					FAILWITH("Unreachable");
 				}
-				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, scope, tl);
-				blk = ast_compile_expression(len, DEST_VAL(length_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, tl);
+				blk = ast_compile_expression(len, DEST_VAL(length_reg), proc_id, blk, tl);
 				int tmp = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
 						.op   = ir_op_getelemptr,
@@ -1223,15 +1221,15 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				int length_reg = ir_proc_new_reg(tl, proc_id);
 				KCType *base_type = base->type;
 				if (type_is_pointer(base->type)) {
-					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_VAL(base_reg), proc_id, blk, tl);
 				} else if (type_is_array(base->type)) {
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = MEM_ALLOC(KCType);
 					base_type->tag = ast_type_ptr;
 					base_type->ptr = base->type;
 				} else if (type_is_slice(base->type)) {
 					int tmp = ir_proc_new_reg(tl, proc_id);
-					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, scope, tl);
+					blk = ast_compile_expression(base, DEST_REF(base_reg), proc_id, blk, tl);
 					base_type = type_slice_to_array_ptr(base->type);
 					da_append(&blk->code, (IR_Ins){
 							.op   = ir_op_load,
@@ -1243,8 +1241,8 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				} else {
 					FAILWITH("Unreachable");
 				}
-				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, scope, tl);
-				blk = ast_compile_expression(len, DEST_VAL(length_reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(idx, DEST_VAL(index_reg), proc_id, blk, tl);
+				blk = ast_compile_expression(len, DEST_VAL(length_reg), proc_id, blk, tl);
 				int tmp_reg = ir_proc_new_reg(tl, proc_id);
 				int ptr_reg = ir_proc_new_reg(tl, proc_id);
 				da_append(&blk->code, (IR_Ins){
@@ -1279,12 +1277,12 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			struct call *call = &exp->call;
 			struct ir_args args = {0};
 			int preg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(call->proc, DEST_VAL(preg), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(call->proc, DEST_VAL(preg), proc_id, blk, tl);
 			/* compile arg exps */
 			for (size_t i = 0; i < call->args.len; ++i) {
 				struct expression *arg = call->args.elems[i];
 				int reg = ir_proc_new_reg(tl, proc_id);
-				blk = ast_compile_expression(arg, DEST_VAL(reg), proc_id, blk, scope, tl);
+				blk = ast_compile_expression(arg, DEST_VAL(reg), proc_id, blk, tl);
 				da_append(&args, reg);
 			}
 			/* push args */
@@ -1352,7 +1350,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		} break;
 		case unaop_cast: {
 			int reg = ir_proc_new_reg(tl, proc_id);
-			blk = ast_compile_expression(exp->cast.exp, DEST_VAL(reg), proc_id, blk, scope, tl);
+			blk = ast_compile_expression(exp->cast.exp, DEST_VAL(reg), proc_id, blk, tl);
 			switch (dst.tag) {
 			case DST_RET: [[fallthrough]];
 			case DST_VAL: {
@@ -1393,7 +1391,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	case ast_exp_if: {
 		struct exp_if *iff = &exp->iff;
 		int cond_reg = ir_proc_new_reg(tl, proc_id);
-		blk = ast_compile_expression(iff->cond, DEST_VAL(cond_reg), proc_id, blk, scope, tl);
+		blk = ast_compile_expression(iff->cond, DEST_VAL(cond_reg), proc_id, blk, tl);
 		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
 		struct ir_blk *tblk = MEM_ALLOC(struct ir_blk);
 		blk->term.op = ir_op_if;
@@ -1417,7 +1415,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			break;
 		default: FAILWITH("Unreachable"); break;
 		}
-		tb_end = ast_compile_expression(iff->tb, tdst, proc_id, tblk, scope, tl);
+		tb_end = ast_compile_expression(iff->tb, tdst, proc_id, tblk, tl);
 		/* true branch term */
 		blk->term.b0 = tblk;
 		tb_end->term.op = ir_op_goto;
@@ -1444,7 +1442,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 				break;
 			default: FAILWITH("Unreachable"); break;
 			}
-			fb_end = ast_compile_expression(iff->fb, fdst, proc_id, fblk, scope, tl);
+			fb_end = ast_compile_expression(iff->fb, fdst, proc_id, fblk, tl);
 			/* false branch term */
 			blk->term.b1 = fblk;
 			fb_end->term.op = ir_op_goto;
@@ -1464,7 +1462,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 	case ast_exp_case: {
 		struct exp_case *cc = &exp->ccase;
 		int val_reg = ir_proc_new_reg(tl, proc_id);
-		blk = ast_compile_expression(cc->cexp, DEST_REF(val_reg), proc_id, blk, scope, tl);
+		blk = ast_compile_expression(cc->cexp, DEST_REF(val_reg), proc_id, blk, tl);
 		struct ir_blk *join = MEM_ALLOC(struct ir_blk);
 		for (size_t i = 0; i < cc->branches.len; ++i) {
 			struct case_branch *branch = &cc->branches.elems[i];
@@ -1585,7 +1583,7 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 			default: FAILWITH("Unreachable"); break;
 			}
 			struct ir_blk *tb_end = ast_compile_expression(branch->body, res_dst,
-														   proc_id, tblk, &branch->scope, tl);
+														   proc_id, tblk, tl);
 			tb_end->term.op = ir_op_goto;
 			da_append(&tb_end->term.args, res_dst.reg);
 			tb_end->term.b0 = join;
@@ -1612,13 +1610,13 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		blk->term.op = ir_op_goto;
 		blk->term.b0 = cond;
 		int cond_reg = ir_proc_new_reg(tl, proc_id);
-		cond = ast_compile_expression(exp->wloop.cond, DEST_VAL(cond_reg), proc_id, cond, scope, tl);
+		cond = ast_compile_expression(exp->wloop.cond, DEST_VAL(cond_reg), proc_id, cond, tl);
 		cond->term.op = ir_op_if;
 		da_append(&cond->term.args, cond_reg);
 		cond->term.b0 = body;
 		cond->term.b1 = join;
 		cond->term.j0 = join;
-		body = ast_compile_expression(exp->wloop.body, DEST_NONE(), proc_id, body, scope, tl);
+		body = ast_compile_expression(exp->wloop.body, DEST_NONE(), proc_id, body, tl);
 		body->term.op = ir_op_goto;
 		body->term.b0 = cond;
 		return join;
@@ -1666,10 +1664,15 @@ ast_create_proc_object(IR_object *p, struct definition *def, KCType *type, struc
 KC_PRIVATE void
 ast_compile_impl(struct scope *scope, struct ir_toplevel *tl)
 {
-	if (scope->parent) ast_compile_impl(scope->parent, tl);
 	for (struct symtbl_entry *st = scope->symtbl; st; st = st->next) {
-		if (st->tag == SYMTBL_VALCONS) continue;
-		assert(st->tag == SYMTBL_VARIABL);
+		switch (st->tag) {
+		case SYMTBL_TYPE:    continue;
+		case SYMTBL_VALCONS: continue;
+		case SYMTBL_NAMESPACE:
+			ast_compile_impl(st->namespace.scope, tl);
+			continue;
+		case SYMTBL_VARIABL: break;
+		}
 		struct definition *def = st->variable.def;
 		struct expression *exp = def->exp;
 		IR_object p = {0};
@@ -1756,7 +1759,7 @@ ast_compile_impl(struct scope *scope, struct ir_toplevel *tl)
 #if KC_DEBUG
 			struct strview id_name = token_to_strview(tl->elems[i].proc.def->id);
 			printf("[Debug] Compiling proc: "SV_FMT" : ", SV_ARGS(id_name));
-			ast_type_fprint(tl->elems[i].proc.def->type, stdout);
+			ast_type_fprint(tl->elems[i].proc.type, stdout);
 			printf("\n");
 #endif
 			ast_compile_procedure(i, tl);
@@ -1765,7 +1768,7 @@ ast_compile_impl(struct scope *scope, struct ir_toplevel *tl)
 #if KC_DEBUG
 			const char *id_name = tl->elems[i].thunk.link;
 			printf("[Debug] Compiling global initializer: %s [%zu]: ", id_name, i);
-			ast_type_fprint(tl->elems[i].proc.def->type, stdout);
+			ast_type_fprint(tl->elems[i].proc.type, stdout);
 			printf("\n");
 #endif
 			ast_compile_init_thunk(i, tl);
@@ -2014,13 +2017,13 @@ ir_proc_fprint(struct ir_proc *proc, FILE *file)
 }
 
 KC_PRIVATE struct expression *
-ast_desugar_expression(struct expression *exp, struct scope *scope)
+ast_desugar_expression(struct expression *exp)
 {
 	if (exp->type == NULL) {
 		log_compile_error_and_die(exp->tok->filename, exp->tok, "Expression has no type.");
 	}
 	{
-		KCType *t = resolve_type(exp->type, scope);
+		KCType *t = resolve_type(exp->type);
 		if (t == NULL)
 			log_compile_error_and_die(exp->tok->filename, exp->tok,
 									  "Failed to resolve type of expression `%s`.",
@@ -2034,37 +2037,37 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 			for (size_t i = 0; i < def->specs.len; ++i) {
 				struct type_spec *spec_def = &def->specs.elems[i];
 				if (!type_is_polymorphic(type_recursive_find(spec_def->type)) && spec_def->exp != NULL) {
-					spec_def->type = resolve_type(spec_def->type, scope);
-					spec_def->exp = ast_desugar_expression(spec_def->exp, scope);
+					spec_def->type = resolve_type(spec_def->type);
+					spec_def->exp = ast_desugar_expression(spec_def->exp);
 				}
 			}
 		} else {
-			def->type = resolve_type(def->type, scope);
-			def->exp = ast_desugar_expression(def->exp, scope);
+			def->type = resolve_type(def->type);
+			def->exp = ast_desugar_expression(def->exp);
 		}
 		return exp;
 	} break;
 	case ast_exp_let:
-		exp->let.def.exp = ast_desugar_expression(exp->let.def.exp, scope);
-		exp->let.def.type = resolve_type(exp->let.def.type, scope);
-		exp->let.body = ast_desugar_expression(exp->let.body, &exp->let.scope);
+		exp->let.def.exp = ast_desugar_expression(exp->let.def.exp);
+		exp->let.def.type = resolve_type(exp->let.def.type);
+		exp->let.body = ast_desugar_expression(exp->let.body);
 		return exp;
 	case ast_exp_while:
-		exp->wloop.cond = ast_desugar_expression(exp->wloop.cond, scope);
-		exp->wloop.body = ast_desugar_expression(exp->wloop.body, scope);
+		exp->wloop.cond = ast_desugar_expression(exp->wloop.cond);
+		exp->wloop.body = ast_desugar_expression(exp->wloop.body);
 		return exp;
 	case ast_exp_array_initializer: [[fallthrough]];
 	case ast_exp_struct_initializer: {
 		struct expression_stack *exps = &exp->init;
 		for (size_t i = 0; i < exps->len; ++i) {
-			exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
+			exps->elems[i] = ast_desugar_expression(exps->elems[i]);
 		}
 		return exp;
 	} break;
 	case ast_exp_named_struct_initializer: {
 		struct expression_stack *exps = &exp->named_init.exps;
 		for (size_t i = 0; i < exps->len; ++i) {
-			exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
+			exps->elems[i] = ast_desugar_expression(exps->elems[i]);
 		}
 		return exp;
 	} break;
@@ -2072,59 +2075,58 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 	case ast_exp_procedure_literal:
 		for (size_t i = 0; i < exp->proc.formals.len; ++i) {
 			exp->proc.formals.elems[i].type =
-				resolve_type(exp->proc.formals.elems[i].type, scope);
+				resolve_type(exp->proc.formals.elems[i].type);
 		}
-		exp->proc.ret = resolve_type(exp->proc.ret, scope);
-		exp->proc.body = ast_desugar_expression(exp->proc.body, &exp->proc.scope);
+		exp->proc.ret = resolve_type(exp->proc.ret);
+		exp->proc.body = ast_desugar_expression(exp->proc.body);
 		return exp;
 	case ast_exp_undefined:  FAILWITH("TODO: ast_exp_undefined"); break;
 	case ast_exp_value_cons:
 		if (exp->valcons.exp)
-			exp->valcons.exp = ast_desugar_expression(exp->valcons.exp, scope);
+			exp->valcons.exp = ast_desugar_expression(exp->valcons.exp);
 		return exp;
 	case ast_exp_unary:
 		if ((enum unaop)exp->una.op == unaop_call) {
-			exp->call.proc = ast_desugar_expression(exp->call.proc, scope);
+			exp->call.proc = ast_desugar_expression(exp->call.proc);
 			for (size_t i = 0; i < exp->call.args.len; ++i) {
-				exp->call.args.elems[i] = ast_desugar_expression(exp->call.args.elems[i], scope);
+				exp->call.args.elems[i] = ast_desugar_expression(exp->call.args.elems[i]);
 			}
 		} else if ((enum unaop)exp->una.op == unaop_index) {
 			struct index *idx = &exp->idx;
-			idx->exp = ast_desugar_expression(idx->exp, scope);
-			idx->idx = ast_desugar_expression(idx->idx, scope);
+			idx->exp = ast_desugar_expression(idx->exp);
+			idx->idx = ast_desugar_expression(idx->idx);
 		} else if ((enum unaop)exp->una.op == unaop_slice) {
 			struct slice *slice = &exp->slice;
-			slice->exp = ast_desugar_expression(slice->exp, scope);
-			slice->idx = ast_desugar_expression(slice->idx, scope);
-			slice->len = ast_desugar_expression(slice->len, scope);
+			slice->exp = ast_desugar_expression(slice->exp);
+			slice->idx = ast_desugar_expression(slice->idx);
+			slice->len = ast_desugar_expression(slice->len);
 		} else if (((enum unaop)exp->una.op == unaop_cast)) {
 			struct cast *cast = &exp->cast;
-			cast->type = resolve_type(cast->type, scope);
-			cast->exp = ast_desugar_expression(cast->exp, scope);
+			cast->type = resolve_type(cast->type);
+			cast->exp = ast_desugar_expression(cast->exp);
 		} else {
-			exp->una.exp = ast_desugar_expression(exp->una.exp, scope);
+			exp->una.exp = ast_desugar_expression(exp->una.exp);
 		}
 		return exp;
 	case ast_exp_if:
-		exp->iff.cond = ast_desugar_expression(exp->iff.cond, scope);
-		exp->iff.tb = ast_desugar_expression(exp->iff.tb, scope);
+		exp->iff.cond = ast_desugar_expression(exp->iff.cond);
+		exp->iff.tb = ast_desugar_expression(exp->iff.tb);
 		if (exp->iff.fb != NULL)
-			exp->iff.fb = ast_desugar_expression(exp->iff.fb, scope);
+			exp->iff.fb = ast_desugar_expression(exp->iff.fb);
 		return exp;
 	case ast_exp_case: {
-		exp->ccase.cexp = ast_desugar_expression(exp->ccase.cexp, scope);
+		exp->ccase.cexp = ast_desugar_expression(exp->ccase.cexp);
 		struct case_branches *branches = &exp->ccase.branches;
 		for (size_t i = 0; i < branches->len; ++i) {
 			struct case_branch *branch = &branches->elems[i];
-			struct scope *sc = &branch->scope;
 			if (branch->binds_value)
-				branch->binding.type = resolve_type(branch->binding.type, scope);
+				branch->binding.type = resolve_type(branch->binding.type);
 			if (branch->guard != NULL)
-				branch->guard = ast_desugar_expression(branch->guard, sc);
-			branch->body = ast_desugar_expression(branch->body, sc);
+				branch->guard = ast_desugar_expression(branch->guard);
+			branch->body = ast_desugar_expression(branch->body);
 		}
 		if (exp->ccase.else_exp != NULL)
-			ast_desugar_expression(exp->ccase.else_exp, scope);
+			ast_desugar_expression(exp->ccase.else_exp);
 		return exp;
 	} break;
 	case ast_exp_return:			FAILWITH("TODO: ast_exp_return"); break;
@@ -2134,13 +2136,13 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 	case ast_exp_ident:
 	case ast_exp_extern_symbol: return exp;
 	case ast_exp_get_ptr:
-		exp->get_ptr = ast_desugar_expression(exp->get_ptr, scope);
+		exp->get_ptr = ast_desugar_expression(exp->get_ptr);
 		return exp;
 	case ast_exp_get_len:
-		exp->get_len = ast_desugar_expression(exp->get_len, scope);
+		exp->get_len = ast_desugar_expression(exp->get_len);
 		return exp;
 	case ast_exp_size_of: {
-		KCType *t = resolve_type(exp->size_of.type, scope);
+		KCType *t = resolve_type(exp->size_of.type);
 		if (t == NULL) {
 			log_compile_error_and_die(exp->tok->filename, exp->tok,
 									  "Failed to resolve type of expression `%s`.",
@@ -2152,8 +2154,8 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 	case ast_exp_binary: {
 		switch ((int)exp->bin.op) {
 		case binop_and: {
-			struct expression *left = ast_desugar_expression(exp->bin.left, scope);
-			struct expression *right = ast_desugar_expression(exp->bin.right, scope);
+			struct expression *left = ast_desugar_expression(exp->bin.left);
+			struct expression *right = ast_desugar_expression(exp->bin.right);
 			struct expression *iff = MEM_ALLOC(struct expression);
 			struct expression *fb  = MEM_ALLOC(struct expression);
 			iff->tag = ast_exp_if;
@@ -2172,13 +2174,14 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 			FAILWITH("TODO: binop_or");
 		} break;
 		case binop_member: {
-			exp->bin.left = ast_desugar_expression(exp->bin.left, scope);
+			exp->bin.left = ast_desugar_expression(exp->bin.left);
 			exp->bin.right->type = &AST_TYPE_U64;
 			if (exp->bin.right->tag == ast_exp_literal) {
 				return exp;
 			} else {
 				assert(exp->bin.right->tag == ast_exp_ident);
-				struct struct_type *mems = struct_type_members(exp->bin.left->type, scope);
+				struct struct_type *mems =
+					struct_type_members(exp->bin.left->type);
 				for (size_t i = 0; i < mems->len; ++i) {
 					if (sv_is_equal(token_to_strview(mems->elems[i].name),
 									token_to_strview(exp->bin.right->tok))) {
@@ -2207,11 +2210,11 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 				assign->bin.op = op_assign;
 				assign->bin.left = exp->bin.left;
 				assign->bin.right = exp;
-				return ast_desugar_expression(assign, scope);
+				return ast_desugar_expression(assign);
 			} break;
 		default: {
-			struct expression *left = ast_desugar_expression(exp->bin.left, scope);
-			struct expression *right = ast_desugar_expression(exp->bin.right, scope);
+			struct expression *left = ast_desugar_expression(exp->bin.left);
+			struct expression *right = ast_desugar_expression(exp->bin.right);
 			exp->bin.left = left;
 			exp->bin.right = right;
 			return exp;
@@ -2224,9 +2227,9 @@ ast_desugar_expression(struct expression *exp, struct scope *scope)
 }
 
 KC_PUBLIC void
-ast_desugar(struct expression_stack *exps, struct scope *scope)
+ast_desugar(struct expression_stack *exps)
 {
 	for (size_t i = 0; i < exps->len; ++i) {
-		exps->elems[i] = ast_desugar_expression(exps->elems[i], scope);
+		exps->elems[i] = ast_desugar_expression(exps->elems[i]);
 	}
 }

@@ -184,10 +184,10 @@ struct ast_comp_dest {
 
 KC_PUBLIC IR_toplevel ast_compile(struct scope *scope);
 KC_PUBLIC struct ir_blk *ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t proc_id,
-											 struct ir_blk *blk, struct scope *scope, struct ir_toplevel *tl);
+											 struct ir_blk *blk, struct ir_toplevel *tl);
 KC_PUBLIC void ast_compile_procedure(size_t proc_id, struct ir_toplevel *tl);
 KC_PUBLIC IR_object *get_toplevel_obj(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct ir_proc *get_toplevel_proc(struct ir_toplevel *tl, size_t id);
 KC_PUBLIC struct da_pointers ir_blk_reverse_post_order(struct ir_blk *root);
 KC_PUBLIC void ir_proc_fprint(struct ir_proc *proc, FILE *file);
-KC_PUBLIC void ast_desugar(struct expression_stack *exps, struct scope *scope);
+KC_PUBLIC void ast_desugar(struct expression_stack *exps);

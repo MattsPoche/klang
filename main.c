@@ -1,5 +1,6 @@
 /**
 TODOS:
+- [ ] Proper modules and namespaces
 - [ ] Implement stubs for basic operators
 - [ ] Floating point types
 - [ ] Vector types
@@ -8,7 +9,6 @@ TODOS:
 - [ ] Loop continue
 - [ ] Loop labels
 - [ ] Early return
-- [x] Global variables
 - [ ] Dynamic memory allocation syntax
 - [ ] Static memory storage syntax?
 - [ ] Local functions
@@ -38,26 +38,27 @@ TODOS:
 #define STRVIEW_IMPLEMENTATION
 #include "strview.h"
 
-KC_PRIVATE Mem_pool kc_heap;
-KC_PUBLIC  Mem_pool *KC_HEAP = &kc_heap;
+KC_PUBLIC  Mem_pool *KC_HEAP = NULL;
 
-int set_sig_handler(void);
+KC_PRIVATE int set_sig_handler(void);
+KC_PRIVATE bool recover_from_handler = false;
+KC_PRIVATE jmp_buf recover_exec;
 
 KC_PRIVATE void
 kc_init(void)
 {
 	if (set_sig_handler() != 0)
 		FAILWITH("[Error] %s\n", strerror(errno));
-	kc_heap = mem_pool_create();
 }
 
 void *
 kc_malloc(size_t size)
 {
-	return mem_pool_alloc(&kc_heap, size);
+	return mem_pool_alloc(KC_HEAP, size);
 }
 
-void kc_free(UNUSED void *ptr) {}
+void
+kc_free(UNUSED void *ptr) {}
 
 void *
 kc_calloc(size_t n, size_t size)
@@ -108,8 +109,8 @@ exec_cmd(struct lines *cmd)
 			FILE *f = fdopen(io_pipes[0], "r");
 			if (f == NULL)
 				FAILWITH("[Error] fdopen(io_pipes[0], \"r\"): %s\n", strerror(errno));
-			while (fgets(scratch_buffer, sizeof(scratch_buffer), f)) {
-				printf("[Info] %s", scratch_buffer);
+			while (fgets(scratch_buffer[0], sizeof(scratch_buffer[0]), f)) {
+				printf("[Info] %s", scratch_buffer[0]);
 			}
 			fclose(f);
 		} else if (close(io_pipes[0]) < 0) {
@@ -165,10 +166,7 @@ list_asm(Asm_module *m)
 	}
 }
 
-static bool recover_from_handler = false;
-static jmp_buf recover_exec;
-
-void
+KC_PRIVATE void
 handler(int sig, siginfo_t *info, UNUSED void *ucontext)
 {
 	if (sig == SIGSEGV) {
@@ -178,7 +176,7 @@ handler(int sig, siginfo_t *info, UNUSED void *ucontext)
 	EXIT(sig);
 }
 
-int
+KC_PRIVATE int
 set_sig_handler(void)
 {
 	struct sigaction act = {0};
@@ -204,7 +202,7 @@ fprint_disassembly(Asm_module *m, FILE *f)
 	remove(temp_name);
 }
 
-int
+KC_PRIVATE int
 run_code_from_entry_point(CG_module *m, int(*entry_point)(int argc, const char *argv[]),
 						  int argc, const char *argv[])
 {
@@ -228,23 +226,21 @@ run_code_from_entry_point(CG_module *m, int(*entry_point)(int argc, const char *
 	return ec;
 }
 
-void
+KC_PRIVATE void
 compilation_phase1(KC_session *session)
 {
-	struct typing_context ctx = {0};
-	ctx.scope = kc_parse(session, &session->tl_exps);
-	type_check(session, &ctx, &session->tl_exps);
-	session->scope = ctx.scope;
+	kc_parse(session);
+	type_check(session);
 }
 
-void
+KC_PRIVATE void
 compilation_phase2(KC_session *session)
 {
-	ast_desugar(&session->tl_exps, session->scope);
+	ast_desugar(&session->tl_exps);
 	session->ir = ast_compile(session->scope);
 }
 
-void *
+KC_PRIVATE void *
 compilation_phase3(KC_session *session)
 {
 	cg_emit_module_code(&session->cg_module, &session->ir, session->run_p);
@@ -299,15 +295,164 @@ is_valid_input_file_name(const char *file)
 	return len == n1 + n2;
 }
 
+struct kc_session_args {
+	const char *input_file;
+	const char *target;
+	bool run_p  : 1;
+	bool link_p : 1;
+};
+
+KC_PRIVATE bool
+kc_session_set_input_file(KC_session *s, const char *input_file)
+{
+	if (is_valid_input_file_name(input_file)) {
+		if (realpath(input_file, scratch_buffer[0]) == NULL) {
+			fprintf(stderr, "[Error] realpath: %s", strerror(errno));
+			return false;
+		}
+		s->input_file = str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+	} else {
+		fprintf(stderr, "[Error] Invalid input file name `%s`\n", input_file);
+		return false;
+	}
+	return true;
+}
+
+KC_PRIVATE bool
+kc_session_set_target_file(KC_session *s, const char *target_file)
+{
+	if (realpath(target_file, scratch_buffer[0]) == NULL) {
+		s->target = fmt_str("%s/%s", s->cwd, target_file);
+	} else {
+		s->target = str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+	}
+	return true;
+}
+
+KC_PRIVATE bool
+kc_session_set_cwd(KC_session *s)
+{
+	if (getcwd(scratch_buffer[0], sizeof(scratch_buffer[0])) == NULL) {
+		fprintf(stderr, "[Error] %s\n", strerror(errno));
+		return false;
+	}
+	s->cwd = str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+	return true;
+}
+
+#define kc_session_init(s, ...)											\
+	kc_session_init_impl(s, ((struct kc_session_args){__VA_ARGS__}))
+
+#define kc_session_create(...)										\
+	kc_session_create_impl((struct kc_session_args){__VA_ARGS__})
+
+KC_PRIVATE bool
+kc_session_init_impl(KC_session *s, struct kc_session_args args)
+{
+	memset(s, 0, sizeof(*s));
+	s->heap = mem_pool_create();
+	KC_HEAP = &s->heap;
+	s->run_p = args.run_p;
+	s->link_p = args.link_p;
+	bool c = true;
+	s->symbols = syminfo_create();
+	c &= kc_session_set_cwd(s);
+	if (args.input_file)
+		c &= kc_session_set_input_file(s, args.input_file);
+	if (args.target)
+		c &= kc_session_set_target_file(s, args.target);
+	return c;
+}
+
+KC_PRIVATE KC_session *
+kc_session_create_impl(struct kc_session_args args)
+{
+	KC_session *s = malloc(sizeof(*s));
+	if (s && kc_session_init_impl(s, args))
+		return s;
+	free(s);
+	return NULL;
+}
+
+KC_PRIVATE void
+kc_session_end(KC_session *s)
+{
+	mem_pool_destroy(&s->heap);
+}
+
+KC_PRIVATE int
+dispatch_query(CL_args args)
+{
+	printf("[Info] %s\n", __func__);
+	KC_session *session;
+	if ((session = kc_session_create()) == NULL) return 1;
+	printf("[Info] cwd: %s\n", session->cwd);
+	while (shift_args(&args)) {
+		if (!kc_session_set_input_file(session, get_arg(&args)))
+			return 1;
+	}
+	if (session->input_file[0] == 0) {
+		fprintf(stderr, "[Error] No input file was provided\n");
+		return 1;
+	}
+	compilation_phase1(session);
+	Syminfo_iter iter = syminfo_iter(session->symbols);
+	Syminfo_pair pair = {0};
+	while (syminfo_iter_next(&iter, &pair)) {
+		for (Syminfo_list list = pair.info_list; list; list = list->next) {
+			const char *filename;
+			uint32_t line, column, offset;
+			if (list->info && list->info->tag == SYMTBL_VARIABL) {
+				filename = list->info->name->filename;
+				offset   = list->info->name->offset;
+				line     = list->info->name->line;
+				column   = list->info->name->column;
+				struct definition *def = list->info->variable.def;
+				fprintf(stdout,
+						"@\t%s\t%u\t%u\t%u\tv\t\""SV_FMT"\"\tt\t\"",
+						filename, line, column+1, offset, SV_ARGS(pair.name));
+				ast_type_fprint(def->type, stdout);
+				printf("\"\n");
+			} else if (list->info && list->info->tag == SYMTBL_VALCONS) {
+				filename = list->info->name->filename;
+				offset   = list->info->name->offset;
+				line     = list->info->name->line;
+				column   = list->info->name->column;
+				KCType *memb = list->info->valcons.type;
+				KCType type  = get_temp_app_type_from_definition(list->info->valcons.td);
+				fprintf(stdout,
+						"@\t%s\t%u\t%u\t%u\tc\t\""SV_FMT"\"\tt\t\"",
+						filename, line, column+1, offset, SV_ARGS(pair.name));
+				ast_type_fprint(memb, stdout);
+				fprintf(stdout, "\"\tt\t\"");
+				ast_type_fprint(&type, stdout);
+				fprintf(stdout, "\"\n");
+			} else if (list->info && list->info->tag == SYMTBL_TYPE) {
+				filename = list->info->name->filename;
+				offset   = list->info->name->offset;
+				line     = list->info->name->line;
+				column   = list->info->name->column;
+				KCType type = get_temp_app_type_from_definition(&list->info->type);
+				fprintf(stdout,
+						"@\t%s\t%u\t%u\t%u\tt\t\"",
+						filename, line, column+1, offset);
+				ast_type_fprint(&type, stdout);
+				fprintf(stdout, "\"\tt\t\"");
+				ast_type_fprint(list->info->type.type, stdout);
+				fprintf(stdout, "\"\n");
+			}
+		}
+	}
+	return 0;
+}
+
 KC_PRIVATE int
 dispatch_build(CL_args args)
 {
-	KC_session session = {.target = "a.out", .link_p = true, .symbols = syminfo_create()};
-	printf("[Info] dispatch_build\n");
-	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
-		fprintf(stderr, "[Error] %s\n", strerror(errno));
-		return 1;
-	}
+	printf("[Info] %s\n", __func__);
+	KC_session *session;
+	if ((session = kc_session_create(.target = "a.out", .link_p = true)) == NULL) return 1;
+	printf("[Info] cwd: %s\n", session->cwd);
 	while (shift_args(&args) > 0) {
 		const char *arg = get_arg(&args);
 		if (strcmp("-o", arg) == 0) {
@@ -315,81 +460,41 @@ dispatch_build(CL_args args)
 				fprintf(stderr, "[Error] No output file provided after flag `-o`\n");
 				return 1;
 			}
-			session.target = get_arg(&args);
+			if (!kc_session_set_target_file(session, get_arg(&args)))
+				return 1;
 		} else if (strcmp("-c", arg) == 0) {
-			session.link_p = false;
-		} else if (is_valid_input_file_name(arg)) {
-			session.input_file = arg;
-		} else {
-			fprintf(stderr, "[Error] Invalid input file `%s`\n", arg);
+			session->link_p = false;
+		} else if (strcmp("--dump-ir", arg) == 0) {
+			session->dump_ir_p = true;
+		} else if (!kc_session_set_input_file(session, arg)) {
 			return 1;
 		}
 	}
-	if (session.input_file == NULL) {
+	if (session->input_file[0] == 0) {
 		fprintf(stderr, "[Error] No input file was provided\n");
 		return 1;
 	}
-	compilation_phase1(&session);
-#if 1
-		Syminfo_iter iter = syminfo_iter(session.symbols);
-		Syminfo_pair pair = {0};
-		while (syminfo_iter_next(&iter, &pair)) {
-			for (Syminfo_list list = pair.info_list; list; list = list->next) {
-				const char *filename;
-				uint32_t line, column, offset;
-				if (list->si && list->si->tag == SYMTBL_VARIABL) {
-					filename = list->si->name->filename;
-					offset   = list->si->name->offset;
-					line     = list->si->name->line;
-					column   = list->si->name->column;
-					struct definition *def = list->si->variable.def;
-					fprintf(stdout,
-							"@\t%s\t%u\t%u\t%u\tv\t\""SV_FMT"\"\tt\t\"",
-							filename, line, column+1, offset, SV_ARGS(pair.name));
-					ast_type_fprint(def->type, stdout);
-					printf("\"\n");
-				} else if (list->si && list->si->tag == SYMTBL_VALCONS) {
-					filename = list->si->name->filename;
-					offset   = list->si->name->offset;
-					line     = list->si->name->line;
-					column   = list->si->name->column;
-					KCType *memb = list->si->valcons.type;
-					KCType type  = get_temp_app_type_from_definition(list->si->valcons.td);
-					fprintf(stdout,
-							"@\t%s\t%u\t%u\t%u\tc\t\""SV_FMT"\"\tt\t\"",
-							filename, line, column+1, offset, SV_ARGS(pair.name));
-					ast_type_fprint(memb, stdout);
-					fprintf(stdout, "\"\tt\t\"");
-					ast_type_fprint(&type, stdout);
-					fprintf(stdout, "\"\n");
-				} else if (list->ti) {
-					filename = list->ti->name->filename;
-					offset   = list->ti->name->offset;
-					line     = list->ti->name->line;
-					column   = list->ti->name->column;
-					KCType type = get_temp_app_type_from_definition(list->ti);
-					fprintf(stdout,
-							"@\t%s\t%u\t%u\t%u\tt\t\"",
-							filename, line, column+1, offset);
-					ast_type_fprint(&type, stdout);
-					fprintf(stdout, "\"\tt\t\"");
-					ast_type_fprint(list->ti->type, stdout);
-					fprintf(stdout, "\"\n");
-				}
+	compilation_phase1(session);
+	compilation_phase2(session);
+	if (session->dump_ir_p) {
+		printf("[Info] ir dump:\n");
+		for (size_t i = 0; i < session->ir.len; ++i) {
+			if (session->ir.elems[i].hddr.tag == IRO_PROC) {
+				ir_proc_fprint(&session->ir.elems[i].proc, stdout);
+				printf("\n");
 			}
 		}
-#endif
-	compilation_phase2(&session);
-	compilation_phase3(&session);
-	const char *ofile = subst_file_suffix(session.input_file, "o");
-	asm_output_object_file(&session.cg_module.as, ofile);
-	if (session.link_p) {
+	}
+	compilation_phase3(session);
+	const char *ofile = subst_file_suffix(session->input_file, "o");
+	asm_output_object_file(&session->cg_module.as, ofile);
+	if (session->link_p) {
 		struct lines obj_files = {
 			.cap = 1,
 			.len = 1,
 			.elems = (void *)&ofile,
 		};
-		return link_object_files(&obj_files, session.target, false);
+		return link_object_files(&obj_files, session->target, false);
 	}
 	return 0;
 }
@@ -397,31 +502,37 @@ dispatch_build(CL_args args)
 KC_PRIVATE int
 dispatch_run(CL_args args)
 {
-	KC_session session = {.run_p = true, .symbols = syminfo_create()};
-	printf("[Info] dispatch_run\n");
-	if (getcwd(session.cwd, sizeof(session.cwd)) == NULL) {
-		fprintf(stderr, "[Error] %s\n", strerror(errno));
-		return 1;
-	}
+	printf("[Info] %s\n", __func__);
+	KC_session *session;
+	if ((session = kc_session_create(.run_p = true)) == NULL) return 1;
+	printf("[Info] cwd: %s\n", session->cwd);
 	while (shift_args(&args)) {
 		const char *arg = get_arg(&args);
-		if (is_valid_input_file_name(arg)) {
-			session.input_file = arg;
-		} else {
-			fprintf(stderr, "[Error] Invalid input file `%s`\n", arg);
+		if (strcmp("--dump-ir", arg) == 0) {
+			session->dump_ir_p = true;
+		} else if (!kc_session_set_input_file(session, arg)) {
 			return 1;
 		}
 	}
-	if (session.input_file == NULL) {
+	if (session->input_file[0] == 0) {
 		fprintf(stderr, "[Error] No input file was provided\n");
 		return 1;
 	}
-	compilation_phase1(&session);
-	compilation_phase2(&session);
-	int(*entry_point)(int, const char**) = compilation_phase3(&session);
+	compilation_phase1(session);
+	compilation_phase2(session);
+	if (session->dump_ir_p) {
+		printf("[Info] ir dump:\n");
+		for (size_t i = 0; i < session->ir.len; ++i) {
+			if (session->ir.elems[i].hddr.tag == IRO_PROC) {
+				ir_proc_fprint(&session->ir.elems[i].proc, stdout);
+				printf("\n");
+			}
+		}
+	}
+	int(*entry_point)(int, const char**) = compilation_phase3(session);
 	if (entry_point) {
-		const char *argv[] = {session.input_file, NULL};
-		run_code_from_entry_point(&session.cg_module, entry_point, 1, argv);
+		const char *argv[] = {session->input_file, NULL};
+		run_code_from_entry_point(&session->cg_module, entry_point, 1, argv);
 	} else {
 		fprintf(stderr, "[Error] No entry point found in compilation unit\n");
 		return 1;
@@ -429,16 +540,18 @@ dispatch_run(CL_args args)
 	return 0;
 }
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
 	kc_init();
 	CL_args args = {argv, argc};
-	printf("%s\n", get_arg(&args));
 	if (shift_args(&args) <= 0) FAILWITH("TODO: print default help message.");
 	if (strcmp("build", get_arg(&args)) == 0)
 		return dispatch_build(args);
 	if (strcmp("run", get_arg(&args)) == 0)
 		return dispatch_run(args);
+	if (strcmp("query", get_arg(&args)) == 0)
+		return dispatch_query(args);
 	fprintf(stderr, "[Error] Unrecognized command: `%s`\n", get_arg(&args));
 	FAILWITH("TODO: print default help message.");
 	return 0;

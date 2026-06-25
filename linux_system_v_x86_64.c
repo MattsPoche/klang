@@ -948,7 +948,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_STACK_LOAD(IR_Ins *ins, UNUSED void *dat, struc
 	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
 	assert(x->tag == ADDR_STACK_LOAD);
 	cg_reserve_register(ctx, dst->i, ins->dst);
-	if (type_equiv(x->type, ins->type, NULL)) {
+	if (type_equiv(x->type, ins->type)) {
 		asm_mov(code->m, cg_suffix(ins->type), MEM_DR(x->stack[0] + x->stack[1], RBP), REG(dst->i));
 	} else if (type_is_integer(x->type) && ins->type->tag == ast_type_i8) {
 		asm_mov(code->m, cg_suffix(ins->type), MEM_DR(x->stack[0] + x->stack[1], RBP), REG(dst->i));
@@ -990,7 +990,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct 
 	cg_unassign_register(ctx, x->i);
 	if (type_is_void(ins->type)) return; /* do nothing */
 	cg_reserve_register(ctx, dst->i, ins->dst);
-	if (type_equiv(x->type, ins->type, NULL)) {
+	if (type_equiv(x->type, ins->type)) {
 		asm_mov(code->m, cg_suffix(ins->type), REG(x->i), REG(dst->i));
 	} else if (type_is_integer(x->type) && ins->type->tag == ast_type_i8) {
 		asm_mov(code->m, cg_suffix(ins->type), REG(x->i), REG(dst->i));
@@ -1652,7 +1652,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 							 cg_addr_tag_to_str(base->tag),
 							 cg_addr_tag_to_str(idx->tag));
 				}
-			} else if (type_is_struct_ptr(ins->type, NULL)) {
+			} else if (type_is_struct_ptr(ins->type)) {
 				if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_STACK, ADDR_IMM_INT)) {
 					dst->tag = ADDR_REGISTER;
 					dst->i = cg_assign_register(ctx, ins->dst);
@@ -2428,7 +2428,8 @@ cg_emit_module_code(CG_module *mod, struct ir_toplevel *ir, bool is_jit)
 	/* generate code */
 	for (size_t i = 0; i < ir->len; ++i) {
 		IR_object *obj = &ir->elems[i];
-		if (obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK)
+		if (obj->tag == IRO_PROC || obj->tag == IRO_INIT_THUNK) {
 			cg_emit_procedure(mod, obj, ir);
+		}
 	}
 }
