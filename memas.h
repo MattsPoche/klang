@@ -1222,6 +1222,20 @@ struct opcode_bytes {
 
 #define OPCODE_BYTES(...)												\
 	((struct opcode_bytes){sizeof((ubyte[]){__VA_ARGS__}), {__VA_ARGS__}})
+#define HIBYTE_REG_P(r)							\
+	((r))
+
+static bool
+hibyte_reg_p(enum asm_register reg)
+{
+	static const bool tbl[] = {
+		[RAX] = false, [RCX] = false, [RDX] = false, [RBX] = false,
+		[RSP] = true,  [RBP] = true,  [RSI] = true,  [RDI] = true,
+		[R8]  = false, [R9]  = false, [R10] = false, [R11] = false,
+		[R12] = false, [R13] = false, [R14] = false, [R15] = false,
+	};
+	return tbl[reg];
+}
 
 static int64_t
 get_disp(Asm_module *m, Asm_inst inst, size_t *sz_out)
@@ -1414,11 +1428,7 @@ emit_mov_zb_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	 * NOTE:
 	 * 1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	 * will instead access SPL, DIL, BPL, or SIL, respectively. */
-	switch ((int)inst.r0) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
+	opt.force_rex = hibyte_reg_p(inst.r0);
 	emit_indirect_addressing(m, OPCODE_BYTES(0x8a), inst, opt);
 }
 
@@ -1430,11 +1440,7 @@ emit_mov_zb_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	 * NOTE:
 	 * 1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	 * will instead access SPL, DIL, BPL, or SIL, respectively. */
-	switch ((int)inst.r0) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
+	opt.force_rex = hibyte_reg_p(inst.r0);
 	emit_indirect_addressing(m, OPCODE_BYTES(0x88), inst, opt);
 }
 
@@ -1503,11 +1509,7 @@ emit_mov_zb_ir(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt
 	int64_t imm = inst.t_lbl ? asm_get_label_offset(m, inst.disp) + inst.imm : inst.imm;
 	ASSERT(imm <= INT8_MAX && imm >= INT8_MIN);
 	/* B0+ rb ib | MOV r8, imm8 | Move imm8 to r8. */
-	switch ((int)inst.r1) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
+	opt.force_rex = hibyte_reg_p(inst.r1);
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
 	byte_buffer_put_byte(asm_get_current_section_buffer(m), 0xb0 + (inst.r1 & 7));		/* op code */
 	byte_buffer_insert_bytes(asm_get_current_section_buffer(m), &imm, sizeof(int8_t));
@@ -1537,16 +1539,7 @@ emit_mov_zb_rr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	   will instead access SPL, DIL, BPL, or SIL, respectively. */
-	switch ((int)inst.r0) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
-	switch ((int)inst.r1) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
+	opt.force_rex = hibyte_reg_p(inst.r0) || hibyte_reg_p(inst.r1);
 	EMIT_OPT_REX(0, inst.r0, 0, inst.r1);
 	byte_buffer_put_byte(asm_get_current_section_buffer(m), 0x88);                        	/* op code */
 	byte_buffer_put_byte(asm_get_current_section_buffer(m), MODRM(3, inst.r0, inst.r1));      /* mod r/m */
@@ -1656,11 +1649,7 @@ emit_neg_zb_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	/* NOTES:
 	   1. With a REX prefix in 64-bit mode, attempts to access AH, BH, CH, or DH
 	   will instead access SPL, DIL, BPL, or SIL, respectively. */
-	switch ((int)inst.r1) {
-	case RSP: case RBP: case RDI: case RSI:
-		opt.force_rex = true;
-	default:
-	}
+	opt.force_rex = hibyte_reg_p(inst.r1);
 	EMIT_OPT_REX(0, 0, 0, inst.r1);
 	byte_buffer_put_byte(asm_get_current_section_buffer(m), 0xf6);
 	byte_buffer_put_byte(asm_get_current_section_buffer(m), MODRM(3, 3, inst.r1));
@@ -1707,11 +1696,7 @@ emit_add_zb_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 		byte_buffer_insert_bytes(asm_get_current_section_buffer(m), &inst.imm, sizeof(int8_t));
 	} else {
 		/* 80 /0 ib | ADD r/m81, imm8 | Add imm8 to r/m8. */
-		switch ((int)inst.r1) {
-		case RSP: case RBP: case RDI: case RSI:
-			opt.force_rex = true;
-		default:
-		}
+		opt.force_rex = hibyte_reg_p(inst.r1);
 		EMIT_OPT_REX(0, 0, 0, inst.r1);
 		byte_buffer_put_byte(asm_get_current_section_buffer(m), 0x80);
 		byte_buffer_put_byte(asm_get_current_section_buffer(m), MODRM(3, 0, inst.r1));
@@ -1814,6 +1799,15 @@ emit_sub_zwdq_rm(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 	emit_indirect_addressing(m, OPCODE_BYTES(0x29), inst, opt);
 }
 
+/* EMIT IMUL */
+static void
+emit_imul_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_IMUL);
+	/* 0F AF /r | IMUL r32, r/m32 | Doubleword register := doubleword register ∗ r/m32. */
+	emit_indirect_addressing(m, OPCODE_BYTES(0x0f, 0xaf), inst, opt);
+}
+
 /* EMIT IDIV */
 static void
 emit_idiv_zwdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
@@ -1894,6 +1888,25 @@ emit_shl_zdq_rr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 }
 
 /* EMIT CMP */
+
+static void
+emit_cmp_zb_mr(Asm_module *m, Asm_inst inst, UNUSED struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_CMP);
+	/* 38 /r | CMP r32, r/m32 | compare r/m32 with r32. */
+	opt.force_rex = hibyte_reg_p(inst.r0);
+	emit_indirect_addressing(m, OPCODE_BYTES(0x38), inst, opt);
+}
+
+static void
+emit_cmp_zwdq_mr(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
+{
+	ASSERT(inst.op == OP_CMP);
+	/* 39 /r | CMP r32, r/m32 | compare r/m32 with r32. */
+	opt.force_rex = hibyte_reg_p(inst.r0);
+	emit_indirect_addressing(m, OPCODE_BYTES(0x39), inst, opt);
+}
+
 static void
 emit_cmp_zwdq_ir(Asm_module *m, Asm_inst inst, struct _dispatch_options opt)
 {
@@ -2297,6 +2310,11 @@ static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
 		[SZDSC(ZD, RR)] = {emit_sub_zwdq_rr, {}},
 		[SZDSC(ZQ, RR)] = {emit_sub_zwdq_rr, {.rex_w = true}},
 	},
+	[OP_IMUL] = {
+		[SZDSC(ZW, MR)] = {emit_imul_zwdq_mr, {.opor = true}},
+		[SZDSC(ZD, MR)]	= {emit_imul_zwdq_mr, {}},
+		[SZDSC(ZQ, MR)]	= {emit_imul_zwdq_mr, {.rex_w = true}},
+	},
 	[OP_IDIV] = {
 		[SZDSC(ZW, RR)] = {emit_idiv_zwdq_rr, {.opor = true}},
 		[SZDSC(ZD, RR)] = {emit_idiv_zwdq_rr, {}},
@@ -2318,6 +2336,10 @@ static const struct _dispatch dispatch_table[OP_CODE_COUNT][0x20] = {
 		[SZDSC(ZQ, IR)] = {emit_shl_zdq_ir, {.rex_w = true}},
 	},
 	[OP_CMP] = {
+		[SZDSC(ZB, MR)] = {emit_cmp_zb_mr, {}},
+		[SZDSC(ZW, MR)] = {emit_cmp_zwdq_mr, {.opor = true}},
+		[SZDSC(ZD, MR)]	= {emit_cmp_zwdq_mr, {}},
+		[SZDSC(ZQ, MR)]	= {emit_cmp_zwdq_mr, {.rex_w = true}},
 		[SZDSC(ZB, IR)] = {emit_cmp_zb_ir, {}},
 		[SZDSC(ZW, IR)] = {emit_cmp_zwdq_ir, {.opor = true}},
 		[SZDSC(ZD, IR)] = {emit_cmp_zwdq_ir, {}},

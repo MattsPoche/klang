@@ -109,7 +109,6 @@ generic_types = "69\n420\n1303948\n38438273\n32 33 34 35 36 37 38 \n69\nHello, W
 simple_union = "argc = 1\nfile = ./a.out\nOpened file: ./a.out\nError code: 2\nNo such file or directory\n"
 global_variables = "Hello, World!!!\n69\n489\n"
 
-
 tests = [
 	{"file_name": "tests/fibonacci.k",			   "exit_code": 89,  "output": None},
 	{"file_name": "tests/small_array.k",		   "exit_code": 114, "output": None},

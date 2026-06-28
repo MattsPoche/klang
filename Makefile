@@ -1,7 +1,7 @@
-TARGET=kc
-CFLAGS=-std=c23 -Wall -Wextra -Wswitch-enum -ggdb -Werror=vla -D_GNU_SOURCE
-CFLAGS += -fwrapv -fno-strict-aliasing -fsanitize=address -fsanitize=undefined
-LFLAGS= -fsanitize=address -fsanitize=undefined
+TARGET    =  kc
+CFLAGS    =  -std=c23 -Wall -Wextra -Wswitch-enum -ggdb -Werror=vla -D_GNU_SOURCE -fwrapv -fno-strict-aliasing
+LFLAGS    =
+FSANITIZE =  -fsanitize=address -fsanitize=undefined
 HFILES=$(shell find -type f -name '*.h')
 CFILES=$(shell find -type f -name '*.c')
 OFILES=$(CFILES:%.c=%.o)
@@ -11,10 +11,10 @@ DEBUG=1
 .PHONEY: test clean
 
 $(TARGET): $(OFILES)
-	$(CC) $(LFLAGS) $(OFILES) -o $@
+	$(CC) $(LFLAGS) $(FSANITIZE) $(OFILES) -o $@
 
 %.o: %.c $(HFILES)
-	$(CC) $(CFLAGS) -DKC_DEBUG=$(DEBUG) -O$(OPT) -c -o $@ $<
+	$(CC) $(CFLAGS) $(FSANITIZE) -DKC_DEBUG=$(DEBUG) -O$(OPT) -c -o $@ $<
 
 test: $(TARGET)
 	./run_tests.py

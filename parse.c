@@ -166,7 +166,7 @@ parse_type(KC_session *session, Parser *p, struct scope *scope, bool introduce_t
 	/* Build type signature */
 	enum ast_type_tag tag;
 	switch ((int)peek_token(p)->tt) {
-	case tt_and: {
+	case tt_amper: {
 		next_token(p, NULL);
 		if (ACCEPT(next_token(p, &tok), tt_bang)) {
 			EXPECT(next_token(p, NULL), tt_lbracket);
@@ -476,15 +476,14 @@ KC_PRIVATE const char *
 resolve_module_file_path(KC_session *session, Parser *p, struct strview modname)
 {
 	/* 1. check directory of currently parsed file */
-	const char *dir = dirname((char *)p->lexer.filename);
-	printf("dir = %s\n", dir);
-	const char *f = fmt_buf(scratch_buffer[0], sizeof(scratch_buffer[0]), "%s/"SV_FMT".k", dir, SV_ARGS(modname));
+	const char *dir = dirname(strcpy(scratch_buffer[0], p->lexer.filename));
+	const char *f = fmt_buf(scratch_buffer[1], sizeof(scratch_buffer[1]), "%s/"SV_FMT".k", dir, SV_ARGS(modname));
 	if (access(f, R_OK) == 0)
-		return str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+		return str_dup(f, strlen(f));
 	/* 2. check session->cwd */
-	f = fmt_buf(scratch_buffer[0], sizeof(scratch_buffer[0]), "%s/"SV_FMT".k", session->cwd, SV_ARGS(modname));
+	f = fmt_buf(scratch_buffer[1], sizeof(scratch_buffer[1]), "%s/"SV_FMT".k", session->cwd, SV_ARGS(modname));
 	if (access(f, R_OK) == 0)
-		return str_dup(scratch_buffer[0], strlen(scratch_buffer[0]));
+		return str_dup(f, strlen(f));
 	/* 3. check fallback paths */
 	FAILWITH("TODO: check fallback paths");
 	return NULL;
@@ -501,6 +500,7 @@ parse_toplevel_expression(KC_session *session, Parser *p, struct expression_stac
 		EXPECT(next_token(p, &tok), tt_string);
 		struct strview modpath  = sv_unescape_string(token_to_strview(tok));
 		const char *file        = resolve_module_file_path(session, p, modpath);
+		printf("file = %s\n", file);
 		struct symtbl_entry *st = parse_file(session, file, tl_exps);
 		assert(st->tag == SYMTBL_NAMESPACE);
 		if (ACCEPT(peek_token(p), tt_as)) {
@@ -547,11 +547,13 @@ parser_is_at_end(Parser *p)
 #define ASSOC_LEFT_P(x) ((x) < 0)
 
 KC_PRIVATE int
-precedence(enum operator op)
+precedence(struct expression *exp)
 {
-	switch (op) {
+	if (exp->tag == ast_exp_let) return ASSOC_RIGHT(0);
+	assert(exp->tag == ast_exp_binary || exp->tag == ast_exp_unary);
+	switch (exp->op) {
 	case op_sequence:
-		return ASSOC_LEFT(10);
+		return ASSOC_RIGHT(10);
 	case op_assign:
 	case op_and_assign:
 	case op_lor_assign:
@@ -612,10 +614,11 @@ precedence(enum operator op)
 }
 
 KC_PRIVATE bool
-check_precedence(enum operator op1, enum operator op2)
+check_precedence(struct expression *op1, struct expression *op2)
 {
-	int p1 = precedence(op1);
-	int p2 = precedence(op2);
+	int p1, p2;
+	p1 = precedence(op1);
+	p2 = precedence(op2);
 	return (ABS(p1) < ABS(p2) || (ABS(p1) == ABS(p2) && ASSOC_LEFT_P(p1)));
 }
 
@@ -637,7 +640,7 @@ shunt(struct expression *op1, struct expression_stack *out, struct expression_st
 	}
 	while (ops->len > 0
 		   && (op2 = da_peek(ops)) != NULL
-		   && check_precedence(op1->op, op2->op)) {
+		   && check_precedence(op1, op2)) {
 		da_append(out, da_pop(ops));
 	}
 	da_append(ops, op1);
@@ -678,8 +681,7 @@ eval_binop_exp(struct expression *exp, struct expression *right, struct expressi
 		int64_t y = right->lit.i;
 		switch ((enum binop)exp->bin.op) {
 		case binop_sequence:
-			exp->bin.right = right;
-			exp->bin.left = left;
+			*exp = *right;
 			break;
 		case binop_add:
 			exp->tag = ast_exp_literal;
@@ -837,8 +839,8 @@ build_expression_tree(struct expression_stack *out)
 		exp = out->elems[i];
 		if (exp->tag == ast_exp_binary) {
 			if (stack.len < 2) {
-				printf("exp->bin.op = %s\n", ast_binop_to_str((enum binop)exp->bin.op));
-				FAILWITH("TODO: stack.len < 2");
+				printf("exp->tok->filename = %s\n", exp->tok->filename);
+				log_compile_error_and_die(exp->tok->filename, exp->tok, "Not enough arguments for binop.");
 			}
 			struct expression *right = da_pop(&stack);
 			struct expression *left  = da_pop(&stack);
@@ -846,6 +848,8 @@ build_expression_tree(struct expression_stack *out)
 		} else if (exp->tag == ast_exp_unary) {
 			assert(stack.len >= 1);
 			eval_unaop_exp(exp, da_pop(&stack));
+		} else if (exp->tag == ast_exp_let) {
+			exp->let.body = da_pop(&stack);
 		}
 		da_append(&stack, exp);
 	}
@@ -1026,8 +1030,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 		tok = peek_token(p);
 		switch (tok->tt) {
 		case tt_let:
-			if (op_prev == false) goto flush; // in this case let acts as a terminator
-			op_prev = false;
+			if (op_prev == false) goto flush;
 			next_token(p, &exp->tok);
 			exp->tag = ast_exp_let;
 			parse_definition(session, p, &exp->let.def, scope);
@@ -1036,8 +1039,8 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 			syminfo_add(&session->symbols,
 						token_to_strview(exp->let.def.id),
 						symtbl_add(&exp->let.scope.symtbl, &exp->let.def, NULL));
-			exp->let.body = parse_expression(session, p, &exp->let.scope);
-			da_append(&out, exp);
+			scope = &exp->let.scope;
+			da_append(&ops, exp);
 			break;
 		case tt_if:
 			CHK_OP_PREV(true);
@@ -1081,7 +1084,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 							next_token(p, NULL);
 							branch->binding.is_mut = true;
 						}
-						if (ACCEPT(peek_token(p), tt_and)) {
+						if (ACCEPT(peek_token(p), tt_amper)) {
 							next_token(p, NULL);
 							branch->binding_is_ref = true;
 						}
@@ -1380,7 +1383,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 		case tt_caret:
 		case tt_pipe:
 		case tt_colon_equal:
-		case tt_and_equal:
+		case tt_amper_equal:
 		case tt_pipe_equal:
 		case tt_caret_equal:
 		case tt_plus_equal:
@@ -1399,7 +1402,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 		case tt_less_less_equal:
 		case tt_more_more_equal:
 		case tt_pipe_pipe:
-		case tt_and_and:
+		case tt_amper_amper:
 		case tt_period:
 			CHK_OP_PREV(false);
 			op_prev = true;
@@ -1457,7 +1460,7 @@ parse_expression(KC_session *session, Parser *p, struct scope *scope)
 				shunt(exp, &out, &ops);
 			}
 			break;
-		case tt_and:
+		case tt_amper:
 			next_token(p, &exp->tok);
 			if (op_prev) {
 				exp->tag = ast_exp_unary;
@@ -1503,7 +1506,7 @@ flush:
 #undef ASSERT
 #pragma pop_macro("ASSERT")
 
-KC_PRIVATE const char *
+UNUSED KC_PRIVATE const char *
 ast_binop_to_str(enum binop op)
 {
 	switch (op) {
@@ -1985,6 +1988,7 @@ parse_file(KC_session *session, const char *filename, struct expression_stack *t
 			.line     = 1,
 		}
 	};
+	printf("(%s) filename = %s\n", __func__, filename);
 	tokenize(&parser.lexer, &parser.tokens);
 	while (!parser_is_at_end(&parser)) {
 		st_entry->namespace.scope =

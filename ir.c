@@ -23,17 +23,17 @@ get_toplevel_thunk(struct ir_toplevel *tl, size_t id)
 	return &obj->thunk;
 }
 
-KC_PRIVATE int
+KC_PRIVATE uint32_t
 ir_proc_new_reg(struct ir_toplevel *tl, size_t proc_id)
 {
 
 	IR_object *obj = get_toplevel_obj(tl, proc_id);
 	switch ((int)obj->tag) {
 	case IRO_PROC:
-		assert(obj->proc.regc < UINT16_MAX);
+		assert(obj->proc.regc < UINT32_MAX);
 		return obj->proc.regc++;
 	case IRO_INIT_THUNK:
-		assert(obj->thunk.regc < UINT16_MAX);
+		assert(obj->thunk.regc < UINT32_MAX);
 		return obj->thunk.regc++;
 	default:
 		FAILWITH("[Error] Invalid IR object");
@@ -658,11 +658,14 @@ ast_compile_expression(struct expression *exp, struct ast_comp_dest dst, size_t 
 		enum ir_opcode op;
 		switch ((enum binop)bin->op) {
 		case binop_sequence: {
-			struct ir_blk *left =
-				ast_compile_expression(bin->left,
-									   DEST_VAL(ir_proc_new_reg(tl, proc_id)),
-									   proc_id, blk, tl);
-			return ast_compile_expression(bin->right, dst, proc_id, left, tl);
+			struct ir_blk *left;
+			while (exp->tag == ast_exp_binary && (enum binop)exp->bin.op == binop_sequence) {
+				left = ast_compile_expression(exp->bin.left,
+											  DEST_VAL(ir_proc_new_reg(tl, proc_id)),
+											  proc_id, blk, tl);
+				exp = exp->bin.right;
+			}
+			return ast_compile_expression(exp, dst, proc_id, left, tl);
 		} break;
 		case binop_add:			op = ir_op_add;  goto LBL_binop;
 		case binop_sub:			op = ir_op_sub;  goto LBL_binop;
@@ -2016,20 +2019,25 @@ ir_proc_fprint(struct ir_proc *proc, FILE *file)
 	fputs("}\n", file);
 }
 
-KC_PRIVATE struct expression *
-ast_desugar_expression(struct expression *exp)
+KC_PRIVATE void
+ast_desugar_chk_type(struct expression *exp)
 {
 	if (exp->type == NULL) {
 		log_compile_error_and_die(exp->tok->filename, exp->tok, "Expression has no type.");
 	}
-	{
-		KCType *t = resolve_type(exp->type);
-		if (t == NULL)
-			log_compile_error_and_die(exp->tok->filename, exp->tok,
-									  "Failed to resolve type of expression `%s`.",
-									  ast_type_to_str(exp->type));
-		exp->type = t;
+	KCType *t = resolve_type(exp->type);
+	if (t == NULL) {
+		log_compile_error_and_die(exp->tok->filename, exp->tok,
+								  "Failed to resolve type of expression `%s`.",
+								  ast_type_to_str(exp->type));
 	}
+	exp->type = t;
+}
+
+KC_PRIVATE struct expression *
+ast_desugar_expression(struct expression *exp)
+{
+	ast_desugar_chk_type(exp);
 	switch (exp->tag) {
 	case ast_exp_definition: {
 		struct definition *def = &exp->def;
@@ -2153,6 +2161,19 @@ ast_desugar_expression(struct expression *exp)
 	} break;
 	case ast_exp_binary: {
 		switch ((int)exp->bin.op) {
+		case binop_sequence: {
+			struct expression *seq = exp;
+			while (exp->bin.right->tag == ast_exp_binary
+				   && (enum binop)exp->bin.right->op == binop_sequence) {
+				ast_desugar_chk_type(exp);
+				exp->bin.left = ast_desugar_expression(exp->bin.left);
+				exp = exp->bin.right;
+			}
+			ast_desugar_chk_type(exp);
+			exp->bin.left = ast_desugar_expression(exp->bin.left);
+			exp->bin.right = ast_desugar_expression(exp->bin.right);
+			return seq;
+		} break;
 		case binop_and: {
 			struct expression *left = ast_desugar_expression(exp->bin.left);
 			struct expression *right = ast_desugar_expression(exp->bin.right);

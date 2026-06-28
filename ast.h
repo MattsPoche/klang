@@ -11,7 +11,7 @@ enum operator {
 	op_mod					= tt_percent, // %
 	op_lnot					= tt_tilde, // ~
 	op_xor					= tt_caret, // ^
-	op_land					= tt_and, // &
+	op_land					= tt_amper, // &
 	op_lor					= tt_pipe, // |
 	op_equal				= tt_equal, // =
 	op_less_than			= tt_less, // <
@@ -20,7 +20,7 @@ enum operator {
 	op_member			    = tt_period, // .
 	/* multi-character operators */
 	op_assign				= tt_colon_equal,     // :=
-	op_and_assign			= tt_and_equal,        // &=
+	op_and_assign			= tt_amper_equal,        // &=
 	op_lor_assign			= tt_pipe_equal,      // |=
 	op_xor_assign			= tt_caret_equal,     // ^=
 	op_add_assign			= tt_plus_equal,      // +=
@@ -36,7 +36,7 @@ enum operator {
 	op_shift_left_assign	= tt_less_less_equal, // <<=
 	op_shift_right_assign	= tt_more_more_equal, // >>=
 	op_or					= tt_pipe_pipe,       // ||
-	op_and					= tt_and_and,         // &&
+	op_and					= tt_amper_amper,         // &&
 	/* other operators */
 	op_neg					= TOKEN_TYPE_MAX, // -
 	op_pos, // +

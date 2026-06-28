@@ -17,7 +17,7 @@ enum token_type {
 	tt_dollar       = '$',
 	tt_percent      = '%',
 	tt_caret        = '^',
-	tt_and          = '&',
+	tt_amper          = '&',
 	tt_star         = '*',
 	tt_lparen       = '(',
 	tt_rparen       = ')',
@@ -64,7 +64,7 @@ enum token_type {
 	tt_true,
 	tt_false,
 	tt_colon_equal,     // :=
-	tt_and_equal,       // &=
+	tt_amper_equal,       // &=
 	tt_pipe_equal,      // |=
 	tt_caret_equal,     // ^=
 	tt_plus_equal,      // +=
@@ -80,7 +80,7 @@ enum token_type {
 	tt_less_less_equal, // <<=
 	tt_more_more_equal, // >>=
 	tt_pipe_pipe,       // ||
-	tt_and_and,         // &&
+	tt_amper_amper,         // &&
 	tt_minus_more,      // ->
 	tt_period_period,   // ..
 	/* Basic Data Types */

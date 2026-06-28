@@ -53,11 +53,11 @@ enum ir_opterm {
 
 typedef struct ir_ins {
 	enum ir_opcode op : 16;
-	uint16_t dst;
+	uint32_t dst;
 	union {
 		uint32_t u32;
 		int32_t  i32;
-		uint16_t rx[2];
+		uint32_t rx[2];
 	} arg;
 	KCType *type;
 } IR_Ins;
@@ -69,7 +69,7 @@ struct ir_code {
 
 struct ir_args {
 	uint32_t len, cap;
-	uint16_t *elems;
+	uint32_t *elems;
 };
 
 struct ir_blk_terminal {
@@ -110,9 +110,9 @@ struct ir_proc {
 	struct definition *def;
 	struct ir_blk *entry;
 	KCType *type;
-	uint16_t regc;
-	uint16_t argc;
-	uint16_t retc;
+	uint32_t regc;
+	uint32_t argc;
+	uint32_t retc;
 	struct procedure *node;
 };
 
@@ -129,9 +129,9 @@ struct ir_thunk {
 	struct definition *def;
 	struct ir_blk *entry;
 	KCType *type;
-	uint16_t regc;
-	uint16_t argc;
-	uint16_t retc;
+	uint32_t regc;
+	uint32_t argc;
+	uint32_t retc;
 	size_t data_id;
 	struct scope *scope;
 };
@@ -173,7 +173,7 @@ struct ast_comp_dest {
 		DST_CPY,
 		DST_RET,
 	} tag;
-	uint16_t reg;
+	uint32_t reg;
 };
 
 #define DEST_VAL(_reg) ((struct ast_comp_dest){.tag = DST_VAL, .reg = (_reg)})

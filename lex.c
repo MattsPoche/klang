@@ -18,7 +18,7 @@ token_type_to_str(enum token_type tt)
 	case tt_dollar:			 return "tt_dollar";
 	case tt_percent:		 return "tt_percent";
 	case tt_caret:			 return "tt_caret";
-	case tt_and:			 return "tt_and";
+	case tt_amper:			 return "tt_amper";
 	case tt_star:			 return "tt_star";
 	case tt_lparen:			 return "tt_lparen";
 	case tt_rparen:			 return "tt_rparen";
@@ -62,7 +62,7 @@ token_type_to_str(enum token_type tt)
 	case tt_return:          return "tt_return";
 	case tt_import:          return "tt_import";
 	case tt_colon_equal:     return "tt_colon_equal";
-	case tt_and_equal:		 return "tt_and_equal";
+	case tt_amper_equal:		 return "tt_amper_equal";
 	case tt_pipe_equal:		 return "tt_pipe_equal";
 	case tt_caret_equal:	 return "tt_caret_equal";
 	case tt_plus_equal:		 return "tt_plus_equal";
@@ -78,7 +78,7 @@ token_type_to_str(enum token_type tt)
 	case tt_less_less_equal: return "tt_less_less_equal";
 	case tt_more_more_equal: return "tt_more_more_equal";
 	case tt_pipe_pipe:		 return "tt_pipe_pipe";
-	case tt_and_and:		 return "tt_and_and";
+	case tt_amper_amper:		 return "tt_amper_amper";
 	case tt_minus_more:		 return "tt_minus_more";
 	case tt_period_period:	 return "tt_period_period";
 	case tt_void:			 return "tt_void";
@@ -406,7 +406,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 				struct strview sv = token_to_strview(&tok);
 				if (tok.tok_len == 1) tok.tt = c;
 				else if (sv_is_equal(sv, sv_of_cstr(":=")))  tok.tt = tt_colon_equal;
-				else if (sv_is_equal(sv, sv_of_cstr("&=")))  tok.tt = tt_and_equal;
+				else if (sv_is_equal(sv, sv_of_cstr("&=")))  tok.tt = tt_amper_equal;
 				else if (sv_is_equal(sv, sv_of_cstr("|=")))  tok.tt = tt_pipe_equal;
 				else if (sv_is_equal(sv, sv_of_cstr("^=")))  tok.tt = tt_caret_equal;
 				else if (sv_is_equal(sv, sv_of_cstr("+=")))  tok.tt = tt_plus_equal;
@@ -421,7 +421,7 @@ tokenize(struct lexer *lex, struct token_buffer *tokens)
 				else if (sv_is_equal(sv, sv_of_cstr(">>")))  tok.tt = tt_more_more;
 				else if (sv_is_equal(sv, sv_of_cstr("<<="))) tok.tt = tt_less_less_equal;
 				else if (sv_is_equal(sv, sv_of_cstr(">>="))) tok.tt = tt_more_more_equal;
-				else if (sv_is_equal(sv, sv_of_cstr("&&")))  tok.tt = tt_and_and;
+				else if (sv_is_equal(sv, sv_of_cstr("&&")))  tok.tt = tt_amper_amper;
 				else if (sv_is_equal(sv, sv_of_cstr("||")))  tok.tt = tt_pipe_pipe;
 				else if (sv_is_equal(sv, sv_of_cstr("->")))  tok.tt = tt_minus_more;
 				else if (sv_is_equal(sv, sv_of_cstr("..")))  tok.tt = tt_period_period;

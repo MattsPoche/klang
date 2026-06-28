@@ -2023,9 +2023,13 @@ infer_type(struct typing_context ctx, struct expression *exp)
 	case ast_exp_binary: {
 		switch ((enum binop)exp->bin.op) {
 		case binop_sequence: {
-			UNIFY_EXP(ctx, exp->bin.left, &AST_TYPE_VOID);
 			KCType *type = fresh_type_var(type_class_any);
-			UNIFY_EXP(ctx, exp->bin.right, type);
+			while (exp->tag == ast_exp_binary && (enum binop)exp->bin.op == binop_sequence) {
+				UNIFY_EXP(ctx, exp->bin.left, &AST_TYPE_VOID);
+				exp->type = type;
+				exp = exp->bin.right;
+			}
+			UNIFY_EXP(ctx, exp, type);
 			return exp->type = type;
 		} break;
 		case binop_add:

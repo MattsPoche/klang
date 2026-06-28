@@ -1,6 +1,5 @@
 /**
 TODOS:
-- [ ] Proper modules and namespaces
 - [ ] Implement stubs for basic operators
 - [ ] Floating point types
 - [ ] Vector types
@@ -23,6 +22,7 @@ TODOS:
   - For example:
     - query_symbol(foo) > kc > list of symbol definitions
 	- recompile(source.k) > kc > compiler error or ok
+  - Alternatively, use sockets
 - [ ] Enum types? Some sort of auto-increment integer constants?
 - [ ] Macros?
 - [ ] Closures?
@@ -32,6 +32,7 @@ TODOS:
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <malloc.h>
 
 #include "mempool.h"
 #include "common.h"
@@ -75,19 +76,18 @@ kc_realloc(void *ptr, size_t size)
 }
 
 KC_PRIVATE int
-exec_cmd(struct lines *cmd)
+exec_cmd(const char *cmd, char *const args[])
 {
 	pid_t pid;
 	int wstatus = 0;
 	int io_pipes[2];
-	assert(cmd->len > 0);
 	if (pipe(io_pipes) < 0)
 		FAILWITH("[Error] pipe(io_pipes): %s\n", strerror(errno));
 	if ((pid = fork()) == 0) {
 		/* child */
-		printf("[Info]");
-		for (size_t i = 0; i < cmd->len && cmd->elems[i]; ++i)
-			printf(" %s", cmd->elems[i]);
+		printf("[Info] %s", cmd);
+		for (size_t i = 0; args[i]; ++i)
+			printf(" %s", args[i]);
 		printf("\n");
 		if (close(io_pipes[0]) < 0)
 			FAILWITH("[Error] close(io_pipes[0]): %s\n", strerror(errno));
@@ -95,7 +95,7 @@ exec_cmd(struct lines *cmd)
 			FAILWITH("[Error] dup2(io_pipes[1], STDOUT_FILENO): %s\n", strerror(errno));
 		if (dup2(io_pipes[1], STDERR_FILENO) < 0)
 			FAILWITH("[Error] dup2(io_pipes[1], STDERR_FILENO): %s\n", strerror(errno));
-		if (execvp(cmd->elems[0], cmd->elems) < 0)
+		if (execvp(cmd, (void *)args) < 0)
 			FAILWITH("[Error] %s\n", strerror(errno));
 	} else if (pid < 0) {
 		FAILWITH("[Error] %s\n", strerror(errno));
@@ -122,11 +122,10 @@ exec_cmd(struct lines *cmd)
 
 // ld -dynamic-linker /lib/ld-linux-x86-64.so.2 /usr/lib/crt1.o /usr/lib/crti.o -lc syntax.o /usr/lib/crtn.o
 KC_PRIVATE int
-link_object_files(struct lines *obj_files, const char *target, bool is_dll)
+link_object_files(struct lines *obj_files, const char *target)
 {
 	struct lines cmd = {0};
 	da_append(&cmd, "ld");
-	if (is_dll) da_append(&cmd, "-shared");
 	da_append(&cmd, "-dynamic-linker");
 	da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
 	da_append(&cmd, "/usr/lib/crt1.o");
@@ -137,7 +136,7 @@ link_object_files(struct lines *obj_files, const char *target, bool is_dll)
 	da_append(&cmd, "-o");
 	da_append(&cmd, (char *)target);
 	da_append(&cmd, (char *)NULL);
-	int c = exec_cmd(&cmd);
+	int c = exec_cmd(cmd.elems[0], cmd.elems);
 	da_free(&cmd);
 	return c;
 }
@@ -172,6 +171,7 @@ handler(int sig, siginfo_t *info, UNUSED void *ucontext)
 	if (sig == SIGSEGV) {
 		fprintf(stderr, "[ERROR] %s (0x%lx)\n", strsignal(sig), (uintptr_t)info->si_addr);
 	}
+	malloc_stats();
 	if (recover_from_handler) longjmp(recover_exec, sig);
 	EXIT(sig);
 }
@@ -494,7 +494,7 @@ dispatch_build(CL_args args)
 			.len = 1,
 			.elems = (void *)&ofile,
 		};
-		return link_object_files(&obj_files, session->target, false);
+		return link_object_files(&obj_files, session->target);
 	}
 	return 0;
 }

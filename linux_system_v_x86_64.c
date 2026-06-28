@@ -988,7 +988,7 @@ emit_op_cast_ADDR_REGISTER__ADDR_REGISTER(IR_Ins *ins, UNUSED void *dat, struct 
 	assert(dst->tag == ADDR_REGISTER || dst->tag == ADDR_ARGUMENT);
 	assert(x->tag == ADDR_REGISTER);
 	cg_unassign_register(ctx, x->i);
-	if (type_is_void(ins->type)) return; /* do nothing */
+	if (type_is_void(ins->type)) return;
 	cg_reserve_register(ctx, dst->i, ins->dst);
 	if (type_equiv(x->type, ins->type)) {
 		asm_mov(code->m, cg_suffix(ins->type), REG(x->i), REG(dst->i));
@@ -1233,6 +1233,8 @@ cg_emit_basic_op(enum asm_op_code op, IR_Ins *ins, struct cg_address *dst,
 		asm_mov(code->m, cg_suffix(type), MEM_DR(x->stack[0] + x->stack[1], RBP), REG(dst->i));
 		asm_inst2(code->m, op, cg_suffix(type), INT(y->i), REG(dst->i));
 	} else if (MATCH_ADDR3(ADDR_BLK_ARG, ADDR_REGISTER, ADDR_REGISTER)) {
+		/* cg_unassign_register(ctx, y->i); */
+		/* cg_unassign_register(ctx, x->i); */
 		struct cg_address *arg_addr = &ctx->vars[dst->i]; // lookup the addr for the formal block arg
 		if (arg_addr->tag == ADDR_TEMP_REG) {
 			arg_addr->tag = ADDR_REGISTER;
@@ -1275,6 +1277,7 @@ cg_emit_basic_op(enum asm_op_code op, IR_Ins *ins, struct cg_address *dst,
 		dst->tag = ADDR_REGISTER;
 		asm_inst2(code->m, op, cg_suffix(type), MEM_DR(y->stack[0] + y->stack[1], RBP), REG(dst->i));
 	} else if (MATCH_ADDR3(ADDR_TEMP_REG, ADDR_STACK_LOAD, ADDR_REGISTER)) {
+		cg_unassign_register(ctx, y->i);
 		dst->i = cg_assign_register(ctx, ins->dst);
 		dst->tag = ADDR_REGISTER;
 		asm_mov(code->m, cg_suffix(type), MEM_DR(x->stack[0] + x->stack[1], RBP), REG(dst->i));
@@ -1363,17 +1366,23 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 			if (MATCH_ADDR2(ADDR_REGISTER, ADDR_STACK)) {
 				emit_op_mov_ADDR_REGISTER__ADDR_STACK(ins, NULL, code);
 			} else if (MATCH_ADDR2(ADDR_REGISTER, ADDR_REGISTER)) {
-				cg_reserve_register(ctx, dst->i, ins->dst);
-				asm_mov(code->m, ZQ, REG(x->i), REG(dst->i));
+				if (x->i == dst->i) {
+					cg_unassign_register(ctx, x->i);
+					cg_reserve_register(ctx, dst->i, ins->dst);
+				} else {
+					asm_mov(code->m, ZQ, REG(x->i), REG(dst->i));
+				}
 			} else if (MATCH_ADDR2(ADDR_TEMP_REG, ADDR_STACK)) {
 				dst->tag = ADDR_REGISTER;
 				dst->i = cg_assign_register(ctx, ins->dst);
 				asm_lea(code->m, ZQ, MEM_DR(x->i, RBP), REG(dst->i));
 			} else if (MATCH_ADDR2(ADDR_TEMP_REG, ADDR_REGISTER)) {
+				cg_unassign_register(ctx, x->i);
 				dst->tag = ADDR_REGISTER;
 				dst->i = cg_assign_register(ctx, ins->dst);
-				asm_mov(code->m, ZQ, REG(x->i), REG(dst->i));
-				cg_unassign_register(ctx, x->i);
+				if (dst->i != x->i) {
+					asm_mov(code->m, ZQ, REG(x->i), REG(dst->i));
+				}
 			} else if (MATCH_ADDR2(ADDR_ARGUMENT, ADDR_STACK)) {
 				dst->extra.defered.fun = emit_op_mov_ADDR_REGISTER__ADDR_STACK;
 				dst->extra.defered.ins = ins;
@@ -1438,17 +1447,26 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 				FAILWITH("TODO: floating point code");
 			asm_op = OP_CMP;
 			assert(ctx->vars[ins->dst].tag == ADDR_FLAGS);
-			ctx->vars[ins->dst].tag = ADDR_TEMP_REG;
-			struct cg_address dst = {.tag=ADDR_TEMP_REG};
-			cg_emit_basic_op(asm_op, ins,
-							 &dst,
-							 &ctx->vars[ins->arg.rx[0]],
-							 &ctx->vars[ins->arg.rx[1]],
-							 tl,
-							 code);
-			ctx->vars[ins->dst].tag = ADDR_FLAGS;
-			assert(dst.tag == ADDR_REGISTER);
-			cg_unassign_register(ctx, dst.i);
+			struct cg_address *dst = &ctx->vars[ins->dst];
+			struct cg_address *x   = &ctx->vars[ins->arg.rx[0]];
+			struct cg_address *y   = &ctx->vars[ins->arg.rx[1]];
+			int suffix = cg_suffix(ins->type);
+			if (MATCH_ADDR3(ADDR_FLAGS, ADDR_REGISTER, ADDR_IMM_INT)) {
+				asm_cmp(code->m, suffix, INT(y->i), REG(x->i));
+			} else if (MATCH_ADDR3(ADDR_FLAGS, ADDR_STACK_LOAD, ADDR_IMM_INT)) {
+				enum asm_register tmp = cg_assign_register(ctx, ins->arg.rx[0]);
+				asm_mov(code->m, suffix, MEM_DR(x->stack[0] + x->stack[1], RBP), REG(tmp));
+				asm_cmp(code->m, suffix, INT(y->i), REG(tmp));
+				cg_unassign_register(ctx, tmp);
+			} else if (MATCH_ADDR3(ADDR_FLAGS, ADDR_STACK_LOAD, ADDR_REGISTER)) {
+				asm_cmp(code->m, type_size(ins->type), MEM_DR(x->stack[0] + x->stack[1], RBP), REG(y->i));
+				cg_unassign_register(ctx, y->i);
+			} else {
+				FAILWITH("Unhandled case: MATCH_ADDR3(%s, %s, %s)",
+						 cg_addr_tag_to_str(dst->tag),
+						 cg_addr_tag_to_str(x->tag),
+						 cg_addr_tag_to_str(y->tag));
+			}
 		} break;
 		case ir_op_div: cg_emit_div_mod(ins, code, false); break;
 		case ir_op_mod: cg_emit_div_mod(ins, code, true); break;
@@ -1737,6 +1755,10 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 			if (dst->tag == ADDR_STACK_LOAD) {
 				/* do nothing */
 			} else if (MATCH_ADDR2(ADDR_REGISTER, ADDR_REGISTER)) {
+				if (x->i != dst->i) {
+					cg_unassign_register(ctx, x->i);
+					cg_reserve_register(ctx, dst->i, ins->dst);
+				}
 				asm_mov(code->m, cg_suffix(ins->type), MEM_DR(0, x->i), REG(dst->i));
 			} else if (MATCH_ADDR2(ADDR_BLK_ARG, ADDR_REGISTER)) {
 				dst = &ctx->vars[dst->i];
@@ -1755,6 +1777,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 				}
 				/* ADDR_REGISTER */
 				asm_mov(code->m, cg_suffix(ins->type), MEM_DR(0, x->i), REG(dst->i));
+				if (x->i != dst->i) cg_unassign_register(ctx, x->i);
 			} else if (MATCH_ADDR2(ADDR_BLK_ARG, ADDR_STACK)) {
 				dst = &ctx->vars[dst->i];
 				if (dst->tag == ADDR_STACK_LOAD) {
@@ -2007,6 +2030,7 @@ cg_emit_block(struct da_pointers *blocks, size_t blk_id, struct ir_toplevel *tl,
 			} else if (MATCH_ADDR2(ADDR_SYMBOL, ADDR_REGISTER)) {
 				IR_object *obj = &tl->elems[dst->i];
 				asm_mov(code->m, cg_suffix(ins->type), REG(x->i), MEM_LR(obj->hddr.asm_label, 0, RIP));
+				cg_unassign_register(ctx, x->i);
 			} else {
 				printf("dst = %%%d\n", ins->dst);
 				printf("x   = %%%d\n", ins->arg.rx[0]);
