@@ -23,28 +23,28 @@
 #    define EXIT(code) exit(code)
 #endif
 
-#define FAILWITH(_fmt_msg, ...)											\
-	do {																\
-		fflush(stdout);													\
-		fflush(stderr);													\
-		fprintf(stderr, "%s: %d: %s: [FAILWITH] ", __FILE__, __LINE__, __func__); \
-		fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);			\
-		fputc('\n', stderr);											\
-		EXIT(1);														\
-	} while (0)
+#define FAILWITH(_fmt_msg, ...)                                         \
+    do {                                                                \
+        fflush(stdout);                                                 \
+        fflush(stderr);                                                 \
+        fprintf(stderr, "%s: %d: %s: [FAILWITH] ", __FILE__, __LINE__, __func__); \
+        fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);            \
+        fputc('\n', stderr);                                            \
+        EXIT(1);                                                        \
+    } while (0)
 
 #define UNUSED __attribute__((unused))
 
-#define ASSERT(_test, _fmt_msg, ...)									\
-	do {																\
-		if (!(_test)) {													\
-			fprintf(stderr, "%s: %d: %s:\n[ASSERT] assertion failed: (%s)\n", \
-					__FILE__, __LINE__, __func__, #_test);				\
-			fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);		\
-			fputc('\n', stderr);										\
-			EXIT(1);													\
-		}																\
-	} while (0)
+#define ASSERT(_test, _fmt_msg, ...)                                    \
+    do {                                                                \
+        if (!(_test)) {                                                 \
+            fprintf(stderr, "%s: %d: %s:\n[ASSERT] assertion failed: (%s)\n", \
+                    __FILE__, __LINE__, __func__, #_test);              \
+            fprintf(stderr, _fmt_msg __VA_OPT__(,) __VA_ARGS__);        \
+            fputc('\n', stderr);                                        \
+            EXIT(1);                                                    \
+        }                                                               \
+    } while (0)
 
 #define KC_INLINE __attribute__((always_inline)) static inline
 

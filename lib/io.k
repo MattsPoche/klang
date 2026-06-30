@@ -29,8 +29,7 @@ let open_read_file(path: [i8]*) (FILE, {errno: i32, msg: str}) Result =
     let e: i32 = get_errno() in
     Error{errno = e, msg = get_error_str(e)}
   else
-    Ok(f)
-  end
+    Ok(f)  
 
 let print_char(c: i8) =
   libc_fwrite(&c, 1, 1, stdout)
@@ -43,18 +42,16 @@ let print_digits(n: 'a) =
     let c: 'a = (n % 10) + 48 in
 	print_digits(n / 10);
 	print_char(c as i8)
-  end
 
 let print_int(n: 'a) =
   if n = 0 then
     print_char(#"0")
   else
-    let n: 'a = if n < 0 then print_char(#"-"); -n else n end in
+    let n: 'a = if n < 0 then print_char(#"-"); -n else n in
     print_digits(n)
-  end
 
 let print_bool(x: bool) =
-  print_string(if x then "true" else "false" end)
+  print_string(if x then "true" else "false")
 
 let print_newline() = print_char(#"\n")
 
@@ -68,11 +65,9 @@ let print_slice(slice: &['a]) =
     print_int(slice[i]);
     print_char(#" ");
     i += 1
-  done
 
 let str_of_cstr(cstr: [i8]*) str =
   let mut length: u64 = 0 in
-  while cstr[length] != 0 do
-    length += 1
-  done;
+  (while cstr[length] != 0 do
+     length += 1);
   cstr[..length]

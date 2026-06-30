@@ -4,18 +4,18 @@
 typedef uintptr_t Syminfo;
 
 typedef struct symbol_info {
-	struct symbol_info     *next;
-	struct symtbl_entry    *info;
+    struct symbol_info     *next;
+    struct symtbl_entry    *info;
 } *Syminfo_list;
 
 typedef struct {
-	uint32_t count, index;
-	Syminfo si;
+    uint32_t count, index;
+    Syminfo si;
 } Syminfo_iter;
 
 typedef struct {
-	struct strview name;
-	Syminfo_list info_list;
+    struct strview name;
+    Syminfo_list info_list;
 } Syminfo_pair;
 
 #define syminfo_iter(S) ((Syminfo_iter){.si=(S)})

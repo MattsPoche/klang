@@ -91,13 +91,13 @@
 #define HASHMAP_FN(name) CONCAT(HASHMAP_P, name)
 
 typedef struct {
-	HASHMAP_K key;
-	HASHMAP_V value;
+    HASHMAP_K key;
+    HASHMAP_V value;
 } HASHMAP_E;
 
 typedef struct {
-	uint32_t len, cap;
-	HASHMAP_E entries[];
+    uint32_t len, cap;
+    HASHMAP_E entries[];
 } *HASHMAP_S;
 
 HASHMAP_S HASHMAP_FN(create)(uint32_t cap);
@@ -136,102 +136,102 @@ void HASHMAP_FN(insert)(HASHMAP_S *hs, HASHMAP_K key, HASHMAP_V value);
 
 HASHMAP_S HASHMAP_FN(create)(uint32_t cap)
 {
-	HASHMAP_S hs = HASHMAP_MALLOC(sizeof(*hs) + (sizeof(hs->entries[0]) * cap));
-	hs->len = 0;
-	hs->cap = cap;
-	for (size_t i = 0; i < cap; ++i) {
-		hs->entries[i].key = HASHMAP_NIL_KEY;
-	}
-	return hs;
+    HASHMAP_S hs = HASHMAP_MALLOC(sizeof(*hs) + (sizeof(hs->entries[0]) * cap));
+    hs->len = 0;
+    hs->cap = cap;
+    for (size_t i = 0; i < cap; ++i) {
+        hs->entries[i].key = HASHMAP_NIL_KEY;
+    }
+    return hs;
 }
 
 void HASHMAP_FN(destroy)(HASHMAP_S hs)
 {
-	for (size_t i = 0; i < hs->cap; ++i) {
-		if (!HASHMAP_KEY_IS_NIL(hs->entries[i].key)) {
-			HASHMAP_KEY_FINALIZE(hs->entries[i].key);
-			HASHMAP_VALUE_FINALIZE(hs->entries[i].value);
-		}
-	}
-	hs->len = 0;
-	hs->cap = 0;
-	HASHMAP_FREE(hs);
+    for (size_t i = 0; i < hs->cap; ++i) {
+        if (!HASHMAP_KEY_IS_NIL(hs->entries[i].key)) {
+            HASHMAP_KEY_FINALIZE(hs->entries[i].key);
+            HASHMAP_VALUE_FINALIZE(hs->entries[i].value);
+        }
+    }
+    hs->len = 0;
+    hs->cap = 0;
+    HASHMAP_FREE(hs);
 }
 
 HASHMAP_S HASHMAP_FN(copy)(HASHMAP_S src)
 {
-	size_t sz = sizeof(*src) + (sizeof(src->entries[0]) * src->cap);
-	HASHMAP_S new = HASHMAP_MALLOC(sz);
-	return memcpy(new, src, sz);
+    size_t sz = sizeof(*src) + (sizeof(src->entries[0]) * src->cap);
+    HASHMAP_S new = HASHMAP_MALLOC(sz);
+    return memcpy(new, src, sz);
 }
 
 void HASHMAP_FN(grow)(HASHMAP_S *hs)
 {
-	HASHMAP_S old_hs = *hs;
-	HASHMAP_S new_hs = HASHMAP_FN(create)(old_hs->cap * 2);
-	for (size_t i = 0; i < old_hs->cap; ++i) {
-		if (!HASHMAP_KEY_IS_NIL(old_hs->entries[i].key)) {
-			HASHMAP_FN(insert)(&new_hs, old_hs->entries[i].key, old_hs->entries[i].value);
-		}
-	}
-	HASHMAP_FREE(old_hs);
-	*hs = new_hs;
+    HASHMAP_S old_hs = *hs;
+    HASHMAP_S new_hs = HASHMAP_FN(create)(old_hs->cap * 2);
+    for (size_t i = 0; i < old_hs->cap; ++i) {
+        if (!HASHMAP_KEY_IS_NIL(old_hs->entries[i].key)) {
+            HASHMAP_FN(insert)(&new_hs, old_hs->entries[i].key, old_hs->entries[i].value);
+        }
+    }
+    HASHMAP_FREE(old_hs);
+    *hs = new_hs;
 }
 
 HASHMAP_E *HASHMAP_FN(lookup_with_hash)(HASHMAP_S hs, HASHMAP_K key, uint64_t hash)
 {
-	/* compute hash */
-	size_t i, idx = hash % hs->cap;
-	/* search for entry */
-	for (i = idx; i < hs->cap; ++i) {
-		if (HASHMAP_KEY_IS_NIL(hs->entries[i].key)
-			|| HASHMAP_EQUALS(hs->entries[i].key, key)) {
-			return &hs->entries[i];
-		}
-	}
-	/* wrap back to top and continue search */
-	for (i = 0; i < idx; ++i) {
-		if (HASHMAP_KEY_IS_NIL(hs->entries[i].key)
-			|| HASHMAP_EQUALS(hs->entries[i].key, key)) {
-			return &hs->entries[i];
-		}
-	}
-	HASHMAP_ASSERT(!"unreachable");
-	return NULL;
+    /* compute hash */
+    size_t i, idx = hash % hs->cap;
+    /* search for entry */
+    for (i = idx; i < hs->cap; ++i) {
+        if (HASHMAP_KEY_IS_NIL(hs->entries[i].key)
+            || HASHMAP_EQUALS(hs->entries[i].key, key)) {
+            return &hs->entries[i];
+        }
+    }
+    /* wrap back to top and continue search */
+    for (i = 0; i < idx; ++i) {
+        if (HASHMAP_KEY_IS_NIL(hs->entries[i].key)
+            || HASHMAP_EQUALS(hs->entries[i].key, key)) {
+            return &hs->entries[i];
+        }
+    }
+    HASHMAP_ASSERT(!"unreachable");
+    return NULL;
 }
 
 HASHMAP_E *HASHMAP_FN(lookup)(HASHMAP_S hs, HASHMAP_K key)
 {
-	return HASHMAP_FN(lookup_with_hash)(hs, key, HASHMAP_HASH(key));
+    return HASHMAP_FN(lookup_with_hash)(hs, key, HASHMAP_HASH(key));
 }
 
 void HASHMAP_FN(insert)(HASHMAP_S *hs_ptr, HASHMAP_K key, HASHMAP_V value)
 {
-	HASHMAP_S hs = *hs_ptr;
-	HASHMAP_E *slot = HASHMAP_FN(lookup)(hs, key);
-	if (HASHMAP_KEY_IS_NIL(slot->key)) {
-		slot->key = key;
-		slot->value = value;
-		hs->len++;
-	} else {
-		HASHMAP_VALUE_FINALIZE(slot->value);
-		slot->value = value;
-	}
-	if (((double)hs->len / (double)hs->cap) > _HASHMAP_RESIZE_THREASHOLD) {
-		HASHMAP_FN(grow)(hs_ptr);
-	}
+    HASHMAP_S hs = *hs_ptr;
+    HASHMAP_E *slot = HASHMAP_FN(lookup)(hs, key);
+    if (HASHMAP_KEY_IS_NIL(slot->key)) {
+        slot->key = key;
+        slot->value = value;
+        hs->len++;
+    } else {
+        HASHMAP_VALUE_FINALIZE(slot->value);
+        slot->value = value;
+    }
+    if (((double)hs->len / (double)hs->cap) > _HASHMAP_RESIZE_THREASHOLD) {
+        HASHMAP_FN(grow)(hs_ptr);
+    }
 }
 
 void HASHMAP_FN(remove)(HASHMAP_S *hs_ptr, HASHMAP_K key)
 {
-	HASHMAP_S hs = *hs_ptr;
-	HASHMAP_E *slot = HASHMAP_FN(lookup)(hs, key);
-	if (!HASHMAP_KEY_IS_NIL(slot->key)) {
-		HASHMAP_KEY_FINALIZE(slot->key);
-		HASHMAP_VALUE_FINALIZE(slot->value);
-		slot->key = HASHMAP_NIL_KEY;
-		hs->len--;
-	}
+    HASHMAP_S hs = *hs_ptr;
+    HASHMAP_E *slot = HASHMAP_FN(lookup)(hs, key);
+    if (!HASHMAP_KEY_IS_NIL(slot->key)) {
+        HASHMAP_KEY_FINALIZE(slot->key);
+        HASHMAP_VALUE_FINALIZE(slot->value);
+        slot->key = HASHMAP_NIL_KEY;
+        hs->len--;
+    }
 }
 
 #undef HASHMAP_MALLOC
